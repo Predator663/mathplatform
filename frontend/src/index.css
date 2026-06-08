@@ -1,0 +1,180 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Theme variables ────────────────────────────────────────────── */
+:root, [data-theme="dark"] {
+  --bg-950:   #0a0a0f;
+  --bg-900:   #111118;
+  --bg-800:   #1a1a26;
+  --bg-700:   #242433;
+  --bg-600:   #2e2e42;
+  --bg-500:   #3d3d55;
+  --text-primary: #ffffff;
+  --text-muted:   #3d3d55;
+  --border:       #2e2e42;
+  --scrollbar-track: #111118;
+  --scrollbar-thumb: #2e2e42;
+}
+
+[data-theme="light"] {
+  --bg-950:   #f0f2f5;
+  --bg-900:   #ffffff;
+  --bg-800:   #f8f9fb;
+  --bg-700:   #eef0f4;
+  --bg-600:   #dde1ea;
+  --bg-500:   #9ca3af;
+  --text-primary: #0f172a;
+  --text-muted:   #6b7280;
+  --border:       #dde1ea;
+  --scrollbar-track: #f0f2f5;
+  --scrollbar-thumb: #dde1ea;
+}
+
+@layer base {
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; -webkit-tap-highlight-color: transparent; }
+  body {
+    background-color: var(--bg-950);
+    color: var(--text-primary);
+    @apply font-body antialiased;
+    font-size: 15px;
+    overscroll-behavior: none;
+    transition: background-color 0.2s ease, color 0.2s ease;
+  }
+  h1,h2,h3,h4,h5,h6 { @apply font-display; }
+
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: var(--scrollbar-track); }
+  ::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 9999px; }
+}
+
+@layer components {
+  /* ── Cards ────────────────────────────────────────────────────── */
+  .card {
+    background-color: var(--bg-800);
+    border: 1px solid var(--border);
+    @apply rounded-2xl;
+    transition: background-color 0.2s ease, border-color 0.2s ease;
+  }
+  .card-hover {
+    @apply card transition-all duration-200 active:scale-[0.99];
+  }
+  .card-hover:hover {
+    background-color: var(--bg-700);
+    border-color: var(--bg-500);
+  }
+
+  /* ── Buttons ──────────────────────────────────────────────────── */
+  .btn-primary {
+    @apply bg-azure-500 hover:bg-azure-600 active:bg-azure-700 text-white
+           font-display font-semibold px-4 py-2.5 rounded-xl transition-all
+           duration-150 focus:outline-none focus:ring-2 focus:ring-azure-500/50
+           disabled:opacity-50 disabled:cursor-not-allowed select-none
+           text-sm md:text-sm;
+  }
+  .btn-secondary {
+    background-color: var(--bg-700);
+    border: 1px solid var(--bg-500);
+    color: var(--text-primary);
+    @apply font-display font-medium px-4 py-2.5 rounded-xl
+           transition-all duration-150 focus:outline-none focus:ring-2
+           focus:ring-azure-500/30 select-none text-sm;
+  }
+  .btn-secondary:hover { background-color: var(--bg-600); }
+
+  /* ── Form elements ────────────────────────────────────────────── */
+  .input {
+    width: 100%;
+    background-color: var(--bg-900);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    @apply rounded-xl px-3.5 py-2.5 font-body text-sm
+           focus:outline-none focus:ring-2 focus:ring-azure-500/50
+           focus:border-azure-500/50 transition-all duration-150
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .input::placeholder { color: var(--text-muted); }
+
+  .label {
+    color: var(--text-muted);
+    @apply block text-xs font-display font-semibold
+           uppercase tracking-widest mb-1.5;
+  }
+
+  /* ── Badges ───────────────────────────────────────────────────── */
+  .badge         { @apply inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-display font-semibold; }
+  .badge-blue    { @apply badge bg-azure-500/15 text-azure-400; }
+  .badge-green   { @apply badge bg-emerald-500/15 text-emerald-400; }
+  .badge-amber   { @apply badge bg-amber-500/15 text-amber-400; }
+  .badge-rose    { @apply badge bg-rose-500/15 text-rose-400; }
+  .badge-violet  { @apply badge bg-violet-500/15 text-violet-400; }
+
+  /* ── Typography ───────────────────────────────────────────────── */
+  .page-title    { @apply font-display font-bold text-xl md:text-2xl leading-tight; color: var(--text-primary); }
+  .section-title { @apply font-display font-semibold text-sm md:text-base; color: var(--text-primary); }
+  .text-muted    { color: var(--text-muted); @apply text-sm; }
+  .text-gradient { @apply bg-gradient-to-r from-azure-400 to-violet-400 bg-clip-text text-transparent; }
+
+  /* ── Layout helpers ───────────────────────────────────────────── */
+  .stat-card  { @apply card p-4 md:p-5 flex flex-col gap-2; }
+  .divider    { border-top: 1px solid var(--border); }
+  .skeleton   { background-color: var(--bg-700); @apply rounded-xl animate-pulse; }
+
+  /* ── Responsive table wrapper ─────────────────────────────────── */
+  .table-scroll { @apply overflow-x-auto -mx-4 px-4 md:mx-0 md:px-0; }
+}
+
+@layer utilities {
+  .glow-dot { @apply w-2 h-2 rounded-full animate-pulse; }
+  .pb-safe { padding-bottom: env(safe-area-inset-bottom, 0px); }
+  .pt-safe { padding-top: env(safe-area-inset-top, 0px); }
+
+  /* theme-aware bg/border helpers used inline */
+  .bg-surface-950 { background-color: var(--bg-950); }
+  .bg-surface-900 { background-color: var(--bg-900); }
+  .bg-surface-800 { background-color: var(--bg-800); }
+  .bg-surface-700 { background-color: var(--bg-700); }
+  .bg-surface-600 { background-color: var(--bg-600); }
+  .border-surface { border-color: var(--border); }
+  .text-primary   { color: var(--text-primary); }
+  .text-secondary { color: var(--text-muted); }
+}
+
+/* Page enter animation */
+.page-enter { animation: pageEnter 0.18s ease-out; }
+@keyframes pageEnter {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Mobile bottom nav active */
+.mobile-nav-active { @apply text-azure-400; }
+
+/* Recharts custom tooltip */
+.recharts-tooltip-wrapper .custom-tooltip {
+  @apply card px-3 py-2 text-xs shadow-xl;
+}
+
+/* ── Light mode overrides for Recharts/inline styles ─────────────── */
+[data-theme="light"] .recharts-cartesian-grid-horizontal line,
+[data-theme="light"] .recharts-cartesian-grid-vertical line {
+  stroke: #dde1ea;
+}
+[data-theme="light"] .recharts-text { fill: #6b7280; }
+
+/* ── Light theme: MarkEntryPage sticky bottom bar ─────────────────── */
+[data-theme="light"] .mark-entry-bar {
+  background-color: rgba(255,255,255,0.95);
+  border-color: var(--border);
+}
+
+/* ── Light theme: select option backgrounds ───────────────────────── */
+[data-theme="light"] select option {
+  background-color: #ffffff;
+  color: #0f172a;
+}
+
+/* ── no-scrollbar utility ─────────────────────────────────────────── */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }

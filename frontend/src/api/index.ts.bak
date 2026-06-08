@@ -1,0 +1,116 @@
+import axios from 'axios';
+
+// In production (Render static site), set VITE_API_URL to your backend URL.
+// In development, the Vite proxy rewrites /api → localhost:8000, so leave blank.
+const BASE_URL = (import.meta.env.VITE_API_URL ?? '') + '/api';
+
+const api = axios.create({
+  baseURL: BASE_URL,
+  headers: { 'Content-Type': 'application/json' },
+});
+
+// Attach access token
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('access_token');
+  if (token) config.headers.Authorization = `Bearer ${token}`;
+  return config;
+});
+
+// Auto-refresh on 401
+api.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const original = error.config;
+    if (error.response?.status === 401 && !original._retry) {
+      original._retry = true;
+      try {
+        const refresh = localStorage.getItem('refresh_token');
+        if (!refresh) throw new Error('No refresh token');
+        const { data } = await axios.post(`${BASE_URL}/auth/token/refresh/`, { refresh });
+        localStorage.setItem('access_token', data.access);
+        original.headers.Authorization = `Bearer ${data.access}`;
+        return api(original);
+      } catch {
+        localStorage.removeItem('access_token');
+        localStorage.removeItem('refresh_token');
+        window.location.href = '/login';
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
+export default api;
+
+// ── Auth ──────────────────────────────────────────────────────────────────
+export const authApi = {
+  login: (email: string, password: string) => api.post('/auth/login/', { email, password }),
+  logout: (refresh: string) => api.post('/auth/logout/', { refresh }),
+  me: () => api.get('/auth/me/'),
+  register: (data: object) => api.post('/auth/register/', data),
+  changePassword: (data: object) => api.post('/auth/change-password/', data),
+  users: (params?: object) => api.get('/auth/users/', { params }),
+};
+
+// ── Students ──────────────────────────────────────────────────────────────
+export const studentsApi = {
+  gradeLevels: () => api.get('/students/grade-levels/'),
+  classrooms: (params?: object) => api.get('/students/classrooms/', { params }),
+  classroom: (id: number) => api.get(`/students/classrooms/${id}/`),
+  classroomStudents: (id: number) => api.get(`/students/classrooms/${id}/students/`),
+  createClassroom: (data: object) => api.post('/students/classrooms/', data),
+  updateClassroom: (id: number, data: object) => api.patch(`/students/classrooms/${id}/`, data),
+  students: (params?: object) => api.get('/students/profiles/', { params }),
+  student: (id: number) => api.get(`/students/profiles/${id}/`),
+  createStudent: (data: object) => api.post('/students/profiles/', data),
+  updateStudent: (id: number, data: object) => api.patch(`/students/profiles/${id}/`, data),
+  studentPerformance: (id: number) => api.get(`/students/profiles/${id}/performance_summary/`),
+};
+
+// ── Exams ─────────────────────────────────────────────────────────────────
+export const examsApi = {
+  topics: () => api.get('/exams/topics/'),
+  exams: (params?: object) => api.get('/exams/exams/', { params }),
+  exam: (id: number) => api.get(`/exams/exams/${id}/`),
+  createExam: (data: object) => api.post('/exams/exams/', data),
+  updateExam: (id: number, data: object) => api.patch(`/exams/exams/${id}/`, data),
+  publishExam: (id: number) => api.post(`/exams/exams/${id}/publish/`),
+  examScores: (examId: number) => api.get(`/exams/exams/${examId}/scores/`),
+  examStats: (examId: number) => api.get(`/exams/exams/${examId}/statistics/`),
+  bulkScores: (examId: number, data: object) => api.post(`/exams/exams/${examId}/bulk_scores/`, data),
+};
+
+// ── Analytics ─────────────────────────────────────────────────────────────
+export const analyticsApi = {
+  overview: () => api.get('/analytics/overview/'),
+  classroomAnalytics: (id: number) => api.get(`/analytics/classroom/${id}/`),
+  studentAnalytics: (id: number) => api.get(`/analytics/student/${id}/`),
+  atRisk: (params?: object) => api.get('/analytics/at-risk/', { params }),
+  compare: (params?: object) => api.get('/analytics/compare/', { params }),
+};
+
+// ── Reports ───────────────────────────────────────────────────────────────
+export const reportsApi = {
+  studentReport: (id: number) => api.get(`/reports/student/${id}/`),
+  classReport: (id: number, params?: object) => api.get(`/reports/classroom/${id}/`, { params }),
+  exportExamCsv: (examId: number) =>
+    api.get(`/reports/export/exam/${examId}/csv/`, { responseType: 'blob' }),
+  exportClassCsv: (classId: number) =>
+    api.get(`/reports/export/classroom/${classId}/csv/`, { responseType: 'blob' }),
+};
+
+// ── Extended Exams ────────────────────────────────────────────────────────────
+export const examsApiExt = {
+  scoresTemplate: (examId: number) =>
+    api.get(`/exams/exams/${examId}/scores_template/`, { responseType: 'blob' }),
+  bulkScoresCsv: (examId: number, formData: FormData) =>
+    api.post(`/exams/exams/${examId}/bulk_scores_csv/`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }),
+};
+
+// ── Site Settings ─────────────────────────────────────────────────────────────
+export const settingsApi = {
+  get: () => api.get('/auth/settings/'),
+  patch: (data: object) => api.patch('/auth/settings/', data),
+};
