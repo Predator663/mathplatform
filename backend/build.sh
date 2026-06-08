@@ -85,7 +85,7 @@ if table_exists("site_settings"):
             print(f"    [ok] site_settings.{col}")
     # Ensure singleton row exists
     with connection.cursor() as c:
-        c.execute("INSERT INTO site_settings (id, platform_name, platform_subtitle, logo_url, logo_letter, favicon_url, footer_text, page_settings, updated_at, updated_by_id, login_tagline, login_welcome, login_bg_gradient) VALUES (1, 'MathPlatform', 'Tanzania', '', 'M', '', '{}', NOW(), NULL, 'Perfomance analysis', 'Sign in to your account.', TRUE) ON CONFLICT DO NOTHING")
+        c.execute("INSERT INTO site_settings (id, platform_name, platform_subtitle, logo_url, logo_letter, favicon_url, footer_text, page_settings, updated_at, updated_by_id, login_tagline, login_welcome) VALUES (1, 'MathPlatform', 'Tanzania', '', 'M', '', '{}', NOW(), NULL, 'Perfomance analysis', 'Sign in to your account.', TRUE) ON CONFLICT DO NOTHING")
     print("  site_settings repair complete.")
 else:
     print("  site_settings table does not exist — will be created by migrate.")
