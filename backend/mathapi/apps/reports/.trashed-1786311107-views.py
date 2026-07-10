@@ -16,7 +16,6 @@ from .pdf_engine import (
 from .excel_engine import (
     generate_exam_scores_excel,
     generate_class_report_excel,
-    generate_student_report_excel,
 )
 import csv
 import io
@@ -183,55 +182,14 @@ class StudentReportPDFView(APIView):
         topic_result = services.get_student_topic_analysis(student_id, created_by_id=created_by_id)
         topic_data = topic_result.get('topics', [])
         trend = services.get_student_trend(student_id, created_by_id=created_by_id)
-        comparison = services.get_student_classroom_comparison(student_id, created_by_id=created_by_id)
 
         pdf_bytes = generate_student_report_pdf(
-            student, scores, topic_data, school_name=school_name, trend=trend, comparison=comparison
+            student, scores, topic_data, school_name=school_name, trend=trend
         )
 
         response = HttpResponse(pdf_bytes, content_type='application/pdf')
         safe = student.full_name.replace(' ', '_')[:40]
         response['Content-Disposition'] = f'attachment; filename="student_{safe}_report.pdf"'
-        return response
-
-
-class StudentReportExcelView(APIView):
-    """GET /api/reports/export/student/:id/excel/"""
-    permission_classes = [permissions.IsAuthenticated]
-
-    def get(self, request, student_id):
-        _check_student_access(request.user, student_id)
-        try:
-            student = StudentProfile.objects.select_related(
-                'user', 'classroom__grade_level'
-            ).get(id=student_id)
-        except StudentProfile.DoesNotExist:
-            return Response({'detail': 'Student not found.'}, status=404)
-
-        school_name = _resolve_site_name(request)
-
-        scores = ExamScore.objects.filter(
-            student=student
-        ).select_related('exam').order_by('exam__exam_date')
-        created_by_id = request.user.id if request.user.role == 'teacher' else None
-        if created_by_id:
-            scores = scores.filter(exam__created_by_id=created_by_id)
-
-        topic_result = services.get_student_topic_analysis(student_id, created_by_id=created_by_id)
-        topic_data = topic_result.get('topics', [])
-        trend = services.get_student_trend(student_id, created_by_id=created_by_id)
-        comparison = services.get_student_classroom_comparison(student_id, created_by_id=created_by_id)
-
-        xlsx_bytes = generate_student_report_excel(
-            student, scores, topic_data, school_name=school_name, trend=trend, comparison=comparison
-        )
-
-        response = HttpResponse(
-            xlsx_bytes,
-            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        )
-        safe = student.full_name.replace(' ', '_')[:40]
-        response['Content-Disposition'] = f'attachment; filename="student_{safe}_report.xlsx"'
         return response
 
 

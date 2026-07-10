@@ -91,10 +91,6 @@ def _make_styles():
         fontSize=9, fontName='Helvetica-Bold',
         textColor=BRAND_DARK)
 
-    styles['caption'] = ParagraphStyle('caption',
-        fontSize=7.5, fontName='Helvetica-Oblique',
-        textColor=BRAND_GRAY, spaceBefore=4, leading=10)
-
     return styles
 
 
@@ -183,10 +179,8 @@ CHART_W = (PAGE_W - 2*MARGIN)
 CHART_H = 6.0 * cm
 
 
-def _trend_chart(timeline, moving_average, class_avg_series=None, width=CHART_W, height=CHART_H) -> Drawing:
-    """Line chart: % score per exam over time, a 3-exam moving average, and
-    (when available) the classroom average on those same exams — so a
-    student's trajectory can be read against their peers, not in isolation."""
+def _trend_chart(timeline, moving_average, width=CHART_W, height=CHART_H) -> Drawing:
+    """Line chart: % score per exam over time, plus a 3-exam moving average."""
     d = Drawing(width, height)
     if len(timeline) < 2:
         d.add(String(width/2, height/2, 'Not enough exams yet for a trend chart',
@@ -197,17 +191,13 @@ def _trend_chart(timeline, moving_average, class_avg_series=None, width=CHART_W,
     n = len(pcts)
     score_series = list(zip(range(n), pcts))
     avg_series = [(i, v) for i, v in enumerate(moving_average) if v is not None] if moving_average else []
-    class_series = (
-        [(i, v) for i, v in enumerate(class_avg_series) if v is not None]
-        if class_avg_series else []
-    )
 
     plot = LinePlot()
     plot.x = 1.6*cm
     plot.y = 1.3*cm
     plot.width = width - 2.6*cm
     plot.height = height - 2.0*cm
-    plot.data = [score_series] + ([avg_series] if avg_series else []) + ([class_series] if class_series else [])
+    plot.data = [score_series] + ([avg_series] if avg_series else [])
 
     plot.lines[0].strokeColor = BRAND_BLUE
     plot.lines[0].strokeWidth = 1.6
@@ -215,16 +205,10 @@ def _trend_chart(timeline, moving_average, class_avg_series=None, width=CHART_W,
     plot.lines[0].symbol.fillColor = BRAND_BLUE
     plot.lines[0].symbol.strokeColor = BRAND_BLUE
     plot.lines[0].symbol.size = 3
-    next_idx = 1
     if avg_series:
-        plot.lines[next_idx].strokeColor = BRAND_VIOLET
-        plot.lines[next_idx].strokeWidth = 1.2
-        plot.lines[next_idx].strokeDashArray = [3, 2]
-        next_idx += 1
-    if class_series:
-        plot.lines[next_idx].strokeColor = BRAND_GRAY
-        plot.lines[next_idx].strokeWidth = 1.2
-        plot.lines[next_idx].strokeDashArray = [1, 2]
+        plot.lines[1].strokeColor = BRAND_VIOLET
+        plot.lines[1].strokeWidth = 1.2
+        plot.lines[1].strokeDashArray = [3, 2]
 
     plot.xValueAxis.valueMin = 0
     plot.xValueAxis.valueMax = n - 1
@@ -253,10 +237,8 @@ def _trend_chart(timeline, moving_average, class_avg_series=None, width=CHART_W,
     legend.dy = 7
     legend.deltax = 60
     legend.columnMaximum = 1
-    legend.colorNamePairs = (
-        [(BRAND_BLUE, 'Score %')]
-        + ([(BRAND_VIOLET, 'Moving avg (3)')] if avg_series else [])
-        + ([(BRAND_GRAY, 'Classroom avg')] if class_series else [])
+    legend.colorNamePairs = [(BRAND_BLUE, 'Score %')] + (
+        [(BRAND_VIOLET, 'Moving avg (3)')] if avg_series else []
     )
     d.add(legend)
 
@@ -272,9 +254,7 @@ def _trend_chart(timeline, moving_average, class_avg_series=None, width=CHART_W,
 
 
 def _topic_bar_chart(topics, width=CHART_W, height=CHART_H) -> Drawing:
-    """Vertical bar chart of average % per topic, colour-banded by
-    performance with an explicit legend/key (previously the bars were
-    colour-coded with no key explaining what the colours meant)."""
+    """Horizontal-style vertical bar chart of average % per topic."""
     d = Drawing(width, height)
     if not topics:
         d.add(String(width/2, height/2, 'No topic-level data recorded yet',
@@ -285,7 +265,7 @@ def _topic_bar_chart(topics, width=CHART_W, height=CHART_H) -> Drawing:
     chart.x = 1.6*cm
     chart.y = 1.6*cm
     chart.width = width - 2.4*cm
-    chart.height = height - 2.9*cm
+    chart.height = height - 2.2*cm
     chart.data = [[t['average'] for t in topics]]
     chart.categoryAxis.categoryNames = [
         (t['topic_name'][:14] + '…') if len(t['topic_name']) > 15 else t['topic_name']
@@ -306,72 +286,6 @@ def _topic_bar_chart(topics, width=CHART_W, height=CHART_H) -> Drawing:
     for i, t in enumerate(topics):
         chart.bars[(0, i)].fillColor = _grade_color(t['average'])
     d.add(chart)
-
-    legend = Legend()
-    legend.x = chart.x
-    legend.y = height - 0.25*cm
-    legend.alignment = 'right'
-    legend.fontSize = 6.5
-    legend.dx = 6
-    legend.dy = 6
-    legend.deltax = 58
-    legend.columnMaximum = 1
-    legend.colorNamePairs = [
-        (BRAND_GREEN, 'Strong (75%+)'),
-        (BRAND_BLUE, 'Good (65-74%)'),
-        (BRAND_AMBER, 'Fair (45-64%)'),
-        (BRAND_ROSE, 'Needs support (<45%)'),
-    ]
-    d.add(legend)
-    return d
-
-
-def _comparison_bar_chart(labels, student_vals, class_vals, width=CHART_W, height=CHART_H) -> Drawing:
-    """Grouped bar chart: student's score vs classroom average, per exam.
-    New chart — makes it possible to see at a glance whether the student is
-    ahead of, in line with, or behind their classmates on each exam, not
-    just their trend in isolation."""
-    d = Drawing(width, height)
-    if not labels:
-        d.add(String(width/2, height/2, 'No classroom comparison data available',
-                      fontSize=9, fillColor=BRAND_GRAY, textAnchor='middle'))
-        return d
-
-    chart = VerticalBarChart()
-    chart.x = 1.6*cm
-    chart.y = 1.6*cm
-    chart.width = width - 2.4*cm
-    chart.height = height - 2.9*cm
-    chart.data = [student_vals, class_vals]
-    chart.categoryAxis.categoryNames = [
-        (lbl[:12] + '…') if len(lbl) > 13 else lbl for lbl in labels
-    ]
-    chart.categoryAxis.labels.fontSize = 6.5
-    chart.categoryAxis.labels.angle = 25
-    chart.categoryAxis.labels.dy = -10
-    chart.valueAxis.valueMin = 0
-    chart.valueAxis.valueMax = 100
-    chart.valueAxis.valueSteps = [0, 25, 50, 75, 100]
-    chart.valueAxis.labelTextFormat = '%d%%'
-    chart.valueAxis.labels.fontSize = 7
-    chart.bars[0].fillColor = BRAND_BLUE
-    chart.bars[1].fillColor = BRAND_GRAY
-    chart.barWidth = 6
-    chart.groupSpacing = 10
-    chart.barSpacing = 1
-    d.add(chart)
-
-    legend = Legend()
-    legend.x = chart.x
-    legend.y = height - 0.25*cm
-    legend.alignment = 'right'
-    legend.fontSize = 6.5
-    legend.dx = 6
-    legend.dy = 6
-    legend.deltax = 60
-    legend.columnMaximum = 1
-    legend.colorNamePairs = [(BRAND_BLUE, 'This student'), (BRAND_GRAY, 'Classroom avg')]
-    d.add(legend)
     return d
 
 
@@ -413,14 +327,10 @@ def _grade_distribution_pie(scores_present, width=8*cm, height=CHART_H) -> Drawi
     return d
 
 
-def _section_card(title: str, drawing: Drawing, styles, width=None, caption: str = None) -> list:
-    """Wrap a chart drawing with a section heading and optional explanatory
-    caption inside a light card border."""
+def _section_card(title: str, drawing: Drawing, styles, width=None) -> list:
+    """Wrap a chart drawing with a section heading inside a light card border."""
     items = [Paragraph(title, styles['section']), Spacer(1, 0.1*cm)]
-    box_rows = [[drawing]]
-    if caption:
-        box_rows.append([Paragraph(caption, styles['caption'])])
-    tbl = Table(box_rows, colWidths=[width or CHART_W])
+    tbl = Table([[drawing]], colWidths=[width or CHART_W])
     tbl.setStyle(TableStyle([
         ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor('#e5e7eb')),
         ('TOPPADDING', (0,0), (-1,-1), 6),
@@ -721,26 +631,19 @@ def generate_class_report_pdf(classroom, students, scores_map, exams,
 
 def generate_student_report_pdf(student, scores, topic_data,
                                  school_name='School of Excellence',
-                                 trend=None, comparison=None) -> bytes:
+                                 trend=None) -> bytes:
     """
     Full individual student analytics report (A4).
 
-    Includes: profile summary, score trend chart (with classroom-average
-    overlay), topic mastery bar chart (with a colour-band legend), grade
-    distribution pie chart, a student-vs-classroom comparison chart,
-    class rank/percentile, term-by-term breakdown, full examination
-    history (with classroom average per exam), topic mastery table, and an
-    auto-generated strengths/watch-areas narrative.
+    Includes: profile summary, score trend chart, topic mastery bar chart,
+    grade distribution pie chart, term-by-term breakdown, full examination
+    history, topic mastery table, and an auto-generated strengths/
+    watch-areas narrative.
     """
     buf = io.BytesIO()
     styles = _make_styles()
     scores = list(scores)
     trend = trend or {}
-    comparison = comparison or {}
-    class_by_exam = comparison.get('by_exam') or {}
-    rank = comparison.get('rank')
-    class_size = comparison.get('class_size') or 0
-    percentile = comparison.get('percentile')
 
     present = [s for s in scores if not s.is_absent]
     pcts = [s.percentage for s in present]
@@ -794,12 +697,6 @@ def generate_student_report_pdf(student, scores, topic_data,
         ('EXAMS PASSED', f'{passed_count}/{len(present)}'),
         ('PREDICTED GRADE', _letter_grade(avg) if pcts else '—'),
     ], styles))
-    story.append(Spacer(1, 0.25*cm))
-    story.append(_meta_grid([
-        ('CLASS RANK', f'{rank} of {class_size}' if rank else '—'),
-        ('CLASS PERCENTILE', f'Top {round(100 - percentile, 1)}%' if percentile is not None else '—'),
-        ('CLASSMATES COMPARED', str(class_size) if class_size else '—'),
-    ], styles))
     story.append(Spacer(1, 0.45*cm))
 
     # ── Score trend chart ────────────────────────────────────────────────────
@@ -807,18 +704,9 @@ def generate_student_report_pdf(student, scores, topic_data,
         {'exam_date': s.exam.exam_date.strftime('%Y-%m-%d'), 'percentage': s.percentage}
         for s in present
     ]
-    class_series = None
-    if class_by_exam and trend.get('timeline'):
-        class_series = [class_by_exam.get(t['exam_id']) for t in trend['timeline']]
     story.extend(_section_card(
         'Score Trend Over Time',
-        _trend_chart(timeline, trend.get('moving_average'), class_avg_series=class_series), styles,
-        caption=(
-            'Each point is one exam\'s score. The dashed violet line is a 3-exam moving '
-            'average (smooths out one-off high/low results); the dashed grey line is the '
-            'classroom average on those same exams, when available, so you can see whether '
-            'the student is pulling ahead of, keeping pace with, or falling behind the class.'
-        ),
+        _trend_chart(timeline, trend.get('moving_average')), styles,
     ))
     story.append(Spacer(1, 0.4*cm))
 
@@ -828,11 +716,9 @@ def generate_student_report_pdf(student, scores, topic_data,
     pie_drawing = _grade_distribution_pie(present, width=half_w)
     two_col = Table(
         [[
-            Table([[Paragraph('Topic Mastery', styles['section'])], [topic_drawing],
-                   [Paragraph('Bars are colour-banded by average score — see legend on the chart.', styles['caption'])]],
+            Table([[Paragraph('Topic Mastery', styles['section'])], [topic_drawing]],
                   colWidths=[half_w]),
-            Table([[Paragraph('Grade Distribution', styles['section'])], [pie_drawing],
-                   [Paragraph('Share of exams (not topics) falling in each letter-grade band.', styles['caption'])]],
+            Table([[Paragraph('Grade Distribution', styles['section'])], [pie_drawing]],
                   colWidths=[half_w]),
         ]],
         colWidths=[half_w, half_w],
@@ -843,24 +729,6 @@ def generate_student_report_pdf(student, scores, topic_data,
     ]))
     story.append(two_col)
     story.append(Spacer(1, 0.4*cm))
-
-    # ── Student vs classroom average, per exam ───────────────────────────────
-    if class_by_exam and trend.get('timeline'):
-        cmp_timeline = [t for t in trend['timeline'] if t['exam_id'] in class_by_exam]
-        if cmp_timeline:
-            labels = [t['exam_title'] for t in cmp_timeline]
-            student_vals = [t['percentage'] for t in cmp_timeline]
-            class_vals = [class_by_exam[t['exam_id']] for t in cmp_timeline]
-            story.extend(_section_card(
-                'Student vs. Classroom Average — Per Exam',
-                _comparison_bar_chart(labels, student_vals, class_vals), styles,
-                caption=(
-                    'Blue bars are this student\'s score; grey bars are the classroom average '
-                    'on the same exam. Blue taller than grey means the student outperformed '
-                    'the class average on that exam.'
-                ),
-            ))
-            story.append(Spacer(1, 0.4*cm))
 
     # ── Term-by-term breakdown ───────────────────────────────────────────────
     term_groups = {}
@@ -896,7 +764,7 @@ def generate_student_report_pdf(student, scores, topic_data,
         story.append(Spacer(1, 0.4*cm))
 
     # ── Strengths & watch areas (auto-generated narrative) ───────────────────
-    if topic_data or class_by_exam:
+    if topic_data:
         sorted_topics = sorted(topic_data, key=lambda t: t['average'], reverse=True)
         strong = [t['topic_name'] for t in sorted_topics if t['average'] >= 70][:3]
         weak = [t['topic_name'] for t in sorted_topics if t['average'] < 50][:3]
@@ -905,18 +773,12 @@ def generate_student_report_pdf(student, scores, topic_data,
             narrative.append(f"<b>Strengths:</b> Performing strongly in {', '.join(strong)}.")
         if weak:
             narrative.append(f"<b>Watch areas:</b> Needs support in {', '.join(weak)}.")
-        if not strong and not weak and topic_data:
+        if not strong and not weak:
             narrative.append('Performance is fairly even across topics — no standout strengths or weak spots yet.')
         narrative.append(
             f"Overall trend is <b>{trend_label.lower()}</b> with a consistency score of "
             f"{consistency} percentage points (lower = more consistent)."
         )
-        if rank and class_size:
-            narrative.append(
-                f"Currently ranked <b>{rank} of {class_size}</b> in class "
-                f"({'top' if percentile and percentile >= 50 else 'bottom'} "
-                f"{round(percentile if percentile and percentile >= 50 else 100 - (percentile or 0), 1)}%)."
-            )
         story.append(Paragraph('Performance Insights', styles['section']))
         story.append(Paragraph('<br/>'.join(narrative), styles['body']))
         story.append(Spacer(1, 0.4*cm))
@@ -925,42 +787,23 @@ def generate_student_report_pdf(student, scores, topic_data,
 
     # ── Full examination history ─────────────────────────────────────────────
     story.append(Paragraph('Full Examination History', styles['section']))
-    story.append(Paragraph(
-        '"Class Avg" is the classroom average on that same exam (when available); "vs Class" '
-        'is this student\'s score minus that average — positive means above the class average.',
-        styles['caption'],
-    ))
-    has_cmp = bool(class_by_exam)
-    if has_cmp:
-        col_w = [(PAGE_W - 2*MARGIN)*p for p in [0.03, 0.26, 0.11, 0.10, 0.08, 0.07, 0.07, 0.06, 0.07, 0.08, 0.07]]
-        tbl_data = [['#', 'Exam', 'Type', 'Date', 'Score', '%', 'Class Avg', 'vs Class', 'Grade', 'Pass?', '']]
-    else:
-        col_w = [(PAGE_W - 2*MARGIN)*p for p in [0.04, 0.34, 0.13, 0.13, 0.10, 0.10, 0.08, 0.08]]
-        tbl_data = [['#', 'Exam', 'Type', 'Date', 'Score', '%', 'Grade', 'Pass?']]
+    col_w = [(PAGE_W - 2*MARGIN)*p for p in [0.04, 0.34, 0.13, 0.13, 0.10, 0.10, 0.08, 0.08]]
+    tbl_data = [['#', 'Exam', 'Type', 'Date', 'Score', '%', 'Grade', 'Pass?']]
     for i, s in enumerate(scores, 1):
         if s.is_absent:
-            row = [str(i), s.exam.title, s.exam.get_exam_type_display(),
-                   s.exam.exam_date.strftime('%d %b %Y'), 'ABSENT', '—']
-            row += (['—', '—'] if has_cmp else [])
-            row += ['—', '—']
-            row += ([''] if has_cmp else [])
+            tbl_data.append([str(i), s.exam.title, s.exam.get_exam_type_display(),
+                              s.exam.exam_date.strftime('%d %b %Y'), 'ABSENT', '—', '—', '—'])
         else:
-            row = [
+            tbl_data.append([
                 str(i), s.exam.title, s.exam.get_exam_type_display(),
                 s.exam.exam_date.strftime('%d %b %Y'),
-                f'{float(s.score):.1f}', f'{s.percentage}%',
-            ]
-            if has_cmp:
-                cavg = class_by_exam.get(s.exam_id)
-                diff = round(s.percentage - cavg, 1) if cavg is not None else None
-                row += [f'{cavg}%' if cavg is not None else '—',
-                        f'{"+" if diff is not None and diff > 0 else ""}{diff}%' if diff is not None else '—']
-            row += [s.letter_grade, '✓' if s.passed else '✗']
-            row += ([''] if has_cmp else [])
-        tbl_data.append(row if has_cmp else row[:8])
+                f'{float(s.score):.1f}',
+                f'{s.percentage}%',
+                s.letter_grade,
+                '✓' if s.passed else '✗',
+            ])
 
     tbl = Table(tbl_data, colWidths=col_w, repeatRows=1)
-    pass_col = 9 if has_cmp else 7
     tstyles = [
         ('BACKGROUND', (0,0), (-1,0), BRAND_DARK),
         ('TEXTCOLOR', (0,0), (-1,0), WHITE),
@@ -977,13 +820,8 @@ def generate_student_report_pdf(student, scores, topic_data,
     for i, s in enumerate(scores, 1):
         if not s.is_absent:
             tbl_styles_color = BRAND_GREEN if s.passed else BRAND_ROSE
-            tstyles.append(('TEXTCOLOR', (pass_col, i), (pass_col, i), tbl_styles_color))
-            tstyles.append(('FONTNAME', (pass_col, i), (pass_col, i), 'Helvetica-Bold'))
-            if has_cmp:
-                cavg = class_by_exam.get(s.exam_id)
-                if cavg is not None:
-                    diff_color = BRAND_GREEN if s.percentage >= cavg else BRAND_ROSE
-                    tstyles.append(('TEXTCOLOR', (7, i), (7, i), diff_color))
+            tstyles.append(('TEXTCOLOR', (7, i), (7, i), tbl_styles_color))
+            tstyles.append(('FONTNAME', (7, i), (7, i), 'Helvetica-Bold'))
     tbl.setStyle(TableStyle(tstyles))
     story.append(tbl)
 

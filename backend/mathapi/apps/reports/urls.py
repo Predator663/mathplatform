@@ -14,6 +14,7 @@ urlpatterns = [
     # Excel exports
     path('export/exam/<int:exam_id>/excel/', views.ExamScoresExcelView.as_view(), name='exam_excel'),
     path('export/classroom/<int:classroom_id>/excel/', views.ClassReportExcelView.as_view(), name='class_excel'),
+    path('export/student/<int:student_id>/excel/', views.StudentReportExcelView.as_view(), name='student_excel'),
 
     # CSV exports
     path('export/exam/<int:exam_id>/csv/', views.ExportScoresCSVView.as_view(), name='exam_csv'),

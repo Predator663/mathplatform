@@ -174,69 +174,6 @@ def get_student_topic_analysis(student_id: int, subject_id: int = None, created_
 
 # ── Class analytics ──────────────────────────────────────────────────────────
 
-def get_student_classroom_comparison(student_id: int, subject_id: int = None, created_by_id: int = None) -> dict:
-    """
-    For a student's report: how they compare to their classmates.
-
-    Returns, per exam the student took, the classroom average on that same
-    exam (so a trend chart can show "you" vs "class" side by side), plus the
-    student's rank and percentile within the classroom based on overall
-    average across the same scoped set of exams/scores. classroom average is
-    computed by pooling ALL classroom scores (including the student's own —
-    same convention as the rest of the app's classroom averages), not just
-    classmates, so it lines up with the "class average" figure shown
-    elsewhere (e.g. the classroom analytics page).
-    """
-    try:
-        student = StudentProfile.objects.select_related('classroom').get(id=student_id)
-    except StudentProfile.DoesNotExist:
-        return {'by_exam': {}, 'rank': None, 'class_size': 0, 'percentile': None}
-
-    if not student.classroom_id:
-        return {'by_exam': {}, 'rank': None, 'class_size': 0, 'percentile': None}
-
-    filters = Q(student__classroom_id=student.classroom_id, is_absent=False)
-    if subject_id:
-        filters &= Q(exam__subject_id=subject_id)
-    if created_by_id:
-        filters &= Q(exam__created_by_id=created_by_id)
-
-    rows = ExamScore.objects.filter(filters).values_list('exam_id', 'student_id', 'score', 'exam__max_score')
-
-    by_exam_pcts = defaultdict(list)
-    by_student_pcts = defaultdict(list)
-    for exam_id, sid, score, max_score in rows:
-        if not max_score:
-            continue
-        pct = round((float(score) / float(max_score)) * 100, 1)
-        by_exam_pcts[exam_id].append(pct)
-        by_student_pcts[sid].append(pct)
-
-    by_exam_avg = {
-        exam_id: round(sum(pcts) / len(pcts), 1)
-        for exam_id, pcts in by_exam_pcts.items()
-    }
-
-    student_overall_avgs = {
-        sid: round(sum(pcts) / len(pcts), 1)
-        for sid, pcts in by_student_pcts.items() if pcts
-    }
-    class_size = len(student_overall_avgs)
-    rank, percentile = None, None
-    if student_id in student_overall_avgs and class_size > 0:
-        ranked = sorted(student_overall_avgs.values(), reverse=True)
-        my_avg = student_overall_avgs[student_id]
-        rank = ranked.index(my_avg) + 1
-        percentile = round(100 * (class_size - rank) / max(class_size - 1, 1), 1) if class_size > 1 else 100.0
-
-    return {
-        'by_exam': by_exam_avg,
-        'rank': rank,
-        'class_size': class_size,
-        'percentile': percentile,
-    }
-
-
 def get_class_analytics(
     classroom_id: int,
     academic_year: str = None,
