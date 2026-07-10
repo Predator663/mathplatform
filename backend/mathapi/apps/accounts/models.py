@@ -144,6 +144,17 @@ DEFAULT_TEACHER_PERMISSIONS = {
 
 class SiteSettings(models.Model):
     """Singleton model for platform-wide configuration."""
+
+    class Term(models.TextChoices):
+        # Mirrors mathapi.apps.exams.models.Exam.Term exactly. Duplicated
+        # here (rather than imported) so the accounts app doesn't take a
+        # hard dependency on the exams app — keep these two in sync if the
+        # term choices ever change.
+        TERM_I   = 'term_1', 'Term I (Jan–Apr)'
+        TERM_II  = 'term_2', 'Term II (May–Aug)'
+        TERM_III = 'term_3', 'Term III (Sep–Dec)'
+        ANNUAL   = 'annual', 'Annual'
+
     platform_name = models.CharField(max_length=100, default='MathPlatform')
     platform_subtitle = models.CharField(max_length=100, default='Tanzania', blank=True)
     logo_url = models.URLField(blank=True, help_text='URL to platform logo image')
@@ -169,6 +180,21 @@ class SiteSettings(models.Model):
         default=True, help_text='Show ambient glow gradient on login page background',
     )
     page_settings = models.JSONField(default=dict, blank=True)
+
+    current_academic_year = models.CharField(
+        max_length=9, blank=True, default='',
+        help_text=(
+            'The school\'s current academic year (e.g. "2026"). Used to '
+            'pre-fill the Academic Year field when creating a new exam.'
+        ),
+    )
+    current_term = models.CharField(
+        max_length=20, choices=Term.choices, blank=True, default='',
+        help_text=(
+            'The school\'s current term. Used to pre-fill the Term field '
+            'when creating a new exam. Leave blank to not pre-fill.'
+        ),
+    )
 
     teacher_permissions = models.JSONField(
         default=dict, blank=True,
