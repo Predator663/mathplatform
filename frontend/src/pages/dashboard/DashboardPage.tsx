@@ -543,7 +543,9 @@ export default function DashboardPage() {
                 <p className="font-display font-semibold text-rose-400 text-sm">
                   {data?.at_risk_count} student{data?.at_risk_count !== 1 ? 's' : ''} at risk
                 </p>
-                <p className="text-muted text-xs mt-0.5 hidden sm:block">Below 30% threshold — consider early intervention</p>
+                <p className="text-muted text-xs mt-0.5 hidden sm:block">
+                  Recent 3-exam average below 30%, or dropped 10+ pts — consider early intervention
+                </p>
               </div>
             </div>
             <Link to="/at-risk" className="flex items-center gap-1.5 text-xs font-display font-semibold text-rose-400 hover:text-rose-300 transition-colors whitespace-nowrap flex-shrink-0 bg-rose-500/10 hover:bg-rose-500/20 px-3 py-2 rounded-xl">
