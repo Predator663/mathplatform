@@ -1,6 +1,7 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import permissions, status
+from collections import defaultdict
 from . import services
 
 
@@ -188,21 +189,32 @@ class DashboardSummaryView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        from django.db.models import (
-            Avg, Count, Q as DQ, FloatField, ExpressionWrapper, F,
-        )
+        from django.db.models import Count, Q as DQ
         from mathapi.apps.students.models import StudentProfile, Classroom
         from mathapi.apps.exams.models import Exam, ExamScore
 
         user = request.user
         subject_id = _get_subject_id(request)
 
-        # ── percentage annotation (replaces the @property) ──────────────
-        # score * 100.0 / exam__max_score mirrors ExamScore.percentage
-        pct_expr = ExpressionWrapper(
-            F('score') * 100.0 / F('exam__max_score'),
-            output_field=FloatField(),
-        )
+        # ── percentage helper ─────────────────────────────────────────
+        # NOTE: this used to be computed as a raw DB expression
+        # (F('score') * 100.0 / F('exam__max_score')) via ExpressionWrapper.
+        # That mixes a DecimalField with a Python float literal — Django
+        # requires an explicit output_field on the INNER combined
+        # expression too, not just the outer wrapper, or it raises
+        # FieldError: "Expression contains mixed types...". SQLite is
+        # lenient about this and let it slide, but Postgres (production)
+        # raised it on every request, so the dashboard API call 500'd —
+        # and since the frontend query never checked isError, it silently
+        # rendered as 0s and empty graphs instead of a visible failure.
+        # Every OTHER analytics endpoint in this app (services.py)
+        # computes percentage in Python via ExamScore.percentage /
+        # TopicScore.percentage, so we do the same here for correctness
+        # and consistency.
+        def pct(score, max_score):
+            if not max_score:
+                return None
+            return round((float(score) / float(max_score)) * 100, 1)
 
         def letter_grade(pct):
             if pct is None:
@@ -259,24 +271,22 @@ class DashboardSummaryView(APIView):
         recent_exam_ids = [e.id for e in recent_exams_qs]
 
         # ── Overall average + grade distribution ────────────────────────
-        # Annotate percentage in DB so we can aggregate it properly
-        scored_qs = (
+        # Fetch (score, max_score) pairs and compute in Python.
+        scored_rows = list(
             ExamScore.objects.filter(score_filter)
             .filter(exam__max_score__gt=0)
-            .annotate(pct=pct_expr)
+            .values_list('score', 'exam__max_score')
         )
-        all_pcts = list(scored_qs.values_list('pct', flat=True))
+        all_pcts = [pct(s, m) for s, m in scored_rows]
         overall_avg = None
         grade_distribution = {'A': 0, 'B': 0, 'C': 0, 'D': 0, 'F': 0}
-        if all_pcts:
-            # Filter out None (max_score=0 edge case)
-            valid = [p for p in all_pcts if p is not None]
-            if valid:
-                overall_avg = round(sum(valid) / len(valid), 1)
-                for p in valid:
-                    g = letter_grade(p)
-                    if g in grade_distribution:
-                        grade_distribution[g] += 1
+        valid = [p for p in all_pcts if p is not None]
+        if valid:
+            overall_avg = round(sum(valid) / len(valid), 1)
+            for p in valid:
+                g = letter_grade(p)
+                if g in grade_distribution:
+                    grade_distribution[g] += 1
 
         # ── At-risk count ───────────────────────────────────────────────
         # Reuses services.get_at_risk_students() — the same canonical
@@ -295,61 +305,50 @@ class DashboardSummaryView(APIView):
         ))
 
         # ── Per-classroom averages ───────────────────────────────────────
-        classroom_agg = (
+        classroom_rows = (
             ExamScore.objects.filter(score_filter)
             .filter(exam__max_score__gt=0)
-            .annotate(pct=pct_expr)
-            .values('student__classroom_id', 'student__classroom__name')
-            .annotate(average=Avg('pct'), score_count=Count('id'))
-            .order_by('student__classroom__name')[:12]
+            .values_list('student__classroom_id', 'student__classroom__name', 'score', 'exam__max_score')
         )
+        classroom_pcts: dict = defaultdict(list)
+        classroom_names: dict = {}
+        for cid, cname, score, max_score in classroom_rows:
+            p = pct(score, max_score)
+            if p is not None:
+                classroom_pcts[cid].append(p)
+                classroom_names[cid] = cname
         student_counts = dict(
             StudentProfile.objects.filter(classroom_id__in=classroom_ids, is_active=True)
             .values('classroom_id')
             .annotate(cnt=Count('id'))
             .values_list('classroom_id', 'cnt')
         )
-        classroom_averages = [
+        classroom_averages = sorted([
             {
-                'classroom': row['student__classroom__name'],
-                'average': round(row['average'], 1),
-                'student_count': student_counts.get(row['student__classroom_id'], 0),
+                'classroom': classroom_names[cid],
+                'average': round(sum(pcts) / len(pcts), 1),
+                'student_count': student_counts.get(cid, 0),
             }
-            for row in classroom_agg
-            if row['score_count'] > 0 and row['average'] is not None
-        ]
+            for cid, pcts in classroom_pcts.items()
+        ], key=lambda c: c['classroom'])[:12]
 
         # ── Recent exam stats ────────────────────────────────────────────
-        exam_score_agg = {
-            row['exam_id']: row
-            for row in (
-                ExamScore.objects.filter(exam_id__in=recent_exam_ids, is_absent=False)
-                .filter(exam__max_score__gt=0)
-                .annotate(pct=pct_expr)
-                .values('exam_id')
-                .annotate(average=Avg('pct'), score_count=Count('id'))
-            )
-        }
-        exam_pass_counts: dict = defaultdict(int)
-        exam_total_counts: dict = defaultdict(int)
-        for row in (
+        exam_pcts: dict = defaultdict(list)
+        for exam_id, score, max_score in (
             ExamScore.objects.filter(exam_id__in=recent_exam_ids, is_absent=False)
             .filter(exam__max_score__gt=0)
-            .annotate(pct=pct_expr)
-            .values_list('exam_id', 'pct')
+            .values_list('exam_id', 'score', 'exam__max_score')
         ):
-            if row[1] is not None:
-                exam_total_counts[row[0]] += 1
-                if row[1] >= 30:
-                    exam_pass_counts[row[0]] += 1
+            p = pct(score, max_score)
+            if p is not None:
+                exam_pcts[exam_id].append(p)
 
         recent_exam_stats = []
         for e in recent_exams_qs:
-            agg = exam_score_agg.get(e.id)
-            total_c = exam_total_counts.get(e.id, 0)
-            if agg and total_c and agg['average'] is not None:
-                avg_val = round(agg['average'], 1)
-                pass_rate = round(100 * exam_pass_counts[e.id] / total_c, 1)
+            pcts = exam_pcts.get(e.id, [])
+            if pcts:
+                avg_val = round(sum(pcts) / len(pcts), 1)
+                pass_rate = round(100 * sum(1 for p in pcts if p >= 30) / len(pcts), 1)
             else:
                 avg_val, pass_rate = None, None
             recent_exam_stats.append({
@@ -360,48 +359,42 @@ class DashboardSummaryView(APIView):
         # ── Per-subject averages (admin only) ────────────────────────────
         subject_averages = []
         if user.role == 'super_admin':
-            subj_agg = (
+            subj_rows = (
                 ExamScore.objects.filter(
                     is_absent=False, student__classroom_id__in=classroom_ids,
                 )
                 .filter(exam__max_score__gt=0)
-                .annotate(pct=pct_expr)
-                .values('exam__subject_id', 'exam__subject__name',
-                        'exam__subject__code', 'exam__subject__color')
-                .annotate(average=Avg('pct'), score_count=Count('id'),
-                          exam_count=Count('exam_id', distinct=True),
-                          student_count=Count('student_id', distinct=True))
-                .filter(score_count__gt=0)
-                .order_by('-average')
+                .values_list(
+                    'exam__subject_id', 'exam__subject__name', 'exam__subject__code',
+                    'exam__subject__color', 'score', 'exam__max_score',
+                    'exam_id', 'student_id',
+                )
             )
-            subj_pass: dict = defaultdict(lambda: [0, 0])
-            for row in (
-                ExamScore.objects.filter(
-                    is_absent=False, student__classroom_id__in=classroom_ids,
-                )
-                .filter(exam__max_score__gt=0)
-                .annotate(pct=pct_expr)
-                .values_list('exam__subject_id', 'pct')
-            ):
-                if row[1] is not None:
-                    subj_pass[row[0]][1] += 1
-                    if row[1] >= 30:
-                        subj_pass[row[0]][0] += 1
+            subj_pcts: dict = defaultdict(list)
+            subj_meta: dict = {}
+            subj_exam_ids: dict = defaultdict(set)
+            subj_student_ids: dict = defaultdict(set)
+            for sid_key, sname, scode, scolor, score, max_score, exam_id, student_id in subj_rows:
+                p = pct(score, max_score)
+                if p is not None:
+                    subj_pcts[sid_key].append(p)
+                    subj_meta[sid_key] = (sname, scode, scolor)
+                    subj_exam_ids[sid_key].add(exam_id)
+                    subj_student_ids[sid_key].add(student_id)
 
-            for row in subj_agg:
-                if row['average'] is None:
-                    continue
-                sid_key = row['exam__subject_id']
-                passed, total = subj_pass[sid_key]
+            for sid_key, pcts in subj_pcts.items():
+                sname, scode, scolor = subj_meta[sid_key]
+                passed = sum(1 for p in pcts if p >= 30)
                 subject_averages.append({
-                    'subject': row['exam__subject__name'],
-                    'code': row['exam__subject__code'],
-                    'color': row['exam__subject__color'],
-                    'average': round(row['average'], 1),
-                    'pass_rate': round(100 * passed / total, 1) if total else 0,
-                    'student_count': row['student_count'],
-                    'exam_count': row['exam_count'],
+                    'subject': sname,
+                    'code': scode,
+                    'color': scolor,
+                    'average': round(sum(pcts) / len(pcts), 1),
+                    'pass_rate': round(100 * passed / len(pcts), 1),
+                    'student_count': len(subj_student_ids[sid_key]),
+                    'exam_count': len(subj_exam_ids[sid_key]),
                 })
+            subject_averages.sort(key=lambda s: -s['average'])
 
         # ── Per-teacher stats (admin only) ───────────────────────────────
         teacher_stats = []
@@ -409,46 +402,40 @@ class DashboardSummaryView(APIView):
             t_filter = DQ(is_absent=False, student__classroom_id__in=classroom_ids)
             if subject_id:
                 t_filter &= DQ(exam__subject_id=subject_id)
-            teacher_agg = (
+            teacher_rows = (
                 ExamScore.objects.filter(t_filter)
                 .filter(exam__max_score__gt=0)
-                .annotate(pct=pct_expr)
-                .values('exam__created_by_id', 'exam__created_by__first_name',
-                        'exam__created_by__last_name', 'exam__created_by__email')
-                .annotate(average=Avg('pct'), score_count=Count('id'),
-                          exam_count=Count('exam_id', distinct=True),
-                          student_count=Count('student_id', distinct=True))
-                .filter(score_count__gt=0)
-                .order_by('-average')
+                .values_list(
+                    'exam__created_by_id', 'exam__created_by__first_name',
+                    'exam__created_by__last_name', 'exam__created_by__email',
+                    'score', 'exam__max_score', 'exam_id', 'student_id',
+                )
             )
-            teacher_pass: dict = defaultdict(lambda: [0, 0])
-            for row in (
-                ExamScore.objects.filter(t_filter)
-                .filter(exam__max_score__gt=0)
-                .annotate(pct=pct_expr)
-                .values_list('exam__created_by_id', 'pct')
-            ):
-                if row[1] is not None:
-                    teacher_pass[row[0]][1] += 1
-                    if row[1] >= 30:
-                        teacher_pass[row[0]][0] += 1
+            teacher_pcts: dict = defaultdict(list)
+            teacher_meta: dict = {}
+            teacher_exam_ids: dict = defaultdict(set)
+            teacher_student_ids: dict = defaultdict(set)
+            for tid, fn, ln, email, score, max_score, exam_id, student_id in teacher_rows:
+                p = pct(score, max_score)
+                if p is not None:
+                    teacher_pcts[tid].append(p)
+                    teacher_meta[tid] = (fn or '', ln or '', email)
+                    teacher_exam_ids[tid].add(exam_id)
+                    teacher_student_ids[tid].add(student_id)
 
-            for row in teacher_agg:
-                if row['average'] is None:
-                    continue
-                tid = row['exam__created_by_id']
-                passed, total = teacher_pass[tid]
-                fn = row['exam__created_by__first_name'] or ''
-                ln = row['exam__created_by__last_name'] or ''
-                full_name = f'{fn} {ln}'.strip() or row['exam__created_by__email']
+            for tid, pcts in teacher_pcts.items():
+                fn, ln, email = teacher_meta[tid]
+                full_name = f'{fn} {ln}'.strip() or email
+                passed = sum(1 for p in pcts if p >= 30)
                 teacher_stats.append({
                     'teacher': full_name,
-                    'email': row['exam__created_by__email'],
-                    'average': round(row['average'], 1),
-                    'pass_rate': round(100 * passed / total, 1) if total else 0,
-                    'exam_count': row['exam_count'],
-                    'student_count': row['student_count'],
+                    'email': email,
+                    'average': round(sum(pcts) / len(pcts), 1),
+                    'pass_rate': round(100 * passed / len(pcts), 1),
+                    'exam_count': len(teacher_exam_ids[tid]),
+                    'student_count': len(teacher_student_ids[tid]),
                 })
+            teacher_stats.sort(key=lambda t: -t['average'])
 
         return Response({
             'total_students': total_students,

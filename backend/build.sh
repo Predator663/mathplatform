@@ -191,7 +191,24 @@ echo "==> Collecting static files..."
 python manage.py collectstatic --no-input --settings="$SETTINGS"
 
 # ── Seed demo data (idempotent) ───────────────────────────────────
+# NOTE: previously this was `... || true`, which silently swallowed any
+# exception from seed_demo. That meant a failed seed (bad state, a
+# get_or_create conflict, etc.) still reported "Build succeeded" on
+# Render with an EMPTY database — the exact cause of a dashboard that
+# shows 0 everywhere with no error anywhere in sight. We still don't
+# want a seed failure to fail the whole deploy (the app should still
+# come up even if demo data can't be (re)seeded), but the failure must
+# be impossible to miss in the logs.
 echo "==> Seeding demo data (skip if already seeded)..."
-python manage.py seed_demo --settings="$SETTINGS" || true
+if ! python manage.py seed_demo --settings="$SETTINGS"; then
+    echo ""
+    echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+    echo "!! seed_demo FAILED — see traceback above. The database may now"
+    echo "!! be missing demo data, which will make the dashboard show 0s"
+    echo "!! and empty graphs. Deploy is continuing anyway, but you should"
+    echo "!! fix this and re-run: python manage.py seed_demo"
+    echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+    echo ""
+fi
 
 echo "==> Build complete."

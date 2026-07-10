@@ -141,7 +141,7 @@ export default function DashboardPage() {
   const isAdmin = user?.role === 'super_admin';
   const [analyticsTab, setAnalyticsTab] = useState<'classrooms' | 'subjects' | 'teachers'>('classrooms');
 
-  const { data, isLoading } = useQuery<DashboardSummary>({
+  const { data, isLoading, isError, error, refetch } = useQuery<DashboardSummary>({
     queryKey: ['dashboard', activeSubjectId],
     queryFn: () => analyticsApi.dashboard({
       ...(activeSubjectId ? { subject_id: activeSubjectId } : {}),
@@ -149,6 +149,27 @@ export default function DashboardPage() {
   });
 
   if (isLoading) return <LoadingPage />;
+
+  // Previously a failed request here just fell through to the render below,
+  // where every field defaults via `?? 0` / `?? []` — so a 500 from the API
+  // looked identical to "no data yet" (all zeros, empty graphs) with nothing
+  // in the UI to say a request actually failed. Surface it instead.
+  if (isError) {
+    const message = (error as any)?.response?.data?.detail || (error as any)?.message || 'Unknown error';
+    return (
+      <div className="card p-6 border-rose-500/30 flex flex-col items-center text-center gap-3">
+        <AlertTriangle size={24} className="text-rose-400" />
+        <p className="font-display font-semibold text-primary">Couldn't load the dashboard</p>
+        <p className="text-sm text-secondary max-w-md">{message}</p>
+        <button
+          onClick={() => refetch()}
+          className="mt-1 text-xs font-display font-semibold text-azure-400 hover:text-azure-300 bg-azure-500/10 hover:bg-azure-500/20 px-3 py-2 rounded-xl"
+        >
+          Try again
+        </button>
+      </div>
+    );
+  }
 
   /* ── Derived chart data ─────────────────────────────────────────── */
   const chartData = (data?.recent_exam_stats ?? [])
