@@ -15,6 +15,7 @@ import CreateStudentPage from './pages/students/CreateStudentPage';
 import ClassroomsPage from './pages/classrooms/ClassroomsPage';
 import CreateClassroomPage from './pages/classrooms/CreateClassroomPage';
 import ClassroomDetailPage from './pages/classrooms/ClassroomDetailPage';
+import GradeLevelsPage from './pages/classrooms/GradeLevelsPage';
 import ExamsPage from './pages/exams/ExamsPage';
 import ExamDetailPage from './pages/exams/ExamDetailPage';
 import CreateExamPage from './pages/exams/CreateExamPage';
@@ -22,6 +23,7 @@ import EditExamPage from './pages/exams/EditExamPage';
 import PendingReviewPage from './pages/exams/PendingReviewPage';
 import MarkEntryPage from './pages/marks/MarkEntryPage';
 import BulkImportPage from './pages/marks/BulkImportPage';
+import GroupsPage from './pages/groups/GroupsPage';
 import AnalyticsPage from './pages/analytics/AnalyticsPage';
 import StudentAnalyticsPage from './pages/analytics/StudentAnalyticsPage';
 import ClassAnalyticsPage from './pages/analytics/ClassAnalyticsPage';
@@ -86,6 +88,7 @@ export default function App() {
             <Route path="exams/:id/edit"      element={<EditExamPage />} />
             <Route path="exams/:id/marks"     element={<MarkEntryPage />} />
             <Route path="import"             element={<BulkImportPage />} />
+            <Route path="groups"             element={<GroupsPage />} />
             <Route path="analytics"          element={<AnalyticsPage />} />
             <Route path="analytics/student/:id" element={<StudentAnalyticsPage />} />
             <Route path="analytics/class"    element={<ClassAnalyticsPage />} />
@@ -94,6 +97,7 @@ export default function App() {
             <Route path="reports"            element={<ReportsPage />} />
             <Route path="users"              element={<UsersPage />} />
             <Route path="settings"           element={<SettingsPage />} />
+            <Route path="grade-levels"       element={<RequireAdmin><GradeLevelsPage /></RequireAdmin>} />
             <Route path="subjects"           element={<RequireAdmin><SubjectsPage /></RequireAdmin>} />
             <Route path="audit-log"          element={<RequireAdmin><AuditLogPage /></RequireAdmin>} />
             <Route path="*"                  element={<Navigate to="/dashboard" replace />} />

@@ -1,11 +1,11 @@
 import { useState, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Upload, Download, CheckCircle, XCircle, AlertCircle, FileText, Users, BookOpen } from 'lucide-react';
+import { Upload, Download, CheckCircle, XCircle, AlertCircle, FileText, Users, BookOpen, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { examsApi } from '../../api';
+import { examsApi, studentsApi } from '../../api';
 import { Button, Select } from '../../components/ui';
 import { downloadBlob, EXAM_TYPE_LABELS, formatDate } from '../../utils';
-import type { Exam, PaginatedResponse } from '../../types';
+import type { Exam, Classroom, PaginatedResponse } from '../../types';
 import api from '../../api';
 import { useCanManage } from '../../hooks/useCanManage';
 import { EmptyState } from '../../components/ui';
@@ -34,9 +34,11 @@ export default function BulkImportPage() {
 
   const [mode, setMode] = useState<ImportMode>(availableModes[0] ?? 'students');
   const [selectedExam, setSelectedExam] = useState('');
+  const [selectedClassroom, setSelectedClassroom] = useState('');
   const [dragging, setDragging] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
+  const [templateLoading, setTemplateLoading] = useState(false);
   const [result, setResult] = useState<ImportResult | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -47,6 +49,15 @@ export default function BulkImportPage() {
   const exams: Exam[] = Array.isArray(examsData)
     ? examsData
     : (examsData as PaginatedResponse<Exam>)?.results ?? [];
+
+  const { data: classroomsData } = useQuery<PaginatedResponse<Classroom> | Classroom[]>({
+    queryKey: ['classrooms-all'],
+    queryFn: () => studentsApi.classrooms({ page_size: 200 }).then(r => r.data),
+    enabled: canImportStudents,
+  });
+  const classrooms: Classroom[] = Array.isArray(classroomsData)
+    ? classroomsData
+    : (classroomsData as PaginatedResponse<Classroom>)?.results ?? [];
 
   const handleFile = (f: File) => {
     if (!f.name.endsWith('.csv')) {
@@ -65,20 +76,24 @@ export default function BulkImportPage() {
   };
 
   const downloadStudentTemplate = async () => {
+    setTemplateLoading(true);
     try {
       const res = await api.get('/students/profiles/import_template/', { responseType: 'blob' });
       downloadBlob(res.data as Blob, 'student_import_template.csv');
       toast.success('Template downloaded');
     } catch { toast.error('Download failed'); }
+    finally { setTemplateLoading(false); }
   };
 
   const downloadScoresTemplate = async () => {
     if (!selectedExam) { toast.error('Select an exam first'); return; }
+    setTemplateLoading(true);
     try {
       const res = await api.get(`/exams/exams/${selectedExam}/scores_template/`, { responseType: 'blob' });
       downloadBlob(res.data as Blob, `scores_template_exam_${selectedExam}.csv`);
       toast.success('Template downloaded — fill in the score column and upload');
     } catch { toast.error('Download failed'); }
+    finally { setTemplateLoading(false); }
   };
 
   const handleImport = async () => {
@@ -94,6 +109,7 @@ export default function BulkImportPage() {
 
       let res;
       if (mode === 'students') {
+        if (selectedClassroom) formData.append('classroom_id', selectedClassroom);
         res = await api.post('/students/profiles/bulk_import/', formData, {
           headers: { 'Content-Type': 'multipart/form-data' },
         });
@@ -141,7 +157,17 @@ export default function BulkImportPage() {
   }
 
   return (
-    <div className="flex flex-col gap-6 max-w-3xl page-enter">
+    <div className="flex flex-col gap-6 max-w-3xl page-enter relative">
+      {/* ── Full-screen overlay while the CSV is being processed ── */}
+      {loading && (
+        <div className="fixed inset-0 z-50 bg-surface-900/80 backdrop-blur-sm flex flex-col items-center justify-center gap-3">
+          <Loader2 size={36} className="animate-spin text-azure-400" />
+          <p className="text-sm font-medium text-primary">
+            Importing {mode === 'students' ? 'students' : 'scores'}…
+          </p>
+          <p className="text-xs text-secondary">This may take a while for large files — don't close this tab</p>
+        </div>
+      )}
       <div>
         <h1 className="page-title">Bulk Import</h1>
         <p className="text-muted mt-1">Import students or exam scores from CSV files.</p>
@@ -157,8 +183,9 @@ export default function BulkImportPage() {
           .map(({ id, label, icon: Icon }) => (
           <button
             key={id}
-            onClick={() => { setMode(id); setFile(null); setResult(null); }}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-display font-medium transition-all ${
+            onClick={() => { setMode(id); setFile(null); setResult(null); setSelectedClassroom(''); setSelectedExam(''); }}
+            disabled={loading}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-display font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
               mode === id ? 'bg-surface-700 text-primary shadow' : 'text-secondary hover:text-primary'
             }`}
           >
@@ -167,6 +194,30 @@ export default function BulkImportPage() {
           </button>
         ))}
       </div>
+
+      {/* Classroom selector (students mode) — lets a class be picked once instead
+          of requiring a classroom_id in every CSV row */}
+      {mode === 'students' && (
+        <div className="card p-5">
+          <Select
+            label="Default Classroom (optional)"
+            options={[
+              { value: '', label: 'No default — use classroom_id column only' },
+              ...classrooms.map(c => ({
+                value: c.id,
+                label: `${c.name} — ${c.academic_year}`,
+              })),
+            ]}
+            value={selectedClassroom}
+            onChange={e => setSelectedClassroom(e.target.value)}
+            disabled={loading}
+          />
+          <p className="text-xs text-muted mt-2">
+            Every imported student without a classroom_id in the CSV will be placed in this class.
+            You can still leave this blank and set classroom_id per row instead.
+          </p>
+        </div>
+      )}
 
       {/* Exam selector (scores mode) */}
       {mode === 'scores' && (
@@ -182,6 +233,7 @@ export default function BulkImportPage() {
             ]}
             value={selectedExam}
             onChange={e => setSelectedExam(e.target.value)}
+            disabled={loading}
           />
         </div>
       )}
@@ -195,6 +247,8 @@ export default function BulkImportPage() {
           <Button
             variant="secondary"
             size="sm"
+            loading={templateLoading}
+            disabled={loading}
             onClick={mode === 'students' ? downloadStudentTemplate : downloadScoresTemplate}
           >
             <Download size={13} />
@@ -210,7 +264,7 @@ export default function BulkImportPage() {
             </div>
             <ul className="mt-3 text-xs text-secondary flex flex-col gap-1.5">
               <li>• <b className="text-primary">first_name, last_name, email, student_id</b> — required</li>
-              <li>• <b className="text-primary">classroom_id</b> — optional, use the classroom's numeric ID</li>
+              <li>• <b className="text-primary">classroom_id</b> — optional; pick a Default Classroom above instead, or set this per row to mix classrooms in one file</li>
               <li>• <b className="text-primary">date_of_birth</b> — optional, format YYYY-MM-DD</li>
               <li>• Passwords are auto-generated and shown in the results</li>
               <li>• Duplicate emails and student IDs are skipped</li>
@@ -235,20 +289,23 @@ export default function BulkImportPage() {
 
       {/* Drop zone */}
       <div
-        onDragOver={e => { e.preventDefault(); setDragging(true); }}
+        onDragOver={e => { e.preventDefault(); if (!loading) setDragging(true); }}
         onDragLeave={() => setDragging(false)}
-        onDrop={handleDrop}
-        onClick={() => fileInputRef.current?.click()}
-        className={`relative border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition-all ${
-          dragging
-            ? 'border-azure-500 bg-azure-500/10'
-            : file
-              ? 'border-emerald-500/50 bg-emerald-500/5'
-              : 'border-surface hover:border-azure-500/50 hover:bg-surface-800/50'
+        onDrop={e => { if (!loading) handleDrop(e); }}
+        onClick={() => { if (!loading) fileInputRef.current?.click(); }}
+        className={`relative border-2 border-dashed rounded-2xl p-10 text-center transition-all ${
+          loading
+            ? 'opacity-50 cursor-not-allowed border-surface'
+            : 'cursor-pointer ' + (dragging
+              ? 'border-azure-500 bg-azure-500/10'
+              : file
+                ? 'border-emerald-500/50 bg-emerald-500/5'
+                : 'border-surface hover:border-azure-500/50 hover:bg-surface-800/50')
         }`}
       >
         <input
           ref={fileInputRef}
+          disabled={loading}
           type="file"
           accept=".csv"
           className="hidden"

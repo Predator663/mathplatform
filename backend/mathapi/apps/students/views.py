@@ -244,6 +244,19 @@ class StudentProfileViewSet(viewsets.ModelViewSet):
         else:
             allowed_classrooms = Classroom.objects.all()
 
+        # Optional default classroom, chosen from a dropdown on the import
+        # screen instead of requiring every CSV row to carry a classroom_id.
+        # A per-row classroom_id (if present) still takes priority, so a
+        # single file can still mix classrooms when needed.
+        default_classroom = None
+        default_classroom_id = str(request.data.get('classroom_id', '') or '').strip()
+        if default_classroom_id:
+            try:
+                default_classroom = allowed_classrooms.get(id=int(default_classroom_id))
+            except (Classroom.DoesNotExist, ValueError):
+                return Response({'detail': 'Selected classroom was not found or is not available to you.'},
+                                 status=status.HTTP_400_BAD_REQUEST)
+
         for i, row in enumerate(reader, start=2):
             row = {k.strip().lower(): v.strip() for k, v in row.items() if k}
             email = row.get('email', '')
@@ -267,7 +280,7 @@ class StudentProfileViewSet(viewsets.ModelViewSet):
                         email=email, first_name=row.get('first_name', ''),
                         last_name=row.get('last_name', ''), role='student', password=password,
                     )
-                    classroom = None
+                    classroom = default_classroom
                     classroom_id = row.get('classroom_id', '').strip()
                     if classroom_id:
                         try:
@@ -298,7 +311,7 @@ class StudentProfileViewSet(viewsets.ModelViewSet):
         output = io.StringIO()
         writer = csv.writer(output)
         writer.writerow(['first_name', 'last_name', 'email', 'student_id', 'classroom_id', 'date_of_birth', 'notes'])
-        writer.writerow(['Alice', 'Mensah', 'alice.mensah@school.edu', 'STU1001', '1', '2008-05-14', ''])
+        writer.writerow(['Alice', 'Mensah', 'alice.mensah@school.edu', 'STU1001', '', '2008-05-14', ''])
         from django.http import HttpResponse
         response = HttpResponse(output.getvalue(), content_type='text/csv')
         response['Content-Disposition'] = 'attachment; filename="student_import_template.csv"'

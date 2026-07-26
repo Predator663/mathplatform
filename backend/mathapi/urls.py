@@ -10,4 +10,5 @@ urlpatterns = [
     path('api/exams/', include('mathapi.apps.exams.urls')),
     path('api/analytics/', include('mathapi.apps.analytics.urls')),
     path('api/reports/', include('mathapi.apps.reports.urls')),
+    path('api/groups/', include('mathapi.apps.groups.urls')),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

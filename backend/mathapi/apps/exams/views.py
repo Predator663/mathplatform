@@ -6,7 +6,7 @@ from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
-from django.db import transaction
+from django.db import transaction, IntegrityError
 from .models import MathTopic, Exam, ExamScore, ScoreEditLog
 from .serializers import (
     MathTopicSerializer, ExamSerializer, ExamCreateSerializer,
@@ -268,6 +268,10 @@ class ExamViewSet(viewsets.ModelViewSet):
                     except (ValueError, TypeError):
                         errors.append({'row': i, 'student_id': student_id, 'error': f'Invalid score: {score_raw!r}'})
                         continue
+                    if score_val < 0:
+                        errors.append({'row': i, 'student_id': student_id,
+                                       'error': f'Score {score_val} cannot be negative'})
+                        continue
                     if score_val > float(exam.max_score):
                         errors.append({'row': i, 'student_id': student_id,
                                        'error': f'Score {score_val} exceeds max {exam.max_score}'})
@@ -275,14 +279,25 @@ class ExamViewSet(viewsets.ModelViewSet):
                 else:
                     score_val = 0
 
-                obj, was_created = ExamScore.objects.update_or_create(
-                    exam=exam, student=student,
-                    defaults={
-                        'score': score_val, 'is_absent': is_absent,
-                        'remarks': row.get('remarks', ''), 'entered_by': request.user,
-                    }
-                )
-                (created if was_created else updated).append(student_id)
+                # update_or_create can still raise IntegrityError. The whole
+                # loop runs inside one outer transaction.atomic() above, and
+                # on Postgres a DB error inside an atomic block poisons the
+                # rest of that transaction until it's rolled back — so this
+                # needs its own nested atomic() (a savepoint) to roll back
+                # just this row instead of aborting every row already
+                # processed in this request.
+                try:
+                    with transaction.atomic():
+                        obj, was_created = ExamScore.objects.update_or_create(
+                            exam=exam, student=student,
+                            defaults={
+                                'score': score_val, 'is_absent': is_absent,
+                                'remarks': row.get('remarks', ''), 'entered_by': request.user,
+                            }
+                        )
+                    (created if was_created else updated).append(student_id)
+                except IntegrityError as e:
+                    errors.append({'row': i, 'student_id': student_id, 'error': f'Could not save score: {e}'})
 
         return Response({
             'created': len(created), 'updated': len(updated),

@@ -96,6 +96,9 @@ export const authApi = {
 // ── Students ──────────────────────────────────────────────────────────────
 export const studentsApi = {
   gradeLevels: () => api.get('/students/grade-levels/'),
+  createGradeLevel: (data: object) => api.post('/students/grade-levels/', data),
+  updateGradeLevel: (id: number, data: object) => api.patch(`/students/grade-levels/${id}/`, data),
+  deleteGradeLevel: (id: number) => api.delete(`/students/grade-levels/${id}/`),
   classrooms: (params?: object) => api.get('/students/classrooms/', { params }),
   classroom: (id: number) => api.get(`/students/classrooms/${id}/`),
   classroomStudents: (id: number) => api.get(`/students/classrooms/${id}/students/`),
@@ -149,6 +152,42 @@ export const reportsApi = {
     api.get(`/reports/export/exam/${examId}/csv/`, { responseType: 'blob' }),
   exportClassCsv: (classId: number) =>
     api.get(`/reports/export/classroom/${classId}/csv/`, { responseType: 'blob' }),
+};
+
+// ── Peer Groups ───────────────────────────────────────────────────────────
+export const groupsApi = {
+  overview: (classroomId: number, params?: object) =>
+    api.get(`/groups/classroom/${classroomId}/overview/`, { params }),
+  transfers: (classroomId: number) => api.get(`/groups/classroom/${classroomId}/transfers/`),
+  effectiveness: (classroomId: number, params?: object) =>
+    api.get(`/groups/classroom/${classroomId}/effectiveness/`, { params }),
+  rebalanceSuggestions: (classroomId: number, params?: object) =>
+    api.get(`/groups/classroom/${classroomId}/rebalance-suggestions/`, { params }),
+  constraints: (classroomId: number) => api.get('/groups/constraints/', { params: { classroom: classroomId } }),
+  createConstraint: (data: object) => api.post('/groups/constraints/', data),
+  deleteConstraint: (id: number) => api.delete(`/groups/constraints/${id}/`),
+  list: (params?: object) => api.get('/groups/groups/', { params }),
+  create: (data: object) => api.post('/groups/groups/', data),
+  update: (id: number, data: object) => api.patch(`/groups/groups/${id}/`, data),
+  delete: (id: number) => api.delete(`/groups/groups/${id}/`),
+  uploadBadge: (id: number, file: File) => {
+    const fd = new FormData();
+    fd.append('badge_image', file);
+    return api.post(`/groups/groups/${id}/upload-badge/`, fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+  addMember: (groupId: number, studentId: number, reason?: string) =>
+    api.post(`/groups/groups/${groupId}/add-member/`, { student_id: studentId, reason }),
+  removeMember: (groupId: number, studentId: number, reason?: string) =>
+    api.post(`/groups/groups/${groupId}/remove-member/`, { student_id: studentId, reason }),
+  transferMember: (studentId: number, toGroupId: number, reason?: string) =>
+    api.post('/groups/groups/transfer-member/', { student_id: studentId, to_group_id: toGroupId, reason }),
+  autoGenerate: (data: object) => api.post('/groups/groups/auto-generate/', data),
+  exportSummary: (classroomId: number, format: 'pdf' | 'excel', params?: object) =>
+    api.get(`/groups/export/classroom/${classroomId}/summary/${format}/`, { params, responseType: 'blob' }),
+  exportRoster: (classroomId: number, format: 'pdf' | 'excel', params?: object) =>
+    api.get(`/groups/export/classroom/${classroomId}/roster/${format}/`, { params, responseType: 'blob' }),
 };
 
 export const settingsApi = {

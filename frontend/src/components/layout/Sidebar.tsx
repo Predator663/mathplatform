@@ -1,8 +1,8 @@
 import { NavLink, useNavigate, Link } from 'react-router-dom';
 import {
-  LayoutDashboard, Users, BookOpen, BarChart3, GraduationCap,
+  LayoutDashboard, Users, Users2, BookOpen, BarChart3, GraduationCap,
   AlertTriangle, LogOut, Settings, FileText, Upload, School, X,
-  BookMarked, ClipboardList, ClipboardCheck,
+  BookMarked, ClipboardList, ClipboardCheck, Layers,
 } from 'lucide-react';
 import { useAuthStore } from '../../store/auth';
 import { useSiteSettingsStore } from '../../store/siteSettings';
@@ -19,6 +19,7 @@ const navItems = [
   { to: '/students',   icon: GraduationCap,    label: 'Students',    pageKey: 'students' },
   { to: '/exams',      icon: BookOpen,          label: 'Exams',       pageKey: 'exams' },
   { to: '/import',     icon: Upload,            label: 'Bulk Import', pageKey: 'import' },
+  { to: '/groups',     icon: Users2,            label: 'Peer Groups', pageKey: null },
   { to: '/analytics',  icon: BarChart3,         label: 'Analytics',   pageKey: 'analytics' },
   { to: '/at-risk',    icon: AlertTriangle,     label: 'At Risk',     pageKey: 'at_risk' },
   { to: '/reports',    icon: FileText,          label: 'Reports',     pageKey: 'reports' },
@@ -27,6 +28,7 @@ const navItems = [
 const adminItems = [
   { to: '/users',     icon: Users,         label: 'Users',      pageKey: 'users' },
   { to: '/subjects',  icon: BookMarked,    label: 'Subjects',   pageKey: null },
+  { to: '/grade-levels', icon: Layers,     label: 'Grade Levels', pageKey: null },
   { to: '/audit-log', icon: ClipboardList, label: 'Audit Log',  pageKey: null },
   { to: '/settings',  icon: Settings,      label: 'Settings',   pageKey: null },
 ];

@@ -32,6 +32,7 @@ LOCAL_APPS = [
     'mathapi.apps.exams',
     'mathapi.apps.analytics',
     'mathapi.apps.reports',
+    'mathapi.apps.groups',
 ]
 
 # admin MUST come after local apps so Django sees the custom

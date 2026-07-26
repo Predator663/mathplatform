@@ -59,6 +59,101 @@ export interface Classroom {
   necta_exam: string; math_subject: string; created_at: string;
 }
 
+// ── Peer Groups ───────────────────────────────────────────────────────────
+export type PerformanceTier = 'very_strong' | 'strong' | 'average' | 'weak' | 'unrated';
+
+export interface StudentPerformanceRow {
+  student_id: number; student_name: string; student_code: string;
+  average: number | null; exams_taken: number; tier: PerformanceTier;
+}
+
+export interface GroupMember {
+  id: number; student_id: number; student_name: string; student_code: string;
+  tier: PerformanceTier; tier_display: string;
+  average_at_placement: number | null; is_anchor: boolean; joined_at: string;
+}
+
+export interface StudentGroup {
+  id: number; classroom: number; classroom_name: string;
+  name: string; academic_year: string;
+  subject: number | null; subject_name: string | null;
+  term: string; description: string;
+  badge_image_url: string | null; badge_color: string;
+  created_by: number | null; created_at: string; updated_at: string;
+  members: GroupMember[]; member_count: number; group_average: number | null;
+}
+
+export interface GroupsOverview {
+  classroom_id: number; classroom_name: string; academic_year: string;
+  performance: StudentPerformanceRow[];
+  tier_counts: Record<PerformanceTier, number>;
+  groups: StudentGroup[];
+  ungrouped_students: StudentPerformanceRow[];
+}
+
+export interface GroupTransferLogEntry {
+  id: number; student: number; student_name: string;
+  from_group: number | null; from_group_name: string | null;
+  to_group: number | null; to_group_name: string | null;
+  reason: string; warnings: string;
+  transferred_by: number | null; transferred_by_name: string | null;
+  transferred_at: string;
+}
+
+export interface GroupEffectivenessMember {
+  student_id: number; student_name: string;
+  tier_at_placement: PerformanceTier; average_at_placement: number | null;
+  current_average_since_joining: number | null; exams_since_joining: number;
+  delta: number | null; is_anchor: boolean;
+}
+
+export interface GroupEffectivenessRow {
+  group_id: number; group_name: string; member_count: number;
+  members: GroupEffectivenessMember[];
+  average_delta: number | null; has_sufficient_data: boolean;
+}
+
+export interface GroupEffectivenessOverview {
+  classroom_id: number; classroom_name: string; academic_year: string;
+  groups: GroupEffectivenessRow[];
+  classroom_average_delta: number | null;
+  anchor_average_delta: number | null;
+  non_anchor_average_delta: number | null;
+  students_with_data: number;
+}
+
+export interface TierChangeEntry {
+  student_id: number; student_name: string; group_id: number; group_name: string;
+  tier_at_placement: PerformanceTier; current_tier: PerformanceTier;
+  current_average: number | null; direction: 'up' | 'down'; magnitude: number;
+}
+
+export interface RebalanceCandidate {
+  student_id: number; student_name: string;
+  from_group_id: number; from_group_name: string;
+  current_tier: PerformanceTier; current_average: number | null;
+}
+
+export interface GroupNeedingAttention {
+  group_id: number; group_name: string; reason: string; candidates: RebalanceCandidate[];
+}
+
+export interface RebalanceSuggestions {
+  classroom_id: number; classroom_name: string; academic_year: string;
+  tier_changes: TierChangeEntry[];
+  groups_needing_attention: GroupNeedingAttention[];
+}
+
+export type PeerConstraintType = 'avoid' | 'prefer';
+
+export interface PeerConstraintEntry {
+  id: number; classroom: number;
+  student_a: number; student_a_name: string;
+  student_b: number; student_b_name: string;
+  constraint_type: PeerConstraintType; constraint_type_display: string;
+  reason: string; created_by: number | null; created_at: string;
+}
+
 export interface StudentProfile {
   id: number; student_id: string; full_name: string;
   first_name: string; last_name: string; email: string;

@@ -6,6 +6,7 @@ import toast from 'react-hot-toast';
 import { studentsApi } from '../../api';
 import { Button, Input, Select } from '../../components/ui';
 import { PermissionGate } from '../../components/ui/PermissionGate';
+import { useAuthStore } from '../../store/auth';
 import { EDUCATION_LEVEL_LABELS } from '../../utils';
 import type { GradeLevel, PaginatedResponse } from '../../types';
 
@@ -17,6 +18,8 @@ interface FormData {
 export default function CreateClassroomPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { user } = useAuthStore();
+  const isAdmin = user?.role === 'super_admin';
 
   const { data: gradesData } = useQuery<GradeLevel[]>({
     queryKey: ['grade-levels'],
@@ -88,21 +91,35 @@ export default function CreateClassroomPage() {
             <label className="label">Grade Level</label>
             {grades.length === 0 ? (
               <p className="text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-xl px-3 py-2">
-                No grade levels found. Run: <code className="font-mono">python manage.py seed_demo</code>
+                No grade levels found.{' '}
+                {isAdmin ? (
+                  <button type="button" onClick={() => navigate('/grade-levels')} className="underline hover:text-amber-300">
+                    Add one in Grade Levels
+                  </button>
+                ) : (
+                  'Ask an admin to add one under Grade Levels'
+                )}.
               </p>
             ) : (
-              <select className="input" {...register('grade_level', { required: 'Grade level is required' })}>
-                <option value="">Select grade level…</option>
-                {levelOrder.filter(l => gradesByLevel[l]?.length).map(level => (
-                  <optgroup key={level} label={EDUCATION_LEVEL_LABELS[level as keyof typeof EDUCATION_LEVEL_LABELS]}>
-                    {gradesByLevel[level].map(g => (
-                      <option key={g.id} value={g.id}>
-                        {g.name}{g.necta_exam ? ` (${g.necta_exam})` : ''}
-                      </option>
-                    ))}
-                  </optgroup>
-                ))}
-              </select>
+              <>
+                <select className="input" {...register('grade_level', { required: 'Grade level is required' })}>
+                  <option value="">Select grade level…</option>
+                  {levelOrder.filter(l => gradesByLevel[l]?.length).map(level => (
+                    <optgroup key={level} label={EDUCATION_LEVEL_LABELS[level as keyof typeof EDUCATION_LEVEL_LABELS]}>
+                      {gradesByLevel[level].map(g => (
+                        <option key={g.id} value={g.id}>
+                          {g.name}{g.necta_exam ? ` (${g.necta_exam})` : ''}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+                {isAdmin && (
+                  <button type="button" onClick={() => navigate('/grade-levels')} className="text-xs text-azure-400 hover:text-azure-300 self-start">
+                    + Manage grade levels
+                  </button>
+                )}
+              </>
             )}
           </div>
 
