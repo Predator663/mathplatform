@@ -512,19 +512,21 @@ def generate_exam_scores_pdf(exam, scores, sort_by='name', school_name='School o
 
     story.append(Paragraph(f'Student Scores  <font color="#6b7280" size="8">({sort_label})</font>', styles['section']))
 
-    col_w = [(PAGE_W - 2*MARGIN) * p for p in [0.05, 0.13, 0.30, 0.10, 0.10, 0.10, 0.10, 0.12]]
-    headers = ['#', 'ID', 'Student Name', 'Score', '%', 'Grade', 'Pass?', 'Remarks']
+    col_w = [(PAGE_W - 2*MARGIN) * p for p in [0.05, 0.13, 0.22, 0.08, 0.10, 0.10, 0.10, 0.10, 0.12]]
+    headers = ['#', 'ID', 'Student Name', 'Stream', 'Score', '%', 'Grade', 'Pass?', 'Remarks']
     table_data = [headers]
 
     for rank, s in enumerate(scores_list, 1):
+        stream_name = s.student.stream.name if s.student.stream_id else '—'
         if s.is_absent:
-            row = [str(rank), s.student.student_id, s.student.full_name,
+            row = [str(rank), s.student.student_id, s.student.full_name, stream_name,
                    'ABSENT', '—', '—', '—', s.remarks or '']
         else:
             row = [
                 str(rank),
                 s.student.student_id,
                 s.student.full_name,
+                stream_name,
                 f'{float(s.score):.1f}/{float(exam.max_score):.0f}',
                 f'{s.percentage}%',
                 s.letter_grade,
@@ -549,15 +551,15 @@ def generate_exam_scores_pdf(exam, scores, sort_by='name', school_name='School o
         ('BOTTOMPADDING', (0,0), (-1,-1), 4),
         ('LEFTPADDING', (0,0), (-1,-1), 5),
         ('ALIGN', (0,0), (0,-1), 'CENTER'),
-        ('ALIGN', (3,0), (6,-1), 'CENTER'),
+        ('ALIGN', (3,0), (7,-1), 'CENTER'),
     ]
 
     # Colour pass/fail column
     for i, s in enumerate(scores_list, 1):
         if not s.is_absent:
             color = BRAND_GREEN if s.passed else BRAND_ROSE
-            row_styles.append(('TEXTCOLOR', (6, i), (6, i), color))
-            row_styles.append(('FONTNAME', (6, i), (6, i), 'Helvetica-Bold'))
+            row_styles.append(('TEXTCOLOR', (7, i), (7, i), color))
+            row_styles.append(('FONTNAME', (7, i), (7, i), 'Helvetica-Bold'))
 
     tbl.setStyle(TableStyle(row_styles))
     story.append(tbl)
@@ -671,18 +673,18 @@ def generate_class_report_pdf(classroom, students, scores_map, exams,
 
     exam_headers = [short(e.title) for e in exams]
     n = len(exams)
-    fixed_cols = 3  # rank, id, name
+    fixed_cols = 4  # rank, id, name, stream
     total_w = PAGE_W - 2*MARGIN
-    fixed_w = total_w * 0.32
+    fixed_w = total_w * 0.34
     exam_col_w = (total_w - fixed_w - total_w*0.08) / max(n, 1) if n else 1
     avg_w = total_w * 0.08
 
-    col_widths = [total_w*0.04, total_w*0.10, total_w*0.18] + [exam_col_w]*n + [avg_w]
-    headers = ['#', 'ID', 'Name'] + exam_headers + ['AVG']
+    col_widths = [total_w*0.04, total_w*0.09, total_w*0.14, total_w*0.07] + [exam_col_w]*n + [avg_w]
+    headers = ['#', 'ID', 'Name', 'Stream'] + exam_headers + ['AVG']
     matrix = [headers]
 
     for rank, (s, student_scores, avg) in enumerate(rows_data, 1):
-        row = [str(rank), s.student_id, s.full_name]
+        row = [str(rank), s.student_id, s.full_name, s.stream.name if s.stream_id else '—']
         for e in exams:
             pct = student_scores.get(e.id)
             row.append(f'{pct}%' if pct is not None else '—')

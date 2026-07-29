@@ -7,12 +7,13 @@ import { LoadingPage, EmptyState, Select, Pagination } from '../../components/ui
 import { useSiteSettingsStore } from '../../store/siteSettings';
 import { useSubjectStore } from '../../store/subject';
 import { useAuthStore } from '../../store/auth';
-import type { AtRiskStudent, Classroom, PaginatedResponse } from '../../types';
+import type { AtRiskStudent, Classroom, PaginatedResponse, Stream } from '../../types';
 
 export default function AtRiskPage() {
   const navigate = useNavigate();
   const { user } = useAuthStore();
   const [classroomId, setClassroomId] = useState('');
+  const [streamId, setStreamId] = useState('');
   const [threshold, setThreshold] = useState<number>(30);
   const [page, setPage] = useState(1);
   const { getPage } = useSiteSettingsStore();
@@ -24,6 +25,7 @@ export default function AtRiskPage() {
   // one subject may not apply to another, making the filter misleadingly empty.
   useEffect(() => {
     setClassroomId('');
+    setStreamId('');
     setPage(1);
   }, [activeSubjectId]);
 
@@ -40,11 +42,21 @@ export default function AtRiskPage() {
   const classrooms: Classroom[] = Array.isArray(classroomsData)
     ? classroomsData : (classroomsData as PaginatedResponse<Classroom>)?.results ?? [];
 
+  // Streams are per-classroom, so this filter only appears once one classroom is chosen.
+  const { data: streamsData } = useQuery<PaginatedResponse<Stream> | Stream[]>({
+    queryKey: ['streams-for-at-risk', classroomId],
+    queryFn: () => studentsApi.streams({ classroom: classroomId, page_size: 200 }).then(r => r.data),
+    enabled: !!classroomId,
+  });
+  const streams: Stream[] = Array.isArray(streamsData)
+    ? streamsData : (streamsData as PaginatedResponse<Stream>)?.results ?? [];
+
   const { data, isLoading } = useQuery<{ at_risk: AtRiskStudent[]; count: number }>({
-    queryKey: ['at-risk', classroomId, threshold, activeSubjectId],
+    queryKey: ['at-risk', classroomId, threshold, activeSubjectId, streamId],
     queryFn: () => analyticsApi.atRisk({
       ...(classroomId ? { classroom_id: classroomId } : {}),
       threshold,
+      stream_id: streamId || undefined,
       ...(activeSubjectId ? { subject_id: activeSubjectId } : {}),
     }).then(r => r.data),
   });
@@ -89,9 +101,19 @@ export default function AtRiskPage() {
               ...classrooms.map(c => ({ value: c.id, label: `${c.name}${c.grade_level_name ? ` — ${c.grade_level_name}` : ''}` })),
             ]}
             value={classroomId}
-            onChange={e => { setClassroomId(e.target.value); setPage(1); }}
+            onChange={e => { setClassroomId(e.target.value); setStreamId(''); setPage(1); }}
           />
         </div>
+        {streams.length > 0 && (
+          <div className="w-full sm:w-44">
+            <Select
+              label="Stream"
+              options={[{ value: '', label: 'All Streams' }, ...streams.map(s => ({ value: s.id, label: `Stream ${s.name}` }))]}
+              value={streamId}
+              onChange={e => { setStreamId(e.target.value); setPage(1); }}
+            />
+          </div>
+        )}
         <div className="w-full sm:w-44">
           <Select
             label="Pass Threshold"

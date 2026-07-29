@@ -8,9 +8,9 @@ from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
-from .models import GradeLevel, Classroom, StudentProfile, ParentStudentLink
+from .models import GradeLevel, Classroom, Stream, StudentProfile, ParentStudentLink
 from .serializers import (
-    GradeLevelSerializer, ClassroomSerializer,
+    GradeLevelSerializer, ClassroomSerializer, StreamSerializer,
     StudentProfileSerializer, StudentCreateSerializer, ParentStudentLinkSerializer,
 )
 from django.contrib.auth import get_user_model
@@ -104,7 +104,7 @@ class ClassroomViewSet(viewsets.ModelViewSet):
         from django.db.models import Count, Q
         user = self.request.user
         qs = Classroom.objects.select_related('grade_level').prefetch_related(
-            'teacher_assignments__teacher', 'teacher_assignments__subject'
+            'teacher_assignments__teacher', 'teacher_assignments__subject', 'streams'
         ).annotate(
             active_student_count=Count(
                 'student_profiles', filter=Q(student_profiles__is_active=True), distinct=True,
@@ -146,10 +146,117 @@ class ClassroomViewSet(viewsets.ModelViewSet):
         return Response(StudentProfileSerializer(students, many=True).data)
 
 
+class StreamViewSet(viewsets.ModelViewSet):
+    """
+    CRUD for streams (sections like "A", "B") within a classroom.
+    Scoped identically to ClassroomViewSet: admins see/manage everything,
+    teachers see/manage only streams of classrooms they're assigned to.
+    Reuses the 'classrooms' TeacherFeatureEnabled toggle rather than adding
+    a new admin-settings resource key, since a stream is a sub-resource of
+    its classroom.
+    """
+    serializer_class = StreamSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ['classroom', 'is_active']
+    search_fields = ['name']
+    ordering_fields = ['name', 'created_at']
+
+    def get_permissions(self):
+        from mathapi.apps.accounts.permissions import TeacherFeatureEnabled
+        if self.action == 'create':
+            return [permissions.IsAuthenticated(), TeacherFeatureEnabled('classrooms', 'add')]
+        if self.action in ['update', 'partial_update']:
+            return [permissions.IsAuthenticated(), TeacherFeatureEnabled('classrooms', 'edit')]
+        if self.action == 'destroy':
+            return [permissions.IsAuthenticated(), TeacherFeatureEnabled('classrooms', 'delete')]
+        return [permissions.IsAuthenticated()]
+
+    def get_queryset(self):
+        from django.db.models import Count, Q
+        user = self.request.user
+        qs = Stream.objects.select_related('classroom').annotate(
+            active_student_count=Count(
+                'students', filter=Q(students__is_active=True), distinct=True,
+            )
+        ).order_by('classroom__name', 'name')
+        if user.role == 'super_admin':
+            return qs
+        if user.role == 'teacher':
+            from mathapi.apps.accounts.scoping import get_teacher_classrooms
+            return qs.filter(classroom__in=get_teacher_classrooms(user))
+        if user.role == 'student':
+            try:
+                return qs.filter(classroom_id=user.student_profile.classroom_id)
+            except StudentProfile.DoesNotExist:
+                return qs.none()
+        if user.role == 'parent':
+            classroom_ids = user.linked_students.values_list('student__classroom', flat=True)
+            return qs.filter(classroom_id__in=classroom_ids)
+        return qs.none()
+
+    def perform_create(self, serializer):
+        classroom = serializer.validated_data.get('classroom')
+        if self.request.user.role == 'teacher' and classroom is not None:
+            from mathapi.apps.accounts.scoping import get_teacher_classrooms
+            if not get_teacher_classrooms(self.request.user).filter(id=classroom.id).exists():
+                self.permission_denied(self.request, message='You are not assigned to this classroom.')
+        serializer.save()
+
+    def check_object_permissions(self, request, obj):
+        # Delegate the classroom-ownership check to IsAdminOrAssignedTeacher
+        # using obj.classroom instead of obj — a stream has no owning
+        # teacher of its own, only via its parent classroom.
+        if request.user.role == 'teacher' and self.action in ('update', 'partial_update', 'destroy'):
+            from mathapi.apps.accounts.scoping import get_teacher_classrooms
+            if not get_teacher_classrooms(request.user).filter(id=obj.classroom_id).exists():
+                self.permission_denied(request, message='You are not assigned to this classroom.')
+        super().check_object_permissions(request, obj)
+
+    @action(detail=False, methods=['post'])
+    def bulk_assign(self, request):
+        """Assign a batch of students (by id) to a stream in one call."""
+        from mathapi.apps.accounts.permissions import TeacherFeatureEnabled
+        if not TeacherFeatureEnabled('students', 'edit').has_permission(request, self):
+            return Response({'detail': 'You do not have permission to assign students to streams.'},
+                             status=status.HTTP_403_FORBIDDEN)
+
+        stream_id = request.data.get('stream_id')
+        student_ids = request.data.get('student_ids') or []
+        if not isinstance(student_ids, list) or not student_ids:
+            return Response({'detail': 'student_ids must be a non-empty list.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        stream = None
+        if stream_id:
+            stream = self.get_queryset().filter(id=stream_id).first()
+            if not stream:
+                return Response({'detail': 'Stream not found or not accessible.'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Scope students the same way StudentProfileViewSet.get_queryset does,
+        # so a teacher can't bulk-move students outside their own classrooms.
+        students_qs = StudentProfile.objects.filter(id__in=student_ids)
+        if request.user.role == 'teacher':
+            from mathapi.apps.accounts.scoping import get_teacher_classrooms
+            students_qs = students_qs.filter(classroom__in=get_teacher_classrooms(request.user))
+        elif request.user.role != 'super_admin':
+            return Response({'detail': 'Not permitted.'}, status=status.HTTP_403_FORBIDDEN)
+
+        if stream:
+            mismatched = students_qs.exclude(classroom_id=stream.classroom_id).count()
+            if mismatched:
+                return Response(
+                    {'detail': f'{mismatched} of the selected students are not in this stream\'s classroom.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        updated = students_qs.update(stream=stream)
+        return Response({'updated': updated, 'stream_id': stream.id if stream else None})
+
+
 class StudentProfileViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ['classroom', 'is_active', 'classroom__academic_year']
+    filterset_fields = ['classroom', 'stream', 'is_active', 'classroom__academic_year']
     search_fields = ['user__first_name', 'user__last_name', 'user__email', 'student_id']
     ordering_fields = ['user__last_name', 'student_id', 'enrollment_date']
 
@@ -257,6 +364,21 @@ class StudentProfileViewSet(viewsets.ModelViewSet):
                 return Response({'detail': 'Selected classroom was not found or is not available to you.'},
                                  status=status.HTTP_400_BAD_REQUEST)
 
+        # Optional default stream — same idea as default_classroom above. A
+        # per-row stream_id/stream_name still takes priority. The stream is
+        # only applied if it belongs to whichever classroom the row ends up
+        # in (default or per-row); mismatches are silently skipped rather
+        # than failing the whole row, since the classroom assignment is the
+        # more important part of the import.
+        default_stream = None
+        default_stream_id = str(request.data.get('stream_id', '') or '').strip()
+        if default_stream_id:
+            try:
+                default_stream = Stream.objects.get(id=int(default_stream_id), classroom__in=allowed_classrooms)
+            except (Stream.DoesNotExist, ValueError):
+                return Response({'detail': 'Selected stream was not found or is not available to you.'},
+                                 status=status.HTTP_400_BAD_REQUEST)
+
         for i, row in enumerate(reader, start=2):
             row = {k.strip().lower(): v.strip() for k, v in row.items() if k}
             email = row.get('email', '')
@@ -288,8 +410,20 @@ class StudentProfileViewSet(viewsets.ModelViewSet):
                         except (Classroom.DoesNotExist, ValueError):
                             pass
 
+                    stream = default_stream if (default_stream and default_stream.classroom_id == getattr(classroom, 'id', None)) else None
+                    stream_id = row.get('stream_id', '').strip()
+                    stream_name = row.get('stream_name', '').strip()
+                    if classroom is not None:
+                        if stream_id:
+                            try:
+                                stream = Stream.objects.get(id=int(stream_id), classroom=classroom)
+                            except (Stream.DoesNotExist, ValueError):
+                                pass
+                        elif stream_name:
+                            stream = Stream.objects.filter(classroom=classroom, name__iexact=stream_name).first()
+
                     profile = StudentProfile.objects.create(
-                        user=user, student_id=student_id, classroom=classroom,
+                        user=user, student_id=student_id, classroom=classroom, stream=stream,
                         date_of_birth=row.get('date_of_birth', '').strip() or None,
                         notes=row.get('notes', ''),
                     )
@@ -310,8 +444,8 @@ class StudentProfileViewSet(viewsets.ModelViewSet):
     def import_template(self, request):
         output = io.StringIO()
         writer = csv.writer(output)
-        writer.writerow(['first_name', 'last_name', 'email', 'student_id', 'classroom_id', 'date_of_birth', 'notes'])
-        writer.writerow(['Alice', 'Mensah', 'alice.mensah@school.edu', 'STU1001', '', '2008-05-14', ''])
+        writer.writerow(['first_name', 'last_name', 'email', 'student_id', 'classroom_id', 'stream_id', 'stream_name', 'date_of_birth', 'notes'])
+        writer.writerow(['Alice', 'Mensah', 'alice.mensah@school.edu', 'STU1001', '', '', 'A', '2008-05-14', ''])
         from django.http import HttpResponse
         response = HttpResponse(output.getvalue(), content_type='text/csv')
         response['Content-Disposition'] = 'attachment; filename="student_import_template.csv"'

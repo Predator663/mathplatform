@@ -105,6 +105,12 @@ export const studentsApi = {
   createClassroom: (data: object) => api.post('/students/classrooms/', data),
   updateClassroom: (id: number, data: object) => api.patch(`/students/classrooms/${id}/`, data),
   deleteClassroom: (id: number) => api.delete(`/students/classrooms/${id}/`),
+  streams: (params?: object) => api.get('/students/streams/', { params }),
+  createStream: (data: object) => api.post('/students/streams/', data),
+  updateStream: (id: number, data: object) => api.patch(`/students/streams/${id}/`, data),
+  deleteStream: (id: number) => api.delete(`/students/streams/${id}/`),
+  bulkAssignStream: (data: { student_ids: number[]; stream_id: number | null }) =>
+    api.post('/students/streams/bulk_assign/', data),
   students: (params?: object) => api.get('/students/profiles/', { params }),
   student: (id: number) => api.get(`/students/profiles/${id}/`),
   createStudent: (data: object) => api.post('/students/profiles/', data),
@@ -119,8 +125,12 @@ export const examsApi = {
   exams: (params?: object) => api.get('/exams/exams/', { params }),
   exam: (id: number) => api.get(`/exams/exams/${id}/`),
   pendingReview: () => api.get('/exams/exams/pending-review/'),
+  trash: () => api.get('/exams/exams/trash/'),
+  restoreExam: (id: number) => api.post(`/exams/exams/${id}/restore/`),
+  emptyTrash: () => api.post('/exams/exams/trash/empty/', { confirm: true }),
   createExam: (data: object) => api.post('/exams/exams/', data),
   updateExam: (id: number, data: object) => api.patch(`/exams/exams/${id}/`, data),
+  deleteExam: (id: number) => api.delete(`/exams/exams/${id}/`),
   publishExam: (id: number) => api.post(`/exams/exams/${id}/publish/`),
   unpublishExam: (id: number) => api.post(`/exams/exams/${id}/unpublish/`),
   examScores: (examId: number) => api.get(`/exams/exams/${examId}/scores/`),
@@ -133,6 +143,16 @@ export const examsApi = {
 };
 
 // ── Analytics ─────────────────────────────────────────────────────────────
+export const notificationsApi = {
+  preferences: () => api.get('/notifications/preferences/'),
+  updatePreferences: (updates: { category: string; frequency: string }[]) =>
+    api.patch('/notifications/preferences/', updates),
+  history: (params?: object) => api.get('/notifications/history/', { params }),
+  unreadCount: () => api.get('/notifications/unread-count/'),
+  markRead: (id?: number) => api.post('/notifications/mark-read/', id ? { id } : {}),
+  testEmail: () => api.post('/notifications/test-email/'),
+};
+
 export const analyticsApi = {
   dashboard: (params?: object) => api.get('/analytics/dashboard/', { params }),
   classAnalytics: (id: number, params?: object) => api.get(`/analytics/classrooms/${id}/`, { params }),
@@ -142,6 +162,15 @@ export const analyticsApi = {
   studentTopics: (id: number, params?: object) => api.get(`/analytics/students/${id}/topics/`, { params }),
   atRisk: (params?: object) => api.get('/analytics/at-risk/', { params }),
   compare: (params?: object) => api.get('/analytics/compare/', { params }),
+  streamComparison: (id: number, params?: object) => api.get(`/analytics/classrooms/${id}/stream-comparison/`, { params }),
+
+  // ── Intelligence layer ──────────────────────────────────────────────────
+  integrityFlags: (params?: object) => api.get('/analytics/integrity/', { params }),
+  studentRisk: (id: number, params?: object) => api.get(`/analytics/students/${id}/risk/`, { params }),
+  classroomRisk: (id: number, params?: object) => api.get(`/analytics/classrooms/${id}/risk/`, { params }),
+  topicDependencies: (id: number, params?: object) => api.get(`/analytics/classrooms/${id}/topic-dependencies/`, { params }),
+  teacherConsistency: (params?: object) => api.get('/analytics/teacher-consistency/', { params }),
+  gradeBoundaryWhatIf: (id: number, params?: object) => api.get(`/analytics/students/${id}/boundary-whatif/`, { params }),
 };
 
 // ── Reports ───────────────────────────────────────────────────────────────

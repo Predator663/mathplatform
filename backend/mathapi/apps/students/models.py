@@ -83,12 +83,43 @@ class Classroom(models.Model):
         return self.grade_level.education_level
 
 
+class Stream(models.Model):
+    """
+    A sub-section within a classroom (e.g. Form 2's "A" and "B" streams).
+    Kept separate from Classroom.stream (which is the A-Level academic
+    track — Science/Arts/Commerce) — this is purely an organisational
+    grouping of students within one Classroom for seating/administration,
+    and does not affect exam scoping or analytics (those stay classroom-wide).
+    """
+    classroom  = models.ForeignKey(Classroom, on_delete=models.CASCADE, related_name='streams')
+    name       = models.CharField(max_length=20, help_text='e.g. "A", "B", "Blue", "Green"')
+    capacity   = models.PositiveIntegerField(null=True, blank=True)
+    is_active  = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'streams'
+        unique_together = ['classroom', 'name']
+        ordering = ['classroom__name', 'name']
+
+    def __str__(self):
+        return f'{self.classroom.name} — {self.name}'
+
+    @property
+    def student_count(self):
+        if hasattr(self, 'active_student_count'):
+            return self.active_student_count
+        return self.students.filter(is_active=True).count()
+
+
 class StudentProfile(models.Model):
     user            = models.OneToOneField(User, on_delete=models.CASCADE,
                                             related_name='student_profile')
     student_id      = models.CharField(max_length=20, unique=True)
     classroom       = models.ForeignKey(Classroom, on_delete=models.SET_NULL, null=True,
                                          related_name='student_profiles')
+    stream          = models.ForeignKey(Stream, on_delete=models.SET_NULL, null=True, blank=True,
+                                         related_name='students')
     date_of_birth   = models.DateField(null=True, blank=True)
     enrollment_date = models.DateField(auto_now_add=True)
     is_active       = models.BooleanField(default=True)

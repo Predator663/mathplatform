@@ -1,0 +1,30 @@
+{% extends "notifications/base_email.html" %}
+{% block content %}
+<p style="margin:0 0 4px 0;font-size:13px;color:#8a8a99;">{{ greeting }}</p>
+<h1 style="margin:0 0 16px 0;font-size:19px;font-weight:700;color:#1a1a26;line-height:1.4;">
+  {{ exam_title }} has been published
+</h1>
+<p style="margin:0 0 20px 0;font-size:14px;color:#4a4a5a;line-height:1.6;">
+  {% if is_creator %}
+    Your submitted exam is now live for <strong>{{ classroom_name }}</strong> and visible to students and parents.
+  {% else %}
+    A new {{ exam_type_label }} for {{ student_first_name }} in <strong>{{ classroom_name }}</strong> is now visible.
+  {% endif %}
+</p>
+
+<div style="background-color:#f8fafc;border:1px solid #e5e7eb;border-radius:12px;padding:16px 18px;margin-bottom:20px;">
+  {% include "notifications/_stat_row.html" with label="Subject" value=subject_name %}
+  {% include "notifications/_stat_row.html" with label="Type" value=exam_type_label %}
+  {% include "notifications/_stat_row.html" with label="Term" value=term_label %}
+  {% include "notifications/_stat_row.html" with label="Exam date" value=exam_date_display %}
+  {% include "notifications/_stat_row.html" with label="Pass mark" value=passing_percentage_display %}
+</div>
+
+{% if score_recorded %}
+<p style="margin:0 0 20px 0;font-size:14px;color:#4a4a5a;line-height:1.6;">
+  {{ student_first_name }} scored <strong style="color:{{ score_color }};">{{ score_display }}</strong> on this exam.
+</p>
+{% endif %}
+
+{% include "notifications/_button.html" with url=action_url label=action_label color="#3b82f6" %}
+{% endblock %}

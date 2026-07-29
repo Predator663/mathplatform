@@ -10,8 +10,8 @@ class GroupMembershipInline(admin.TabularInline):
 
 @admin.register(StudentGroup)
 class StudentGroupAdmin(admin.ModelAdmin):
-    list_display = ['name', 'classroom', 'academic_year', 'subject', 'member_count', 'created_at']
-    list_filter = ['academic_year', 'classroom']
+    list_display = ['name', 'classroom', 'stream', 'academic_year', 'subject', 'member_count', 'created_at']
+    list_filter = ['academic_year', 'classroom', 'stream']
     search_fields = ['name', 'classroom__name']
     inlines = [GroupMembershipInline]
 

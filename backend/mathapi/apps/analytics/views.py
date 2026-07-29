@@ -16,6 +16,17 @@ def _get_subject_id(request):
     return None
 
 
+def _get_stream_id(request):
+    """Extract optional stream_id from query params (e.g. Form 2 'A')."""
+    sid = request.query_params.get('stream_id')
+    if sid:
+        try:
+            return int(sid)
+        except (ValueError, TypeError):
+            pass
+    return None
+
+
 def _check_student_access(user, student_id):
     """Raise PermissionDenied if user (teacher/student/parent) can't access this student."""
     if user.role == 'super_admin':
@@ -99,10 +110,11 @@ class ClassAnalyticsView(APIView):
         academic_year = request.query_params.get('academic_year')
         term = request.query_params.get('term')
         subject_id = _get_subject_id(request)
+        stream_id = _get_stream_id(request)
         created_by_id = user.id if user.role == 'teacher' else None
         data = services.get_class_analytics(
             classroom_id, academic_year=academic_year, term=term,
-            subject_id=subject_id, created_by_id=created_by_id,
+            subject_id=subject_id, created_by_id=created_by_id, stream_id=stream_id,
         )
         return Response(data)
 
@@ -117,10 +129,11 @@ class TopicHeatmapView(APIView):
             assert_classroom_owned(user, classroom_id)
         academic_year = request.query_params.get('academic_year')
         subject_id = _get_subject_id(request)
+        stream_id = _get_stream_id(request)
         created_by_id = user.id if user.role == 'teacher' else None
         data = services.get_topic_class_heatmap(
             classroom_id, academic_year=academic_year,
-            subject_id=subject_id, created_by_id=created_by_id,
+            subject_id=subject_id, created_by_id=created_by_id, stream_id=stream_id,
         )
         return Response(data)
 
@@ -133,6 +146,7 @@ class AtRiskStudentsView(APIView):
         classroom_id = request.query_params.get('classroom_id')
         threshold = float(request.query_params.get('threshold', 50))
         subject_id = _get_subject_id(request)
+        stream_id = _get_stream_id(request)
 
         if classroom_id and user.role == 'teacher':
             from mathapi.apps.accounts.scoping import assert_classroom_owned
@@ -150,6 +164,7 @@ class AtRiskStudentsView(APIView):
             threshold=threshold,
             subject_id=subject_id,
             created_by_id=created_by_id,
+            stream_id=stream_id,
         )
         return Response({'at_risk': data, 'count': len(data)})
 
@@ -182,6 +197,148 @@ class ComparativeAnalysisView(APIView):
             classroom_ids, academic_year=academic_year, term=term,
             subject_id=subject_id, created_by_id=created_by_id,
         )
+        return Response(data)
+
+
+class StreamComparisonView(APIView):
+    """Side-by-side stream comparison within one classroom (e.g. Form 2 'A' vs 'B' vs 'C')."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, classroom_id):
+        user = request.user
+        if user.role == 'teacher':
+            from mathapi.apps.accounts.scoping import assert_classroom_owned
+            assert_classroom_owned(user, classroom_id)
+        academic_year = request.query_params.get('academic_year')
+        term = request.query_params.get('term')
+        subject_id = _get_subject_id(request)
+        created_by_id = user.id if user.role == 'teacher' else None
+        data = services.get_stream_comparison(
+            classroom_id, academic_year=academic_year, term=term,
+            subject_id=subject_id, created_by_id=created_by_id,
+        )
+        return Response(data)
+
+
+class IntegrityFlagsView(APIView):
+    """Feature 1 — Grade Integrity / Anomaly Detection."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        classroom_id = request.query_params.get('classroom_id')
+        subject_id = _get_subject_id(request)
+        stream_id = _get_stream_id(request)
+        try:
+            min_edit_delta = float(request.query_params.get('min_edit_delta', 15))
+        except (TypeError, ValueError):
+            min_edit_delta = 15.0
+
+        if classroom_id and user.role == 'teacher':
+            from mathapi.apps.accounts.scoping import assert_classroom_owned
+            assert_classroom_owned(user, int(classroom_id))
+
+        if user.role == 'teacher' and not classroom_id:
+            from mathapi.apps.accounts.scoping import get_teacher_classrooms
+            classroom_ids = list(get_teacher_classrooms(user).values_list('id', flat=True))
+        else:
+            classroom_ids = [int(classroom_id)] if classroom_id else None
+
+        created_by_id = user.id if user.role == 'teacher' else None
+        data = services.get_integrity_flags(
+            classroom_ids=classroom_ids,
+            subject_id=subject_id,
+            created_by_id=created_by_id,
+            min_edit_delta=min_edit_delta,
+            stream_id=stream_id,
+        )
+        return Response(data)
+
+
+class StudentRiskScoreView(APIView):
+    """Feature 2 — Composite Risk Score (single student)."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, student_id):
+        _check_student_access(request.user, student_id)
+        subject_id = _get_subject_id(request)
+        created_by_id = request.user.id if request.user.role == 'teacher' else None
+        data = services.get_student_risk_score(student_id, subject_id=subject_id, created_by_id=created_by_id)
+        return Response(data)
+
+
+class ClassroomRiskScoresView(APIView):
+    """Feature 2 — Composite Risk Score (whole classroom, sorted highest-risk first)."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, classroom_id):
+        user = request.user
+        if user.role == 'teacher':
+            from mathapi.apps.accounts.scoping import assert_classroom_owned
+            assert_classroom_owned(user, classroom_id)
+        subject_id = _get_subject_id(request)
+        stream_id = _get_stream_id(request)
+        created_by_id = user.id if user.role == 'teacher' else None
+        data = services.get_classroom_risk_scores(
+            classroom_id, subject_id=subject_id, created_by_id=created_by_id, stream_id=stream_id,
+        )
+        return Response(data)
+
+
+class TopicDependencyChainsView(APIView):
+    """Feature 3 — Root-Cause Topic Dependency Chains."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, classroom_id):
+        user = request.user
+        if user.role == 'teacher':
+            from mathapi.apps.accounts.scoping import assert_classroom_owned
+            assert_classroom_owned(user, classroom_id)
+        subject_id = _get_subject_id(request)
+        stream_id = _get_stream_id(request)
+        try:
+            weak_threshold = float(request.query_params.get('weak_threshold', 45))
+        except (TypeError, ValueError):
+            weak_threshold = 45.0
+        try:
+            min_sample = int(request.query_params.get('min_sample', 5))
+        except (TypeError, ValueError):
+            min_sample = 5
+        created_by_id = user.id if user.role == 'teacher' else None
+        data = services.get_topic_dependency_chains(
+            classroom_id=classroom_id, subject_id=subject_id, created_by_id=created_by_id,
+            weak_threshold=weak_threshold, min_sample=min_sample, stream_id=stream_id,
+        )
+        return Response(data)
+
+
+class TeacherGradingConsistencyView(APIView):
+    """Feature 4 — Teacher Grading Consistency Audit. Admin-only: compares across teachers."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        if user.role != 'super_admin':
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('Only administrators can view cross-teacher grading comparisons.')
+        subject_id = _get_subject_id(request)
+        academic_year = request.query_params.get('academic_year')
+        term = request.query_params.get('term')
+        data = services.get_teacher_grading_consistency(
+            subject_id=subject_id, academic_year=academic_year, term=term,
+        )
+        return Response(data)
+
+
+class GradeBoundaryWhatIfView(APIView):
+    """Feature 5 — Grade-Boundary Sensitivity ("What-If") Engine."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, student_id):
+        _check_student_access(request.user, student_id)
+        subject_id = _get_subject_id(request)
+        created_by_id = request.user.id if request.user.role == 'teacher' else None
+        data = services.get_grade_boundary_whatif(student_id, subject_id=subject_id, created_by_id=created_by_id)
         return Response(data)
 
 

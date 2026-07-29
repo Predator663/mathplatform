@@ -1,0 +1,35 @@
+{% extends "notifications/base_email.html" %}
+{% block content %}
+<p style="margin:0 0 4px 0;font-size:13px;color:#8a8a99;">{{ greeting }}</p>
+<h1 style="margin:0 0 16px 0;font-size:19px;font-weight:700;color:#1a1a26;line-height:1.4;">
+  {{ student_name }} has been flagged as at-risk
+</h1>
+<p style="margin:0 0 20px 0;font-size:14px;color:#4a4a5a;line-height:1.6;">
+  Based on their {{ exams_taken }} most recent exam{{ exams_taken|pluralize }} in
+  <strong>{{ classroom_name }}</strong>, {{ student_first_name }}'s performance
+  {% if declining %}has been declining and {% endif %}is currently below the {{ threshold }}% threshold this alert watches for.
+</p>
+
+<div style="background-color:#fef2f2;border:1px solid #fecdd3;border-radius:12px;padding:16px 18px;margin-bottom:20px;">
+  {% include "notifications/_stat_row.html" with label="Recent average" value=recent_average_display value_color="#e11d48" %}
+  {% include "notifications/_stat_row.html" with label="Exams considered" value=exams_taken value_color="#1a1a26" %}
+  {% include "notifications/_stat_row.html" with label="Trend" value=trend_label value_color=trend_color %}
+</div>
+
+{% if recent_scores %}
+<p style="margin:0 0 8px 0;font-size:12px;font-weight:700;color:#8a8a99;text-transform:uppercase;letter-spacing:0.04em;">Recent scores (most recent first)</p>
+<p style="margin:0 0 20px 0;font-size:14px;color:#1a1a26;font-family:monospace;">
+  {{ recent_scores_display }}
+</p>
+{% endif %}
+
+<p style="margin:0;font-size:14px;color:#4a4a5a;line-height:1.6;">
+  {% if is_parent %}
+    A conversation with {{ student_first_name }}'s teacher about extra support could help turn this around early.
+  {% else %}
+    Consider reaching out to {{ student_first_name }} or looping in a parent/guardian while there's time to course-correct before the next assessment.
+  {% endif %}
+</p>
+
+{% include "notifications/_button.html" with url=action_url label=action_label color="#f43f5e" %}
+{% endblock %}

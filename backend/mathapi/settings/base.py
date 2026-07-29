@@ -33,6 +33,7 @@ LOCAL_APPS = [
     'mathapi.apps.analytics',
     'mathapi.apps.reports',
     'mathapi.apps.groups',
+    'mathapi.apps.notifications',
 ]
 
 # admin MUST come after local apps so Django sees the custom
@@ -149,5 +150,32 @@ CELERY_BROKER_URL = config('REDIS_URL', default='redis://localhost:6379/0')
 CELERY_RESULT_BACKEND = config('REDIS_URL', default='redis://localhost:6379/0')
 
 # Email
-EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
-DEFAULT_FROM_EMAIL = 'noreply@mathplatform.edu'
+# Free by design: no paid transactional-email service required. Point
+# EMAIL_HOST at any SMTP relay with a free tier — Gmail SMTP (smtp.gmail.com,
+# port 587, an App Password — not your normal password — as EMAIL_HOST_PASSWORD),
+# Brevo/Sendinblue (free ~300/day), Zoho Mail, or your school's own mail
+# server all work with zero code changes, just env vars. Leave EMAIL_HOST
+# unset (the default) and emails print to the console instead — handy for
+# local dev without touching real inboxes.
+EMAIL_HOST = config('EMAIL_HOST', default='')
+if EMAIL_HOST:
+    EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+    EMAIL_PORT = config('EMAIL_PORT', default=587, cast=int)
+    EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='')
+    EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
+    EMAIL_USE_TLS = config('EMAIL_USE_TLS', default=True, cast=bool)
+    EMAIL_USE_SSL = config('EMAIL_USE_SSL', default=False, cast=bool)
+    EMAIL_TIMEOUT = config('EMAIL_TIMEOUT', default=15, cast=int)
+else:
+    EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='noreply@mathplatform.edu')
+
+# Base URL of the deployed frontend, used to build links inside notification
+# emails (e.g. "View student" → FRONTEND_URL + /analytics/student/<id>).
+FRONTEND_URL = config('FRONTEND_URL', default='http://localhost:5173').rstrip('/')
+
+# Shared secret an external free scheduler (GitHub Actions cron, cron-job.org)
+# must send as the X-Cron-Secret header to trigger /api/notifications/cron/*.
+# Blank means those endpoints refuse to run — set this before relying on them.
+CRON_SECRET = config('CRON_SECRET', default='')
+

@@ -49,18 +49,27 @@ def get_classroom_student_performance(
     term: str = None,
     academic_year: str = None,
     created_by_id: int = None,
+    stream_id: int = None,
 ) -> list[dict]:
     """
     One row per active student in the classroom: average %, exams taken,
     and performance tier. Students with no scores yet still appear
     (tier='unrated') so they're visible on the grouping page instead of
     silently vanishing.
+
+    `stream_id`, if given, narrows the roster to students placed in that
+    one stream (e.g. Form 2 "A") — the same filter auto-generate uses to
+    build stream-only groups. Every row also carries the student's own
+    stream_id/stream_name regardless, so callers that don't filter can
+    still display or group by stream.
     """
     students = (
         StudentProfile.objects.filter(classroom_id=classroom_id, is_active=True)
-        .select_related('user')
+        .select_related('user', 'stream')
         .order_by('user__first_name', 'user__last_name')
     )
+    if stream_id:
+        students = students.filter(stream_id=stream_id)
 
     filters = Q(student__classroom_id=classroom_id, is_absent=False)
     if subject_id:
@@ -90,6 +99,8 @@ def get_classroom_student_performance(
             'average': average,
             'exams_taken': len(pcts),
             'tier': tier_for_average(average),
+            'stream_id': sp.stream_id,
+            'stream_name': sp.stream.name if sp.stream_id else None,
         })
 
     rows.sort(key=lambda r: (r['average'] is None, -(r['average'] or 0)))
@@ -182,6 +193,7 @@ def get_group_effectiveness(
     subject_id: int = None,
     term: str = None,
     created_by_id: int = None,
+    stream_id: int = None,
 ) -> dict:
     """
     Measures whether peer groups are actually helping, not just whether
@@ -206,6 +218,8 @@ def get_group_effectiveness(
         .prefetch_related('memberships__student__user')
         .order_by('name')
     )
+    if stream_id:
+        groups = groups.filter(stream_id=stream_id)
 
     base_filters = Q(student__classroom_id=classroom_id, is_absent=False)
     if subject_id:
@@ -275,6 +289,7 @@ def get_rebalance_suggestions(
     subject_id: int = None,
     term: str = None,
     created_by_id: int = None,
+    stream_id: int = None,
 ) -> dict:
     """
     Flags where groups have drifted out of balance since they were formed,
@@ -297,7 +312,7 @@ def get_rebalance_suggestions(
 
     performance = get_classroom_student_performance(
         classroom_id, subject_id=subject_id, term=term,
-        academic_year=academic_year, created_by_id=created_by_id,
+        academic_year=academic_year, created_by_id=created_by_id, stream_id=stream_id,
     )
     live_tier_by_student = {p['student_id']: p for p in performance}
 
@@ -306,6 +321,8 @@ def get_rebalance_suggestions(
         .prefetch_related('memberships__student__user')
         .order_by('name')
     )
+    if stream_id:
+        groups = groups.filter(stream_id=stream_id)
 
     tier_changes = []
     group_live_anchors = {}   # group_id -> [membership dicts currently anchor-tier]

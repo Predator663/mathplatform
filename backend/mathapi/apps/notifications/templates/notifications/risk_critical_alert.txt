@@ -1,0 +1,17 @@
+{{ greeting }}
+
+{{ student_name }}'s risk score in {{ classroom_name }} just reached CRITICAL: {{ risk_score }}/100.
+
+This combines four separate signals, not just their raw average, so it can catch a student sliding even before their grade average looks alarming.
+
+{% for factor in risk_factors %}  {{ factor.label }}: {{ factor.display }}
+{% endfor %}
+What's driving this:
+{{ primary_driver_explanation }}
+
+{{ action_label }}: {{ action_url }}
+
+—
+You're receiving this because of your notification preferences on {{ platform_name }}.
+{% if preferences_url %}Manage notification settings: {{ preferences_url }}{% endif %}
+{{ footer_text }}

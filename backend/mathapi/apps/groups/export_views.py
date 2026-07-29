@@ -40,8 +40,11 @@ def _gather(request, classroom_id):
 
     groups = list(
         StudentGroup.objects.filter(classroom_id=classroom_id, academic_year=academic_year)
-        .select_related('subject').prefetch_related('memberships__student__user')
+        .select_related('subject', 'stream').prefetch_related('memberships__student__user')
     )
+    stream_id = request.query_params.get('stream_id')
+    if stream_id:
+        groups = [g for g in groups if g.stream_id is None or str(g.stream_id) == str(stream_id)]
     groups.sort(key=SORT_CHOICES[sort_by])
 
     subject_name = None

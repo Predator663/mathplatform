@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.utils.html import format_html
-from .models import GradeLevel, Classroom, StudentProfile, ParentStudentLink
+from .models import GradeLevel, Classroom, Stream, StudentProfile, ParentStudentLink
 from mathapi.apps.accounts.models import TeacherAssignment
 
 
@@ -29,13 +29,19 @@ class TeacherAssignmentInline(admin.TabularInline):
     fields = ['teacher', 'subject']
 
 
+class StreamInline(admin.TabularInline):
+    model = Stream
+    extra = 0
+    fields = ['name', 'capacity', 'is_active']
+
+
 @admin.register(Classroom)
 class ClassroomAdmin(admin.ModelAdmin):
     list_display  = ['name', 'grade_level', 'stream_badge', 'academic_year', 'is_active', 'student_count']
     list_editable = ['academic_year', 'is_active']
     list_filter   = ['academic_year', 'is_active', 'grade_level', 'stream']
     search_fields = ['name']
-    inlines = [TeacherAssignmentInline]
+    inlines = [TeacherAssignmentInline, StreamInline]
     ordering = ['grade_level__order', 'name']
     fieldsets = (
         (None, {
@@ -68,17 +74,30 @@ class ClassroomAdmin(admin.ModelAdmin):
     student_count.short_description = 'Students'
 
 
+@admin.register(Stream)
+class StreamAdmin(admin.ModelAdmin):
+    list_display  = ['name', 'classroom', 'capacity', 'is_active', 'student_count']
+    list_editable = ['capacity', 'is_active']
+    list_filter   = ['is_active', 'classroom__academic_year']
+    search_fields = ['name', 'classroom__name']
+    raw_id_fields = ['classroom']
+
+    def student_count(self, obj):
+        return obj.student_count
+    student_count.short_description = 'Students'
+
+
 @admin.register(StudentProfile)
 class StudentProfileAdmin(admin.ModelAdmin):
-    list_display  = ['student_id', 'full_name', 'classroom', 'index_number', 'region', 'district', 'enrollment_date', 'is_active']
+    list_display  = ['student_id', 'full_name', 'classroom', 'stream', 'index_number', 'region', 'district', 'enrollment_date', 'is_active']
     list_editable = ['is_active']
-    list_filter   = ['is_active', 'classroom__academic_year', 'classroom__grade_level', 'region']
+    list_filter   = ['is_active', 'classroom__academic_year', 'classroom__grade_level', 'stream', 'region']
     search_fields = ['student_id', 'user__first_name', 'user__last_name', 'user__email', 'index_number']
-    raw_id_fields = ['user', 'classroom']
+    raw_id_fields = ['user', 'classroom', 'stream']
     ordering      = ['user__last_name', 'user__first_name']
     fieldsets = (
         ('Identity', {
-            'fields': ('user', 'student_id', 'classroom', 'is_active'),
+            'fields': ('user', 'student_id', 'classroom', 'stream', 'is_active'),
         }),
         ('Dates', {
             'fields': ('date_of_birth', 'enrollment_date'),

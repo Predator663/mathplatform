@@ -45,6 +45,11 @@ class StudentGroup(models.Model):
     subject       = models.ForeignKey('accounts.Subject', on_delete=models.SET_NULL,
                                        null=True, blank=True, related_name='student_groups',
                                        help_text='Optional — restrict grouping/ranking to one subject')
+    stream        = models.ForeignKey('students.Stream', on_delete=models.SET_NULL,
+                                       null=True, blank=True, related_name='student_groups',
+                                       help_text='Optional — restrict this group to students in one stream '
+                                                  'within the classroom (e.g. Form 2 "A"). Must belong to the '
+                                                  'same classroom as the group.')
     term          = models.CharField(max_length=20, choices=Exam.Term.choices, blank=True)
     description   = models.TextField(blank=True)
     badge_image   = models.ImageField(upload_to='group_badges/', null=True, blank=True)

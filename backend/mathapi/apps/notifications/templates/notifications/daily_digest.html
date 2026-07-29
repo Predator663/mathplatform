@@ -1,0 +1,26 @@
+{% extends "notifications/base_email.html" %}
+{% block content %}
+<p style="margin:0 0 4px 0;font-size:13px;color:#8a8a99;">{{ greeting }}</p>
+<h1 style="margin:0 0 16px 0;font-size:19px;font-weight:700;color:#1a1a26;line-height:1.4;">
+  Your daily summary — {{ today_display }}
+</h1>
+
+{% if sections %}
+  {% for section in sections %}
+  <p style="margin:{% if not forloop.first %}22px{% else %}0{% endif %} 0 8px 0;font-size:12px;font-weight:700;color:#8a8a99;text-transform:uppercase;letter-spacing:0.04em;">{{ section.heading }}</p>
+  <div style="background-color:{{ section.bg_color|default:'#f8fafc' }};border:1px solid {{ section.border_color|default:'#e5e7eb' }};border-radius:12px;padding:14px 18px;">
+    {% for item in section.items %}
+    <p style="margin:0 0 {% if not forloop.last %}10px{% else %}0{% endif %} 0;font-size:13px;color:#1a1a26;line-height:1.5;">
+      {% if item.emphasis %}<strong style="color:{{ item.emphasis_color|default:'#1a1a26' }};">{{ item.emphasis }}</strong> — {% endif %}{{ item.text }}
+    </p>
+    {% endfor %}
+  </div>
+  {% endfor %}
+{% else %}
+<div style="background-color:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:16px 18px;">
+  <p style="margin:0;font-size:14px;color:#15803d;">Nothing new to flag today — everything's steady. ✓</p>
+</div>
+{% endif %}
+
+{% include "notifications/_button.html" with url=action_url label=action_label color="#3b82f6" %}
+{% endblock %}

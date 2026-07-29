@@ -1,0 +1,15 @@
+{{ greeting }}
+
+Your daily summary — {{ today_display }}
+
+{% if sections %}{% for section in sections %}{{ section.heading }}:
+{% for item in section.items %}  - {% if item.emphasis %}{{ item.emphasis }} — {% endif %}{{ item.text }}
+{% endfor %}
+{% endfor %}{% else %}Nothing new to flag today — everything's steady.
+{% endif %}
+{{ action_label }}: {{ action_url }}
+
+—
+You're receiving this because of your notification preferences on {{ platform_name }}.
+{% if preferences_url %}Manage notification settings: {{ preferences_url }}{% endif %}
+{{ footer_text }}

@@ -1,0 +1,35 @@
+{% extends "notifications/base_email.html" %}
+{% block content %}
+<p style="margin:0 0 4px 0;font-size:13px;color:#8a8a99;">{{ greeting }}</p>
+<h1 style="margin:0 0 16px 0;font-size:19px;font-weight:700;color:#1a1a26;line-height:1.4;">
+  {{ flag_count }} grading anomal{{ flag_count|pluralize:"y,ies" }} to review
+</h1>
+<p style="margin:0 0 20px 0;font-size:14px;color:#4a4a5a;line-height:1.6;">
+  The daily integrity scan found {{ flag_count }} score edit{{ flag_count|pluralize }} worth a second look —
+  large post-entry changes or scores that landed suspiciously close to a grade boundary.
+</p>
+
+{% if boundary_crossings %}
+<p style="margin:0 0 8px 0;font-size:12px;font-weight:700;color:#8a8a99;text-transform:uppercase;letter-spacing:0.04em;">Boundary crossings ({{ boundary_crossings|length }})</p>
+<div style="background-color:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:14px 18px;margin-bottom:20px;">
+  {% for row in boundary_crossings %}
+  {% include "notifications/_stat_row.html" with label=row.label value=row.detail value_color="#b45309" %}
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if large_edits %}
+<p style="margin:0 0 8px 0;font-size:12px;font-weight:700;color:#8a8a99;text-transform:uppercase;letter-spacing:0.04em;">Large post-entry edits ({{ large_edits|length }})</p>
+<div style="background-color:#fef2f2;border:1px solid #fecdd3;border-radius:12px;padding:14px 18px;margin-bottom:20px;">
+  {% for row in large_edits %}
+  {% include "notifications/_stat_row.html" with label=row.label value=row.detail value_color="#e11d48" %}
+  {% endfor %}
+</div>
+{% endif %}
+
+<p style="margin:0;font-size:13px;color:#8a8a99;line-height:1.6;">
+  This is usually nothing — a genuine correction after a marking mistake. It's flagged so you have visibility, not as an accusation.
+</p>
+
+{% include "notifications/_button.html" with url=action_url label=action_label color="#b45309" %}
+{% endblock %}

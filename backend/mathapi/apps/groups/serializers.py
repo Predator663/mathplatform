@@ -27,12 +27,15 @@ class GroupMemberSerializer(serializers.ModelSerializer):
     student_id     = serializers.IntegerField(source='student.id', read_only=True)
     student_name   = serializers.CharField(source='student.full_name', read_only=True)
     student_code   = serializers.CharField(source='student.student_id', read_only=True)
+    student_stream_id   = serializers.IntegerField(source='student.stream_id', read_only=True, default=None)
+    student_stream_name = serializers.CharField(source='student.stream.name', read_only=True, default=None)
     tier_display   = serializers.CharField(source='get_tier_display', read_only=True)
 
     class Meta:
         model = GroupMembership
         fields = [
             'id', 'student_id', 'student_name', 'student_code',
+            'student_stream_id', 'student_stream_name',
             'tier', 'tier_display', 'average_at_placement', 'is_anchor', 'joined_at',
         ]
 
@@ -42,6 +45,7 @@ class StudentGroupSerializer(serializers.ModelSerializer):
     member_count  = serializers.IntegerField(read_only=True)
     classroom_name = serializers.CharField(source='classroom.__str__', read_only=True)
     subject_name  = serializers.CharField(source='subject.name', read_only=True, default=None)
+    stream_name   = serializers.CharField(source='stream.name', read_only=True, default=None)
     badge_image_url = serializers.SerializerMethodField()
     group_average = serializers.SerializerMethodField()
 
@@ -49,7 +53,7 @@ class StudentGroupSerializer(serializers.ModelSerializer):
         model = StudentGroup
         fields = [
             'id', 'classroom', 'classroom_name', 'name', 'academic_year', 'subject', 'subject_name',
-            'term', 'description', 'badge_image', 'badge_image_url', 'badge_color',
+            'stream', 'stream_name', 'term', 'description', 'badge_image', 'badge_image_url', 'badge_color',
             'created_by', 'created_at', 'updated_at', 'members', 'member_count', 'group_average',
         ]
         read_only_fields = ['created_by', 'created_at', 'updated_at']

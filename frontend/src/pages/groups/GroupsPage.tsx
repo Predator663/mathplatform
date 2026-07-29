@@ -12,7 +12,7 @@ import {
 import { useAuthStore } from '../../store/auth';
 import { downloadBlob, TERM_LABELS } from '../../utils';
 import type {
-  Classroom, PaginatedResponse, Subject, GroupsOverview, StudentGroup,
+  Classroom, PaginatedResponse, Subject, Stream, GroupsOverview, StudentGroup,
   StudentPerformanceRow, PerformanceTier, GroupTransferLogEntry,
   GroupEffectivenessOverview, RebalanceSuggestions, PeerConstraintEntry,
 } from '../../types';
@@ -40,6 +40,7 @@ export default function GroupsPage() {
   const [selectedClass, setSelectedClass] = useState<number | null>(null);
   const [subjectFilter, setSubjectFilter] = useState('');
   const [termFilter, setTermFilter] = useState('');
+  const [streamFilter, setStreamFilter] = useState('');
   const [sortBy, setSortBy] = useState<'name' | 'score' | 'members'>('name');
 
   const [autoGenOpen, setAutoGenOpen] = useState(false);
@@ -53,7 +54,7 @@ export default function GroupsPage() {
   const [constraintStudentB, setConstraintStudentB] = useState('');
   const [constraintType, setConstraintType] = useState<'avoid' | 'prefer'>('avoid');
   const [constraintReason, setConstraintReason] = useState('');
-  const [movingStudent, setMovingStudent] = useState<{ studentId: number; name: string } | null>(null);
+  const [movingStudent, setMovingStudent] = useState<{ studentId: number; name: string; streamId: number | null } | null>(null);
 
   const badgeInputRef = useRef<HTMLInputElement>(null);
   const [badgeTargetId, setBadgeTargetId] = useState<number | null>(null);
@@ -75,11 +76,21 @@ export default function GroupsPage() {
   const subjects: Subject[] = Array.isArray(subjectsData)
     ? subjectsData : (subjectsData as PaginatedResponse<Subject>)?.results ?? [];
 
-  const overviewKey = ['groups-overview', selectedClass, subjectFilter, termFilter];
+  // Streams are scoped to a single classroom, so this only makes sense
+  // once a classroom is selected — same pattern as StudentsPage's filter.
+  const { data: streamsData } = useQuery<PaginatedResponse<Stream> | Stream[]>({
+    queryKey: ['streams-for-groups', selectedClass],
+    queryFn: () => studentsApi.streams({ classroom: selectedClass, page_size: 200 }).then(r => r.data),
+    enabled: !!selectedClass,
+  });
+  const streams: Stream[] = Array.isArray(streamsData)
+    ? streamsData : (streamsData as PaginatedResponse<Stream>)?.results ?? [];
+
+  const overviewKey = ['groups-overview', selectedClass, subjectFilter, termFilter, streamFilter];
   const { data: overview, isLoading } = useQuery<GroupsOverview>({
     queryKey: overviewKey,
     queryFn: () => groupsApi.overview(selectedClass!, {
-      subject_id: subjectFilter || undefined, term: termFilter || undefined,
+      subject_id: subjectFilter || undefined, term: termFilter || undefined, stream_id: streamFilter || undefined,
     }).then(r => r.data),
     enabled: !!selectedClass,
   });
@@ -91,17 +102,17 @@ export default function GroupsPage() {
   });
 
   const { data: effectiveness, isLoading: effectivenessLoading } = useQuery<GroupEffectivenessOverview>({
-    queryKey: ['groups-effectiveness', selectedClass, subjectFilter, termFilter],
+    queryKey: ['groups-effectiveness', selectedClass, subjectFilter, termFilter, streamFilter],
     queryFn: () => groupsApi.effectiveness(selectedClass!, {
-      subject_id: subjectFilter || undefined, term: termFilter || undefined,
+      subject_id: subjectFilter || undefined, term: termFilter || undefined, stream_id: streamFilter || undefined,
     }).then(r => r.data),
     enabled: !!selectedClass && effectivenessOpen,
   });
 
   const { data: rebalance, isLoading: rebalanceLoading } = useQuery<RebalanceSuggestions>({
-    queryKey: ['groups-rebalance', selectedClass, subjectFilter, termFilter],
+    queryKey: ['groups-rebalance', selectedClass, subjectFilter, termFilter, streamFilter],
     queryFn: () => groupsApi.rebalanceSuggestions(selectedClass!, {
-      subject_id: subjectFilter || undefined, term: termFilter || undefined,
+      subject_id: subjectFilter || undefined, term: termFilter || undefined, stream_id: streamFilter || undefined,
     }).then(r => r.data),
     enabled: !!selectedClass && rebalanceOpen,
   });
@@ -211,7 +222,7 @@ export default function GroupsPage() {
     if (!selectedClass) return;
     try {
       const fn = kind === 'summary' ? groupsApi.exportSummary : groupsApi.exportRoster;
-      const res = await fn(selectedClass, format, { sort_by: sortBy, term: termFilter || undefined });
+      const res = await fn(selectedClass, format, { sort_by: sortBy, term: termFilter || undefined, stream_id: streamFilter || undefined });
       const ext = format === 'pdf' ? 'pdf' : 'xlsx';
       downloadBlob(res.data, `groups_${kind}.${ext}`);
       toast.success('Export downloaded');
@@ -279,7 +290,7 @@ export default function GroupsPage() {
               value: c.id, label: `${c.name} (${c.grade_level_name})`,
             }))]}
             value={selectedClass ?? ''}
-            onChange={e => setSelectedClass(e.target.value ? Number(e.target.value) : null)}
+            onChange={e => { setSelectedClass(e.target.value ? Number(e.target.value) : null); setStreamFilter(''); }}
           />
         </div>
         <div className="min-w-[180px]">
@@ -298,6 +309,16 @@ export default function GroupsPage() {
             onChange={e => setTermFilter(e.target.value)}
           />
         </div>
+        {streams.length > 0 && (
+          <div className="min-w-[180px]">
+            <Select
+              label="Stream (optional)"
+              options={[{ value: '', label: 'All streams' }, ...streams.map(s => ({ value: s.id, label: `Stream ${s.name}` }))]}
+              value={streamFilter}
+              onChange={e => setStreamFilter(e.target.value)}
+            />
+          </div>
+        )}
         <div className="min-w-[160px]">
           <Select
             label="Sort groups by"
@@ -374,6 +395,7 @@ export default function GroupsPage() {
                         {group.member_count} member{group.member_count !== 1 ? 's' : ''}
                         {group.group_average != null ? ` · Avg ${group.group_average}%` : ''}
                         {group.subject_name ? ` · ${group.subject_name}` : ''}
+                        {group.stream_name ? ` · Stream ${group.stream_name}` : ''}
                       </p>
                     </div>
                     <button onClick={() => setRenameGroup(group)} className="text-white/80 hover:text-white p-1.5 rounded-lg hover:bg-black/20" title="Edit group">
@@ -398,14 +420,16 @@ export default function GroupsPage() {
                           <p className="text-sm text-primary truncate">
                             {m.student_name} {m.is_anchor && <span title="Anchor student">⭐</span>}
                           </p>
-                          <p className="text-xs text-secondary">{m.student_code}</p>
+                          <p className="text-xs text-secondary">
+                            {m.student_code}{m.student_stream_name ? ` · Stream ${m.student_stream_name}` : ''}
+                          </p>
                         </div>
                         <TierPill tier={m.tier} />
                         <span className="text-xs font-mono text-secondary w-12 text-right">
                           {m.average_at_placement != null ? `${m.average_at_placement}%` : '—'}
                         </span>
                         <button
-                          onClick={() => setMovingStudent({ studentId: m.student_id, name: m.student_name })}
+                          onClick={() => setMovingStudent({ studentId: m.student_id, name: m.student_name, streamId: m.student_stream_id })}
                           className="p-1.5 text-secondary hover:text-azure-400 hover:bg-surface-700 rounded-lg"
                           title="Move to another group"
                         >
@@ -422,25 +446,32 @@ export default function GroupsPage() {
                     ))}
                   </div>
 
-                  {/* Add member (from ungrouped pool) */}
-                  {(overview?.ungrouped_students.length ?? 0) > 0 && (
-                    <div className="px-4 py-3 border-t border-surface">
-                      <select
-                        className="input text-xs"
-                        value=""
-                        onChange={e => {
-                          if (e.target.value) addMemberMutation.mutate({ groupId: group.id, studentId: Number(e.target.value) });
-                        }}
-                      >
-                        <option value="">+ Add ungrouped student…</option>
-                        {overview!.ungrouped_students.map(s => (
-                          <option key={s.student_id} value={s.student_id}>
-                            {s.student_name} ({s.average != null ? `${s.average}%` : 'no data'})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
+                  {/* Add member (from ungrouped pool) — narrowed to this
+                      group's stream, if it has one, so the dropdown never
+                      offers a student that add-member would reject. */}
+                  {(() => {
+                    const eligible = (overview?.ungrouped_students ?? []).filter(
+                      s => !group.stream || s.stream_id === group.stream
+                    );
+                    return eligible.length > 0 && (
+                      <div className="px-4 py-3 border-t border-surface">
+                        <select
+                          className="input text-xs"
+                          value=""
+                          onChange={e => {
+                            if (e.target.value) addMemberMutation.mutate({ groupId: group.id, studentId: Number(e.target.value) });
+                          }}
+                        >
+                          <option value="">+ Add ungrouped student…</option>
+                          {eligible.map(s => (
+                            <option key={s.student_id} value={s.student_id}>
+                              {s.student_name}{s.stream_name ? ` (Stream ${s.stream_name})` : ''} ({s.average != null ? `${s.average}%` : 'no data'})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    );
+                  })()}
                 </div>
               ))}
             </div>
@@ -457,22 +488,27 @@ export default function GroupsPage() {
                   <div key={s.student_id} className="flex items-center gap-2 py-2">
                     <div className="flex-1 min-w-0">
                       <p className="text-sm text-primary">{s.student_name}</p>
-                      <p className="text-xs text-secondary">{s.student_code}</p>
+                      <p className="text-xs text-secondary">
+                        {s.student_code}{s.stream_name ? ` · Stream ${s.stream_name}` : ''}
+                      </p>
                     </div>
                     <TierPill tier={s.tier} />
                     <span className="text-xs font-mono text-secondary w-12 text-right">
                       {s.average != null ? `${s.average}%` : '—'}
                     </span>
-                    {groups.length > 0 && (
-                      <select
-                        className="input text-xs w-40"
-                        value=""
-                        onChange={e => { if (e.target.value) addMemberMutation.mutate({ groupId: Number(e.target.value), studentId: s.student_id }); }}
-                      >
-                        <option value="">Add to group…</option>
-                        {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
-                      </select>
-                    )}
+                    {(() => {
+                      const eligibleGroups = groups.filter(g => !g.stream || g.stream === s.stream_id);
+                      return eligibleGroups.length > 0 && (
+                        <select
+                          className="input text-xs w-40"
+                          value=""
+                          onChange={e => { if (e.target.value) addMemberMutation.mutate({ groupId: Number(e.target.value), studentId: s.student_id }); }}
+                        >
+                          <option value="">Add to group…</option>
+                          {eligibleGroups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                        </select>
+                      );
+                    })()}
                   </div>
                 ))}
               </div>
@@ -497,6 +533,7 @@ export default function GroupsPage() {
       {/* ── Auto-Generate Modal ───────────────────────────────────────── */}
       {autoGenOpen && (
         <AutoGenerateModal
+          streams={streams}
           onClose={() => setAutoGenOpen(false)}
           onSubmit={payload => autoGenMutation.mutate({ classroom_id: selectedClass, subject_id: subjectFilter || undefined, term: termFilter || undefined, ...payload })}
           loading={autoGenMutation.isPending}
@@ -519,6 +556,7 @@ export default function GroupsPage() {
         }
       >
         <CreateGroupForm
+          streams={streams}
           onSubmit={data => createMutation.mutate({ ...data, classroom: selectedClass, academic_year: classrooms.find(c => c.id === selectedClass)?.academic_year })}
         />
       </Modal>
@@ -528,6 +566,7 @@ export default function GroupsPage() {
         {renameGroup && (
           <EditGroupForm
             group={renameGroup}
+            streams={streams}
             onCancel={() => setRenameGroup(null)}
             onSubmit={data => renameMutation.mutate({ id: renameGroup.id, data })}
             loading={renameMutation.isPending}
@@ -543,7 +582,9 @@ export default function GroupsPage() {
               Move <b className="text-primary">{movingStudent.name}</b> to:
             </p>
             <div className="flex flex-col gap-2">
-              {groups.map(g => (
+              {groups
+                .filter(g => !g.stream || g.stream === movingStudent.streamId)
+                .map(g => (
                 <button
                   key={g.id}
                   onClick={() => transferMutation.mutate({ studentId: movingStudent.studentId, toGroupId: g.id })}
@@ -556,6 +597,9 @@ export default function GroupsPage() {
                 </button>
               ))}
             </div>
+            {groups.filter(g => !g.stream || g.stream === movingStudent.streamId).length === 0 && (
+              <p className="text-xs text-muted">No stream-compatible groups to move this student into.</p>
+            )}
           </div>
         )}
       </Modal>
@@ -821,13 +865,14 @@ function DeltaStat({ label, value }: { label: string; value: number | null }) {
 }
 
 // ── Auto-Generate sub-form ─────────────────────────────────────────────────
-function AutoGenerateModal({ onClose, onSubmit, loading }: {
-  onClose: () => void; onSubmit: (payload: Record<string, unknown>) => void; loading: boolean;
+function AutoGenerateModal({ streams, onClose, onSubmit, loading }: {
+  streams: Stream[]; onClose: () => void; onSubmit: (payload: Record<string, unknown>) => void; loading: boolean;
 }) {
   const [mode, setMode] = useState<'count' | 'size'>('count');
   const [value, setValue] = useState('4');
   const [namePrefix, setNamePrefix] = useState('Group');
   const [replaceExisting, setReplaceExisting] = useState(false);
+  const [streamId, setStreamId] = useState('');
 
   return (
     <Modal open onClose={onClose} title="Auto-Generate Balanced Groups"
@@ -839,6 +884,7 @@ function AutoGenerateModal({ onClose, onSubmit, loading }: {
             onClick={() => onSubmit({
               [mode === 'count' ? 'group_count' : 'group_size']: Number(value) || undefined,
               name_prefix: namePrefix, replace_existing: replaceExisting,
+              stream_id: streamId ? Number(streamId) : undefined,
             })}
           >
             <Sparkles size={14} /> Generate
@@ -851,6 +897,19 @@ function AutoGenerateModal({ onClose, onSubmit, loading }: {
           Students are ranked by average score and split using a balanced draft, so every group gets
           at least one Strong/Very-Strong peer mentor whenever there are enough of them to go around.
         </p>
+        {streams.length > 0 && (
+          <div>
+            <label className="text-xs font-medium text-secondary uppercase tracking-wider">Restrict to stream (optional)</label>
+            <select value={streamId} onChange={e => setStreamId(e.target.value)} className="input mt-1">
+              <option value="">All students in the classroom</option>
+              {streams.map(s => <option key={s.id} value={s.id}>Stream {s.name}</option>)}
+            </select>
+            <p className="text-xs text-muted mt-1">
+              Groups only, from and drawing from students in this stream, and stay
+              restricted to it afterward.
+            </p>
+          </div>
+        )}
         <div className="flex gap-2">
           <button
             onClick={() => setMode('count')}
@@ -888,21 +947,35 @@ function AutoGenerateModal({ onClose, onSubmit, loading }: {
   );
 }
 
-function CreateGroupForm({ onSubmit }: { onSubmit: (data: Record<string, unknown>) => void }) {
+function CreateGroupForm({ streams, onSubmit }: { streams: Stream[]; onSubmit: (data: Record<string, unknown>) => void }) {
   const [name, setName] = useState('');
   const [color, setColor] = useState(BADGE_PALETTE[0]);
   const [description, setDescription] = useState('');
+  const [streamId, setStreamId] = useState('');
 
   return (
     <form
       id="create-group-form"
       className="flex flex-col gap-4"
-      onSubmit={e => { e.preventDefault(); if (name.trim()) onSubmit({ name: name.trim(), badge_color: color, description }); }}
+      onSubmit={e => {
+        e.preventDefault();
+        if (name.trim()) onSubmit({ name: name.trim(), badge_color: color, description, stream: streamId ? Number(streamId) : null });
+      }}
     >
       <div>
         <label className="text-xs font-medium text-secondary uppercase tracking-wider">Group Name *</label>
         <input value={name} onChange={e => setName(e.target.value)} required className="input mt-1" placeholder="e.g. The Problem Solvers" />
       </div>
+      {streams.length > 0 && (
+        <div>
+          <label className="text-xs font-medium text-secondary uppercase tracking-wider">Restrict to stream (optional)</label>
+          <select value={streamId} onChange={e => setStreamId(e.target.value)} className="input mt-1">
+            <option value="">Any stream</option>
+            {streams.map(s => <option key={s.id} value={s.id}>Stream {s.name}</option>)}
+          </select>
+          <p className="text-xs text-muted mt-1">Only students in this stream can be added to the group.</p>
+        </div>
+      )}
       <div>
         <label className="text-xs font-medium text-secondary uppercase tracking-wider">Badge Colour</label>
         <div className="flex gap-2 mt-1 flex-wrap">
@@ -921,22 +994,38 @@ function CreateGroupForm({ onSubmit }: { onSubmit: (data: Record<string, unknown
   );
 }
 
-function EditGroupForm({ group, onSubmit, onCancel, loading }: {
-  group: StudentGroup; onSubmit: (data: Record<string, unknown>) => void; onCancel: () => void; loading: boolean;
+function EditGroupForm({ group, streams, onSubmit, onCancel, loading }: {
+  group: StudentGroup; streams: Stream[]; onSubmit: (data: Record<string, unknown>) => void; onCancel: () => void; loading: boolean;
 }) {
   const [name, setName] = useState(group.name);
   const [color, setColor] = useState(group.badge_color);
   const [description, setDescription] = useState(group.description);
+  const [streamId, setStreamId] = useState(group.stream != null ? String(group.stream) : '');
 
   return (
     <form
       className="flex flex-col gap-4"
-      onSubmit={e => { e.preventDefault(); if (name.trim()) onSubmit({ name: name.trim(), badge_color: color, description }); }}
+      onSubmit={e => {
+        e.preventDefault();
+        if (name.trim()) onSubmit({ name: name.trim(), badge_color: color, description, stream: streamId ? Number(streamId) : null });
+      }}
     >
       <div>
         <label className="text-xs font-medium text-secondary uppercase tracking-wider">Group Name *</label>
         <input value={name} onChange={e => setName(e.target.value)} required className="input mt-1" />
       </div>
+      {streams.length > 0 && (
+        <div>
+          <label className="text-xs font-medium text-secondary uppercase tracking-wider">Restrict to stream (optional)</label>
+          <select value={streamId} onChange={e => setStreamId(e.target.value)} className="input mt-1">
+            <option value="">Any stream</option>
+            {streams.map(s => <option key={s.id} value={s.id}>Stream {s.name}</option>)}
+          </select>
+          <p className="text-xs text-muted mt-1">
+            Changing this doesn't remove existing members outside the new stream — it only affects who can be added from now on.
+          </p>
+        </div>
+      )}
       <div>
         <label className="text-xs font-medium text-secondary uppercase tracking-wider">Badge Colour</label>
         <div className="flex gap-2 mt-1 flex-wrap">

@@ -1,8 +1,34 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from .models import GradeLevel, Classroom, StudentProfile, ParentStudentLink
+from .models import GradeLevel, Classroom, Stream, StudentProfile, ParentStudentLink
 
 User = get_user_model()
+
+
+class StreamSerializer(serializers.ModelSerializer):
+    classroom_name = serializers.CharField(source='classroom.name', read_only=True)
+    student_count  = serializers.ReadOnlyField()
+
+    class Meta:
+        model  = Stream
+        fields = ['id', 'classroom', 'classroom_name', 'name', 'capacity', 'is_active',
+                  'student_count', 'created_at']
+
+    def validate(self, attrs):
+        # unique_together gives a DB-level IntegrityError on duplicate
+        # (classroom, name); surface it as a normal field validation error
+        # instead so the frontend form can show it inline.
+        classroom = attrs.get('classroom') or getattr(self.instance, 'classroom', None)
+        name = attrs.get('name') or getattr(self.instance, 'name', None)
+        if classroom and name:
+            qs = Stream.objects.filter(classroom=classroom, name__iexact=name)
+            if self.instance:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                raise serializers.ValidationError(
+                    {'name': f'Stream "{name}" already exists for this classroom.'}
+                )
+        return attrs
 
 
 class GradeLevelSerializer(serializers.ModelSerializer):
@@ -26,6 +52,7 @@ class ClassroomSerializer(serializers.ModelSerializer):
     teacher_assignments    = serializers.SerializerMethodField()
     necta_exam             = serializers.CharField(source='grade_level.necta_exam', read_only=True)
     math_subject           = serializers.CharField(source='grade_level.math_subject', read_only=True)
+    streams                = serializers.SerializerMethodField()
 
     class Meta:
         model  = Classroom
@@ -33,8 +60,11 @@ class ClassroomSerializer(serializers.ModelSerializer):
             'id', 'name', 'grade_level', 'grade_level_name', 'grade_level_short',
             'education_level', 'education_level_display', 'stream', 'stream_display',
             'academic_year', 'teacher_names', 'teacher_assignments', 'is_active',
-            'student_count', 'necta_exam', 'math_subject', 'created_at',
+            'student_count', 'necta_exam', 'math_subject', 'streams', 'created_at',
         ]
+
+    def get_streams(self, obj):
+        return StreamSerializer(obj.streams.all(), many=True).data
 
     def get_teacher_names(self, obj):
         seen = set()
@@ -62,6 +92,7 @@ class StudentProfileSerializer(serializers.ModelSerializer):
     full_name      = serializers.ReadOnlyField()
     email          = serializers.ReadOnlyField()
     classroom_name = serializers.CharField(source='classroom.__str__', read_only=True)
+    stream_name    = serializers.CharField(source='stream.name', read_only=True, default=None)
     # NOTE: these were previously read_only=True. That meant editing a
     # student's name in the UI would PATCH successfully (200 OK, "Student
     # updated" toast) but silently drop first_name/last_name from
@@ -79,7 +110,7 @@ class StudentProfileSerializer(serializers.ModelSerializer):
         model  = StudentProfile
         fields = [
             'id', 'student_id', 'full_name', 'first_name', 'last_name', 'email',
-            'classroom', 'classroom_name', 'grade_level', 'education_level',
+            'classroom', 'classroom_name', 'stream', 'stream_name', 'grade_level', 'education_level',
             'date_of_birth', 'enrollment_date', 'is_active', 'notes',
             'index_number', 'parent_name', 'parent_phone', 'district', 'region',
         ]
@@ -93,6 +124,20 @@ class StudentProfileSerializer(serializers.ModelSerializer):
         if obj.classroom and obj.classroom.grade_level:
             return obj.classroom.grade_level.education_level
         return None
+
+    def validate(self, attrs):
+        # A stream always belongs to exactly one classroom — reject any
+        # combination where the chosen stream isn't actually a stream of
+        # the (new-or-existing) classroom, so a PATCH can't silently attach
+        # a student to a stream from an unrelated class.
+        stream = attrs.get('stream', serializers.empty)
+        classroom = attrs.get('classroom', getattr(self.instance, 'classroom', None) if self.instance else None)
+        if stream not in (serializers.empty, None):
+            if stream.classroom_id != getattr(classroom, 'id', classroom):
+                raise serializers.ValidationError(
+                    {'stream': 'Selected stream does not belong to this student\'s classroom.'}
+                )
+        return attrs
 
     def update(self, instance, validated_data):
         # `first_name`/`last_name` use a dotted source (user.first_name),
@@ -115,6 +160,8 @@ class StudentCreateSerializer(serializers.Serializer):
     student_id    = serializers.CharField(max_length=20)
     classroom     = serializers.PrimaryKeyRelatedField(
         queryset=Classroom.objects.all(), required=False, allow_null=True)
+    stream        = serializers.PrimaryKeyRelatedField(
+        queryset=Stream.objects.all(), required=False, allow_null=True)
     date_of_birth = serializers.DateField(required=False, allow_null=True)
     notes         = serializers.CharField(required=False, allow_blank=True)
     index_number  = serializers.CharField(required=False, allow_blank=True)
@@ -146,6 +193,15 @@ class StudentCreateSerializer(serializers.Serializer):
                     'You do not have access to this classroom.'
                 )
         return value
+
+    def validate(self, attrs):
+        stream = attrs.get('stream')
+        classroom = attrs.get('classroom')
+        if stream and (not classroom or stream.classroom_id != classroom.id):
+            raise serializers.ValidationError(
+                {'stream': 'Selected stream does not belong to the selected classroom.'}
+            )
+        return attrs
 
     def create(self, validated_data):
         import secrets

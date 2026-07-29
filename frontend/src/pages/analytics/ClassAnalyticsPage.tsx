@@ -9,7 +9,7 @@ import { analyticsApi, studentsApi } from '../../api';
 import { LoadingPage, Table, Tr, Td, EmptyState, Select } from '../../components/ui';
 import { useSubjectStore } from '../../store/subject';
 import { formatDate, gradeColor, gradeBg, TERM_LABELS, EXAM_TYPE_LABELS } from '../../utils';
-import type { ClassAnalytics, Classroom, PaginatedResponse, TopicHeatmap } from '../../types';
+import type { ClassAnalytics, Classroom, PaginatedResponse, TopicHeatmap, Stream, StreamComparison } from '../../types';
 import { BarChart3, AlertTriangle } from 'lucide-react';
 
 const DIST_COLORS: Record<string, string> = {
@@ -21,6 +21,7 @@ export default function ClassAnalyticsPage() {
   const navigate = useNavigate();
   const [selectedClass, setSelectedClass] = useState<number | null>(null);
   const [selectedTerm, setSelectedTerm] = useState<string>('');
+  const [streamFilter, setStreamFilter] = useState<string>('');
   const { activeSubjectId } = useSubjectStore();
 
   const { data: classroomsData } = useQuery<PaginatedResponse<Classroom> | Classroom[]>({
@@ -31,23 +32,42 @@ export default function ClassAnalyticsPage() {
     ? classroomsData
     : (classroomsData as PaginatedResponse<Classroom>)?.results ?? [];
 
+  const { data: streamsData } = useQuery<PaginatedResponse<Stream> | Stream[]>({
+    queryKey: ['streams-for-class-analytics', selectedClass],
+    queryFn: () => studentsApi.streams({ classroom: selectedClass, page_size: 200 }).then(r => r.data),
+    enabled: !!selectedClass,
+  });
+  const streams: Stream[] = Array.isArray(streamsData)
+    ? streamsData : (streamsData as PaginatedResponse<Stream>)?.results ?? [];
+
   const { data: analytics, isLoading } = useQuery<ClassAnalytics>({
-    queryKey: ['class-analytics', selectedClass, selectedTerm, activeSubjectId],
+    queryKey: ['class-analytics', selectedClass, selectedTerm, activeSubjectId, streamFilter],
     queryFn: () => analyticsApi.classAnalytics(selectedClass!, {
       term: selectedTerm || undefined,
+      stream_id: streamFilter || undefined,
       ...(activeSubjectId ? { subject_id: activeSubjectId } : {}),
     }).then(r => r.data),
     enabled: !!selectedClass,
   });
 
   // Heatmap doesn't take a term filter on the backend (it aggregates across the
-  // whole academic year), so it only depends on the classroom + active subject.
+  // whole academic year), so it only depends on the classroom + active subject + stream.
   const { data: heatmap, isLoading: heatmapLoading } = useQuery<TopicHeatmap>({
-    queryKey: ['class-heatmap', selectedClass, activeSubjectId],
+    queryKey: ['class-heatmap', selectedClass, activeSubjectId, streamFilter],
     queryFn: () => analyticsApi.heatmap(selectedClass!, {
+      stream_id: streamFilter || undefined,
       ...(activeSubjectId ? { subject_id: activeSubjectId } : {}),
     }).then(r => r.data),
     enabled: !!selectedClass,
+  });
+
+  const { data: streamComparison, isLoading: streamComparisonLoading } = useQuery<StreamComparison>({
+    queryKey: ['stream-comparison', selectedClass, selectedTerm, activeSubjectId],
+    queryFn: () => analyticsApi.streamComparison(selectedClass!, {
+      term: selectedTerm || undefined,
+      ...(activeSubjectId ? { subject_id: activeSubjectId } : {}),
+    }).then(r => r.data),
+    enabled: !!selectedClass && streams.length > 0,
   });
 
   const examChartData = (analytics?.exam_summaries ?? []).map(e => ({
@@ -87,7 +107,7 @@ export default function ClassAnalyticsPage() {
               ...classrooms.map(c => ({ value: c.id, label: `${c.name} — ${c.grade_level_name} (${c.academic_year})` })),
             ]}
             value={selectedClass ?? ''}
-            onChange={e => setSelectedClass(e.target.value ? Number(e.target.value) : null)}
+            onChange={e => { setSelectedClass(e.target.value ? Number(e.target.value) : null); setStreamFilter(''); }}
           />
         </div>
         <div className="w-40">
@@ -103,6 +123,16 @@ export default function ClassAnalyticsPage() {
             onChange={e => setSelectedTerm(e.target.value)}
           />
         </div>
+        {streams.length > 0 && (
+          <div className="w-40">
+            <Select
+              label="Filter by Stream"
+              options={[{ value: '', label: 'All Streams' }, ...streams.map(s => ({ value: s.id, label: `Stream ${s.name}` }))]}
+              value={streamFilter}
+              onChange={e => setStreamFilter(e.target.value)}
+            />
+          </div>
+        )}
       </div>
 
       {!selectedClass ? (
@@ -127,6 +157,32 @@ export default function ClassAnalyticsPage() {
               </div>
             ))}
           </div>
+
+          {/* Stream comparison — only shown when this classroom actually has streams */}
+          {streams.length > 0 && (
+            <div className="card p-6">
+              <h2 className="section-title mb-5">Stream Comparison</h2>
+              {streamComparisonLoading ? (
+                <LoadingPage />
+              ) : !streamComparison || streamComparison.streams.length === 0 ? (
+                <p className="text-muted text-center py-8">No stream data yet.</p>
+              ) : (
+                <Table headers={['Stream', 'Students', 'Average', 'Pass Rate', 'Highest', 'Lowest', 'At Risk']}>
+                  {streamComparison.streams.map(row => (
+                    <Tr key={row.stream_id ?? 'none'}>
+                      <Td><span className="font-display font-medium text-primary">{row.stream_name}</span></Td>
+                      <Td className="font-mono text-xs">{row.student_count}</Td>
+                      <Td>{row.average != null ? <span className={`font-mono text-sm font-bold ${gradeColor(row.average)}`}>{row.average}%</span> : <span className="text-muted">—</span>}</Td>
+                      <Td>{row.pass_rate != null ? <span className={`font-mono text-sm font-bold ${gradeColor(row.pass_rate)}`}>{row.pass_rate}%</span> : <span className="text-muted">—</span>}</Td>
+                      <Td><span className="font-mono text-xs text-emerald-400">{row.highest != null ? `${row.highest}%` : '—'}</span></Td>
+                      <Td><span className="font-mono text-xs text-rose-400">{row.lowest != null ? `${row.lowest}%` : '—'}</span></Td>
+                      <Td>{row.at_risk_count > 0 ? <span className="badge badge-rose">{row.at_risk_count}</span> : <span className="text-muted text-xs">0</span>}</Td>
+                    </Tr>
+                  ))}
+                </Table>
+              )}
+            </div>
+          )}
 
           {/* Charts */}
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">

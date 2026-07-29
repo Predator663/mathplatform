@@ -128,6 +128,8 @@ def build_analytics_report_data(classroom_id, academic_year=None, term=None,
             'student__user__first_name',
             'student__user__last_name',
             'student__index_number',
+            'student__stream_id',
+            'student__stream__name',
             'exam__subject_id',
             'exam__subject__name',
             'exam__subject__code',
@@ -161,6 +163,7 @@ def build_analytics_report_data(classroom_id, academic_year=None, term=None,
             student_meta[sid] = {
                 'name': f'{fn} {ln}'.strip() or f'Student {sid}',
                 'index': row['student__index_number'] or '',
+                'stream': row['student__stream__name'] if row['student__stream_id'] else '—',
             }
         if subj and subj not in subject_meta:
             subject_meta[subj] = {
@@ -224,6 +227,7 @@ def build_analytics_report_data(classroom_id, academic_year=None, term=None,
             'student_id':   sid,
             'name':         smeta['name'],
             'index':        smeta['index'],
+            'stream':       smeta['stream'],
             'subj_scores':  subj_scores,        # subj_id → {pct, grade}
             'total_pct':    round(sum(student_pcts), 1),
             'average':      avg_pct,
@@ -440,14 +444,15 @@ def _build_marks_table(data, avail_w):
 
     # ── Column widths ────────────────────────────────────────────────────────
     # Fixed cols: SN(0.5) + REG(2.0) + NAME(4.0) + ... + AVG(1.4) + GRD(1.0) + DIV(0.7) + POS(0.8)
-    W_SN   = 0.55 * cm
-    W_REG  = 2.00 * cm
-    W_NAME = 4.00 * cm
-    W_AVG  = 1.40 * cm
-    W_GRD  = 0.90 * cm
-    W_DIV  = 0.75 * cm
-    W_POS  = 0.75 * cm
-    fixed  = W_SN + W_REG + W_NAME + W_AVG + W_GRD + W_DIV + W_POS
+    W_SN     = 0.55 * cm
+    W_REG    = 2.00 * cm
+    W_NAME   = 3.60 * cm  # shrunk from 4.00cm to make room for the Stream column
+    W_STREAM = 1.60 * cm
+    W_AVG    = 1.40 * cm
+    W_GRD    = 0.90 * cm
+    W_DIV    = 0.75 * cm
+    W_POS    = 0.75 * cm
+    fixed  = W_SN + W_REG + W_NAME + W_STREAM + W_AVG + W_GRD + W_DIV + W_POS
 
     # Each subject gets two sub-columns: score% + grade.
     # IMPORTANT: no minimum-width floor here. A previous version enforced
@@ -470,7 +475,7 @@ def _build_marks_table(data, avail_w):
     W_PCT  = W_SUBJ_PAIR * 0.60
     W_GRD2 = W_SUBJ_PAIR * 0.40
 
-    col_widths = [W_SN, W_REG, W_NAME]
+    col_widths = [W_SN, W_REG, W_NAME, W_STREAM]
     for _ in ordered_subjects:
         col_widths += [W_PCT, W_GRD2]
     col_widths += [W_AVG, W_GRD, W_DIV, W_POS]
@@ -480,6 +485,7 @@ def _build_marks_table(data, avail_w):
         _th('SN'),
         _th('REG NO'),
         _th('STUDENT NAME', align=TA_LEFT),
+        _th('STREAM'),
     ]
     for _, smeta in ordered_subjects:
         # Truncate labels harder as columns get narrower so codes don't
@@ -497,6 +503,7 @@ def _build_marks_table(data, avail_w):
             _td(i + 1),
             _td(sr['index'] or '-'),
             _td(sr['name'], align=TA_LEFT, bold=False),
+            _td(sr['stream']),
         ]
         for subj_id, _ in ordered_subjects:
             ss = sr['subj_scores'].get(subj_id, {'pct': None, 'grade': '-'})
@@ -521,7 +528,7 @@ def _build_marks_table(data, avail_w):
     style.add('LEFTPADDING', (2, 0), (2, -1), 3)
     # Grade sub-cols: slightly tinted header
     for j, _ in enumerate(ordered_subjects):
-        col_pct = 3 + j * 2
+        col_pct = 4 + j * 2
         col_grd = col_pct + 1
         style.add('BACKGROUND', (col_grd, 0), (col_grd, 0), C_BLUE2)
     tbl.setStyle(style)
@@ -1005,7 +1012,7 @@ def generate_analytics_report_excel(data: dict, school_name: str = 'MathPlatform
 
     row = 1
     # Title rows
-    ncols_marks = 3 + n_subj * 2 + 4
+    ncols_marks = 4 + n_subj * 2 + 4  # SN/REG/NAME/STREAM + subject pairs + AVG/GR/DIV/POS
     ws1.merge_cells(start_row=row, start_column=1, end_row=row, end_column=ncols_marks)
     _xl_set(ws1, row, 1, f'MathPlatform  ·  {school_name}',
             bold=True, bg=HDR1, fg='FFFFFFFF', size=12)
@@ -1022,7 +1029,8 @@ def generate_analytics_report_excel(data: dict, school_name: str = 'MathPlatform
     _xl_set(ws1, row, 1, 'SN',           bold=True, bg=HDR1, fg='FFFFFFFF', size=8)
     _xl_set(ws1, row, 2, 'REG NO',       bold=True, bg=HDR1, fg='FFFFFFFF', size=8)
     _xl_set(ws1, row, 3, 'STUDENT NAME', bold=True, bg=HDR1, fg='FFFFFFFF', size=8, align_h='left')
-    col_i = 4
+    _xl_set(ws1, row, 4, 'STREAM',       bold=True, bg=HDR1, fg='FFFFFFFF', size=8)
+    col_i = 5
     for _, smeta in ordered_subjects:
         # Subject code/name is rotated 90° so it fits down a narrow 6-char
         # column instead of forcing the column wide — with many subjects
@@ -1045,7 +1053,8 @@ def generate_analytics_report_excel(data: dict, school_name: str = 'MathPlatform
         _xl_set(ws1, row, 1, i+1,          bg=bg, size=8)
         _xl_set(ws1, row, 2, sr['index'] or '-', bg=bg, size=8)
         _xl_set(ws1, row, 3, sr['name'],   bg=bg, size=8, align_h='left')
-        col_i = 4
+        _xl_set(ws1, row, 4, sr['stream'], bg=bg, size=8)
+        col_i = 5
         for subj_id, _ in ordered_subjects:
             ss  = sr['subj_scores'].get(subj_id, {'pct': None, 'grade': '-'})
             pct = ss['pct']
@@ -1071,7 +1080,8 @@ def generate_analytics_report_excel(data: dict, school_name: str = 'MathPlatform
     ws1.column_dimensions['A'].width = 4
     ws1.column_dimensions['B'].width = 12
     ws1.column_dimensions['C'].width = 24
-    col_letter_i = 4
+    ws1.column_dimensions['D'].width = 12
+    col_letter_i = 5
     for _ in ordered_subjects:
         ws1.column_dimensions[get_column_letter(col_letter_i)].width     = 6
         ws1.column_dimensions[get_column_letter(col_letter_i+1)].width   = 4
@@ -1079,7 +1089,7 @@ def generate_analytics_report_excel(data: dict, school_name: str = 'MathPlatform
     for w in [7, 4, 5, 5]:
         ws1.column_dimensions[get_column_letter(col_letter_i)].width = w
         col_letter_i += 1
-    ws1.freeze_panes = 'D5'
+    ws1.freeze_panes = 'E5'
 
     # ── Sheet 2: Subject Summary ─────────────────────────────────────────────
     ws2 = wb.create_sheet('Summary')

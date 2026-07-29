@@ -61,7 +61,7 @@ class ExamViewSet(viewsets.ModelViewSet):
         # letting an admin toggle add/edit/delete off for teachers in
         # Settings. destroy() keeps its own extra "only your own exam"
         # check below (admins bypass it).
-        from mathapi.apps.accounts.permissions import IsTeacherOrAdmin, TeacherFeatureEnabled
+        from mathapi.apps.accounts.permissions import IsAdminRole, IsTeacherOrAdmin, TeacherFeatureEnabled
         if self.action == 'create':
             return [IsTeacherOrAdmin(), TeacherFeatureEnabled('exams', 'add')]
         if self.action in ['update', 'partial_update']:
@@ -70,6 +70,10 @@ class ExamViewSet(viewsets.ModelViewSet):
             return [IsTeacherOrAdmin(), TeacherFeatureEnabled('exams', 'delete')]
         if self.action in ['bulk_scores', 'bulk_scores_csv']:
             return [IsTeacherOrAdmin(), TeacherFeatureEnabled('exams', 'edit')]
+        # Trash/restore/empty-trash expose soft-deleted rows that
+        # scope_exams() otherwise hides from everyone — admin-only.
+        if self.action in ['trash', 'restore', 'empty_trash']:
+            return [IsAdminRole()]
         return [permissions.IsAuthenticated()]
 
     def get_queryset(self):
@@ -112,6 +116,85 @@ class ExamViewSet(viewsets.ModelViewSet):
             pass
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+    @action(detail=False, methods=['get'], url_path='trash')
+    def trash(self, request):
+        """Admin-only: every soft-deleted exam, across every teacher.
+        Bypasses scope_exams()/get_queryset() by design — this is the one
+        place deleted rows are meant to become visible again, so admins can
+        see what's sitting in the trash before permanently clearing it."""
+        from django.db.models import Prefetch
+        present_scores = ExamScore.objects.filter(is_absent=False)
+        qs = (
+            Exam.objects
+            .filter(is_deleted=True)
+            .select_related('subject', 'created_by')
+            .prefetch_related(
+                'classrooms',
+                Prefetch('scores', queryset=present_scores, to_attr='present_scores'),
+            )
+            .order_by('-updated_at')
+        )
+        serializer = ExamSerializer(qs, many=True)
+        return Response({'results': serializer.data, 'count': qs.count()})
+
+    @action(detail=True, methods=['post'], url_path='restore')
+    def restore(self, request, pk=None):
+        """Admin-only: un-delete a single exam. Looks the row up directly
+        (not via get_object()) since the normal scoped queryset excludes
+        soft-deleted exams by definition."""
+        try:
+            exam = Exam.objects.get(pk=pk, is_deleted=True)
+        except Exam.DoesNotExist:
+            return Response({'detail': 'Deleted exam not found.'}, status=status.HTTP_404_NOT_FOUND)
+        exam.is_deleted = False
+        exam.save(update_fields=['is_deleted'])
+        try:
+            from mathapi.apps.accounts.models import AuditLog
+            AuditLog.objects.create(
+                user=request.user,
+                action=AuditLog.Action.UPDATE,
+                model_name='Exam',
+                object_id=str(exam.id),
+                description=f'Restored soft-deleted exam: {exam.title}',
+            )
+        except Exception:
+            pass
+        return Response(ExamSerializer(exam).data)
+
+    @action(detail=False, methods=['post'], url_path='trash/empty')
+    def empty_trash(self, request):
+        """Admin-only: permanently and irreversibly delete every currently
+        soft-deleted exam in one call. Cascades to their topic weights,
+        scores, and score-edit logs (all CASCADE FKs onto Exam/ExamScore).
+        Requires {"confirm": true} in the body so this can't be triggered
+        by an accidental click or a stray script call."""
+        if not request.data.get('confirm'):
+            return Response(
+                {'detail': 'Pass {"confirm": true} to permanently delete all trashed exams.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        deleted_qs = Exam.objects.filter(is_deleted=True)
+        count = deleted_qs.count()
+        if count == 0:
+            return Response({'detail': 'Trash is already empty.', 'deleted_count': 0})
+        # Cap how many titles we log — a very large trash shouldn't blow
+        # out the audit log description field.
+        titles = list(deleted_qs.order_by('title').values_list('title', flat=True)[:20])
+        summary = ', '.join(titles) + ('…' if count > len(titles) else '')
+        deleted_qs.delete()
+        try:
+            from mathapi.apps.accounts.models import AuditLog
+            AuditLog.objects.create(
+                user=request.user,
+                action=AuditLog.Action.DELETE,
+                model_name='Exam',
+                object_id='bulk',
+                description=f'Permanently deleted {count} trashed exam(s): {summary}',
+            )
+        except Exception:
+            pass
+        return Response({'detail': f'Permanently deleted {count} exam(s).', 'deleted_count': count})
+
     @action(detail=False, methods=['get'], url_path='pending-review')
     def pending_review(self, request):
         """Admin-only: all unpublished exams awaiting approval, across all teachers.
@@ -143,6 +226,15 @@ class ExamViewSet(viewsets.ModelViewSet):
             )
         exam.is_published = True
         exam.save(update_fields=['is_published'])
+
+        # Email notifications are best-effort — a bad SMTP config or a
+        # transient failure should never prevent the exam from publishing.
+        try:
+            from mathapi.apps.notifications.services import notify_exam_published
+            notify_exam_published(exam)
+        except Exception:
+            pass
+
         return Response({'detail': 'Exam published successfully.'})
 
     @action(detail=True, methods=['post'])

@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
@@ -5,11 +6,11 @@ import toast from 'react-hot-toast';
 import { studentsApi } from '../../api';
 import { Button, Input, Select } from '../../components/ui';
 import { PermissionGate } from '../../components/ui/PermissionGate';
-import type { Classroom, PaginatedResponse } from '../../types';
+import type { Classroom, Stream, PaginatedResponse } from '../../types';
 
 interface CreateStudentForm {
   first_name: string; last_name: string; email: string;
-  student_id: string; classroom: string; date_of_birth: string; notes: string;
+  student_id: string; classroom: string; stream: string; date_of_birth: string; notes: string;
   index_number: string; parent_name: string; parent_phone: string;
   district: string; region: string;
 }
@@ -26,7 +27,20 @@ export default function CreateStudentPage() {
     ? classroomsData
     : (classroomsData as PaginatedResponse<Classroom>)?.results ?? [];
 
-  const { register, handleSubmit, formState: { errors } } = useForm<CreateStudentForm>();
+  const { register, handleSubmit, watch, setValue, formState: { errors } } = useForm<CreateStudentForm>();
+  const selectedClassroom = watch('classroom');
+
+  const { data: streamsData } = useQuery<PaginatedResponse<Stream> | Stream[]>({
+    queryKey: ['streams-for-create', selectedClassroom],
+    queryFn: () => studentsApi.streams({ classroom: selectedClassroom, page_size: 200 }).then(r => r.data),
+    enabled: !!selectedClassroom,
+  });
+  const streams: Stream[] = Array.isArray(streamsData)
+    ? streamsData : (streamsData as PaginatedResponse<Stream>)?.results ?? [];
+
+  // A stream only makes sense within its own classroom — clear any
+  // previously chosen stream whenever the classroom selection changes.
+  useEffect(() => { setValue('stream', ''); }, [selectedClassroom, setValue]);
 
   const mutation = useMutation({
     mutationFn: (data: Partial<CreateStudentForm>) => studentsApi.createStudent(data),
@@ -55,6 +69,7 @@ export default function CreateStudentPage() {
     mutation.mutate({
       ...data,
       classroom: data.classroom || undefined,
+      stream: data.stream || undefined,
       date_of_birth: data.date_of_birth || undefined,
     });
   };
@@ -130,6 +145,16 @@ export default function CreateStudentPage() {
             ]}
             {...register('classroom')}
           />
+          {selectedClassroom && (
+            <Select
+              label="Stream (optional)"
+              options={[
+                { value: '', label: streams.length ? 'Assign later' : 'No streams set up for this classroom yet' },
+                ...streams.map(s => ({ value: s.id, label: `Stream ${s.name}` })),
+              ]}
+              {...register('stream')}
+            />
+          )}
         </div>
 
         <div className="card p-6 flex flex-col gap-4">

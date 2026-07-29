@@ -1,0 +1,5 @@
+Test email ✓
+
+If you're reading this, {{ platform_name }}'s email notifications are configured correctly.
+
+Sent to {{ recipient_email }} at {{ sent_at_display }} by {{ triggered_by }}.

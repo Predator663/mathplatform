@@ -1,0 +1,20 @@
+{{ greeting }}
+
+{{ flag_count }} grading anomaly/anomalies to review.
+
+The daily integrity scan found {{ flag_count }} score edit(s) worth a second look — large post-entry changes or scores that landed suspiciously close to a grade boundary.
+{% if boundary_crossings %}
+Boundary crossings ({{ boundary_crossings|length }}):
+{% for row in boundary_crossings %}  - {{ row.label }}: {{ row.detail }}
+{% endfor %}{% endif %}{% if large_edits %}
+Large post-entry edits ({{ large_edits|length }}):
+{% for row in large_edits %}  - {{ row.label }}: {{ row.detail }}
+{% endfor %}{% endif %}
+This is usually nothing — a genuine correction after a marking mistake. It's flagged so you have visibility, not as an accusation.
+
+{{ action_label }}: {{ action_url }}
+
+—
+You're receiving this because of your notification preferences on {{ platform_name }}.
+{% if preferences_url %}Manage notification settings: {{ preferences_url }}{% endif %}
+{{ footer_text }}

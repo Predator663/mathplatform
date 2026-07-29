@@ -4,7 +4,7 @@ All heavy data processing lives here; views stay thin.
 """
 from django.db.models import Q
 from collections import defaultdict
-from mathapi.apps.exams.models import ExamScore, TopicScore, Exam
+from mathapi.apps.exams.models import ExamScore, TopicScore, Exam, ExamTopicWeight, ScoreEditLog
 from mathapi.apps.students.models import StudentProfile, Classroom
 
 
@@ -243,6 +243,7 @@ def get_class_analytics(
     term: str = None,
     subject_id: int = None,
     created_by_id: int = None,
+    stream_id: int = None,
 ) -> dict:
     try:
         classroom = Classroom.objects.select_related('grade_level').get(id=classroom_id)
@@ -260,6 +261,8 @@ def get_class_analytics(
     if subject_id:
         filters &= Q(exam__subject_id=subject_id)
         exam_filters &= Q(subject_id=subject_id)
+    if stream_id:
+        filters &= Q(student__stream_id=stream_id)
     if created_by_id:
         # Restricts this classroom's analytics to exams the requesting
         # teacher actually created — without this, a teacher with any
@@ -275,6 +278,8 @@ def get_class_analytics(
 
     for exam in exams:
         exam_scores = ExamScore.objects.filter(exam=exam, student__classroom_id=classroom_id, is_absent=False)
+        if stream_id:
+            exam_scores = exam_scores.filter(student__stream_id=stream_id)
         if not exam_scores.exists():
             continue
         pcts = [s.percentage for s in exam_scores]
@@ -304,6 +309,8 @@ def get_class_analytics(
             exam_score__is_absent=False,
             topic=tw.topic,
         )
+        if stream_id:
+            ts_qs = ts_qs.filter(exam_score__student__stream_id=stream_id)
         if ts_qs.exists():
             avg = sum(ts.percentage for ts in ts_qs) / ts_qs.count()
             topic_avgs[tw.topic].append(avg)
@@ -366,6 +373,7 @@ def get_class_analytics(
         threshold=30.0,
         subject_id=subject_id,
         created_by_id=created_by_id,
+        stream_id=stream_id,
     )
     at_risk_students = [
         {
@@ -398,6 +406,7 @@ def get_topic_class_heatmap(
     academic_year: str = None,
     subject_id: int = None,
     created_by_id: int = None,
+    stream_id: int = None,
 ) -> dict:
     filters = Q(
         exam_score__student__classroom_id=classroom_id,
@@ -407,6 +416,8 @@ def get_topic_class_heatmap(
         filters &= Q(exam_score__exam__academic_year=academic_year)
     if subject_id:
         filters &= Q(topic__subject_id=subject_id)
+    if stream_id:
+        filters &= Q(exam_score__student__stream_id=stream_id)
     if created_by_id:
         filters &= Q(exam_score__exam__created_by_id=created_by_id)
 
@@ -445,6 +456,7 @@ def get_at_risk_students(
     threshold: float = 50.0,
     subject_id: int = None,
     created_by_id: int = None,
+    stream_id: int = None,
 ) -> list:
     filters = Q(is_absent=False)
     if classroom_ids:
@@ -454,6 +466,8 @@ def get_at_risk_students(
             filters &= Q(student__classroom_id__in=classroom_ids)
     if subject_id:
         filters &= Q(exam__subject_id=subject_id)
+    if stream_id:
+        filters &= Q(student__stream_id=stream_id)
     if created_by_id:
         filters &= Q(exam__created_by_id=created_by_id)
 
@@ -527,6 +541,636 @@ def get_comparative_analysis(
                 'exam_summaries': data.get('exam_summaries', []),
             })
     return {'comparisons': results}
+
+
+def get_stream_comparison(
+    classroom_id: int,
+    academic_year: str = None,
+    term: str = None,
+    subject_id: int = None,
+    created_by_id: int = None,
+) -> dict:
+    """
+    Side-by-side stream comparison within ONE classroom (e.g. Form 2 "A" vs
+    "B" vs "C") — one call instead of running get_class_analytics once per
+    stream and diffing manually. Students with no stream assigned are
+    grouped under a 'No stream' bucket rather than dropped, so the totals
+    still reconcile with the classroom-wide average.
+
+    at_risk_count reuses get_at_risk_students()'s standard rule (recent-3
+    average < 30% or a >10pt decline) for consistency with the At-Risk page
+    and get_class_analytics's own at-risk figure.
+    """
+    from mathapi.apps.students.models import Stream
+
+    try:
+        classroom = Classroom.objects.select_related('grade_level').get(id=classroom_id)
+    except Classroom.DoesNotExist:
+        return {}
+
+    filters = Q(student__classroom_id=classroom_id, is_absent=False)
+    if academic_year:
+        filters &= Q(exam__academic_year=academic_year)
+    if term:
+        filters &= Q(exam__term=term)
+    if subject_id:
+        filters &= Q(exam__subject_id=subject_id)
+    if created_by_id:
+        filters &= Q(exam__created_by_id=created_by_id)
+
+    scores = ExamScore.objects.filter(filters).select_related('student')
+    stream_names = {s.id: s.name for s in Stream.objects.filter(classroom_id=classroom_id)}
+
+    by_stream_scores = defaultdict(list)   # stream_id (or None) -> [ExamScore]
+    by_stream_students = defaultdict(set)
+    for s in scores:
+        key = s.student.stream_id
+        by_stream_scores[key].append(s)
+        by_stream_students[key].add(s.student_id)
+
+    # At-risk counts per stream, computed once for the whole classroom then
+    # bucketed by each student's stream — cheaper than one call per stream.
+    at_risk_raw = get_at_risk_students(
+        classroom_ids=classroom_id, threshold=30.0,
+        subject_id=subject_id, created_by_id=created_by_id,
+    )
+    at_risk_student_ids = [r['student_id'] for r in at_risk_raw]
+    stream_by_student = {
+        sp.id: sp.stream_id
+        for sp in StudentProfile.objects.filter(id__in=at_risk_student_ids)
+    }
+    at_risk_by_stream = defaultdict(int)
+    for sid in at_risk_student_ids:
+        at_risk_by_stream[stream_by_student.get(sid)] += 1
+
+    rows = []
+    for stream_id, score_list in by_stream_scores.items():
+        pcts = [sc.percentage for sc in score_list]
+        passed = [sc for sc in score_list if sc.passed]
+        rows.append({
+            'stream_id': stream_id,
+            'stream_name': stream_names.get(stream_id, 'No stream'),
+            'student_count': len(by_stream_students[stream_id]),
+            'exams_recorded': len(pcts),
+            'average': round(sum(pcts) / len(pcts), 1) if pcts else None,
+            'pass_rate': round((len(passed) / len(pcts)) * 100, 1) if pcts else None,
+            'highest': round(max(pcts), 1) if pcts else None,
+            'lowest': round(min(pcts), 1) if pcts else None,
+            'std_dev': round(_std_dev(pcts), 1) if pcts else None,
+            'at_risk_count': at_risk_by_stream.get(stream_id, 0),
+        })
+
+    # Streams with no scores yet (e.g. brand new stream) still appear, at
+    # zero, so a teacher can see every stream exists rather than only the
+    # ones with data so far.
+    covered = {r['stream_id'] for r in rows}
+    for sid, name in stream_names.items():
+        if sid not in covered:
+            rows.append({
+                'stream_id': sid, 'stream_name': name, 'student_count': 0, 'exams_recorded': 0,
+                'average': None, 'pass_rate': None, 'highest': None, 'lowest': None,
+                'std_dev': None, 'at_risk_count': 0,
+            })
+
+    rows.sort(key=lambda r: (r['average'] is None, -(r['average'] or 0)))
+
+    return {
+        'classroom_id': classroom_id,
+        'classroom_name': str(classroom),
+        'streams': rows,
+    }
+
+
+# ── Intelligence layer ────────────────────────────────────────────────────────
+# Five deeper analytics features built on the same scoping conventions as the
+# rest of this module (subject_id / created_by_id passthrough for teacher
+# isolation). Each is read-only and computed on demand — no new models.
+
+
+def get_integrity_flags(
+    classroom_ids=None,
+    subject_id: int = None,
+    created_by_id: int = None,
+    min_edit_delta: float = 15.0,
+    stream_id: int = None,
+) -> dict:
+    """
+    Feature 1 — Grade Integrity / Anomaly Detection.
+
+    Mines ScoreEditLog (previously write-only — created on every score edit
+    but never analyzed) for patterns that look like manipulation rather than
+    honest correction:
+
+      - boundary_crossings: an edit that moved a score from failing to
+        passing (relative to that exam's passing_score). The single most
+        suspicious edit shape — legitimate correction and "helping a
+        student pass" look identical in isolation, so these are surfaced
+        for a human to review, not auto-flagged as fraud.
+      - large_jumps: any edit whose magnitude exceeds `min_edit_delta`
+        percentage points, regardless of direction.
+      - editor_rates: per-teacher edit rate (edits made ÷ scores they
+        entered) so an editor who touches an unusually large share of their
+        own entries stands out even without any single dramatic edit.
+
+    All three lists are DESCRIPTIVE, not accusatory — the reason field on
+    ScoreEditLog is included so a reviewer has context immediately.
+    """
+    log_filters = Q(exam_score__is_absent=False)
+    if classroom_ids:
+        if isinstance(classroom_ids, int):
+            log_filters &= Q(exam_score__student__classroom_id=classroom_ids)
+        else:
+            log_filters &= Q(exam_score__student__classroom_id__in=classroom_ids)
+    if subject_id:
+        log_filters &= Q(exam_score__exam__subject_id=subject_id)
+    if stream_id:
+        log_filters &= Q(exam_score__student__stream_id=stream_id)
+    if created_by_id:
+        log_filters &= Q(exam_score__exam__created_by_id=created_by_id)
+
+    logs = ScoreEditLog.objects.filter(log_filters).select_related(
+        'exam_score__exam', 'exam_score__student__user', 'changed_by'
+    ).order_by('-changed_at')
+
+    boundary_crossings = []
+    large_jumps = []
+    editor_edit_counts = defaultdict(int)
+    editor_names = {}
+
+    for log in logs:
+        exam = log.exam_score.exam
+        max_score = float(exam.max_score) if exam.max_score else 0
+        passing = float(exam.passing_score)
+        if not max_score:
+            continue
+
+        old_pct = round((float(log.old_score) / max_score) * 100, 1)
+        new_pct = round((float(log.new_score) / max_score) * 100, 1)
+        passing_pct = round((passing / max_score) * 100, 1)
+        delta = round(new_pct - old_pct, 1)
+
+        editor_id = log.changed_by_id
+        if editor_id:
+            editor_edit_counts[editor_id] += 1
+            if log.changed_by:
+                editor_names[editor_id] = log.changed_by.get_full_name() or log.changed_by.email
+
+        entry = {
+            'edit_id': log.id,
+            'student_name': log.exam_score.student.full_name,
+            'exam_title': exam.title,
+            'exam_date': str(exam.exam_date),
+            'changed_by': editor_names.get(editor_id, 'Unknown'),
+            'old_score': float(log.old_score),
+            'new_score': float(log.new_score),
+            'old_percentage': old_pct,
+            'new_percentage': new_pct,
+            'delta': delta,
+            'reason': log.reason,
+            'changed_at': str(log.changed_at),
+        }
+
+        if old_pct < passing_pct <= new_pct:
+            boundary_crossings.append(entry)
+        if abs(delta) >= min_edit_delta:
+            large_jumps.append(entry)
+
+    # Per-editor edit rate: edits made ÷ scores that editor has ever entered,
+    # scoped by the same filters (so a teacher's rate is only measured
+    # against their own entries, not the whole school's).
+    entered_filters = Q(is_absent=False)
+    if classroom_ids:
+        if isinstance(classroom_ids, int):
+            entered_filters &= Q(student__classroom_id=classroom_ids)
+        else:
+            entered_filters &= Q(student__classroom_id__in=classroom_ids)
+    if subject_id:
+        entered_filters &= Q(exam__subject_id=subject_id)
+    if stream_id:
+        entered_filters &= Q(student__stream_id=stream_id)
+    if created_by_id:
+        entered_filters &= Q(exam__created_by_id=created_by_id)
+
+    entered_counts = defaultdict(int)
+    for entered_by_id in ExamScore.objects.filter(entered_filters).values_list('entered_by_id', flat=True):
+        if entered_by_id:
+            entered_counts[entered_by_id] += 1
+
+    editor_rates = []
+    for editor_id, edit_count in editor_edit_counts.items():
+        total_entered = entered_counts.get(editor_id, 0)
+        rate = round((edit_count / total_entered) * 100, 1) if total_entered else None
+        editor_rates.append({
+            'teacher_id': editor_id,
+            'teacher_name': editor_names.get(editor_id, 'Unknown'),
+            'edits_made': edit_count,
+            'scores_entered': total_entered,
+            'edit_rate_percent': rate,
+        })
+    editor_rates.sort(key=lambda r: (r['edit_rate_percent'] or 0), reverse=True)
+
+    return {
+        'boundary_crossings': boundary_crossings,
+        'boundary_crossing_count': len(boundary_crossings),
+        'large_jumps': large_jumps,
+        'large_jump_count': len(large_jumps),
+        'editor_rates': editor_rates,
+    }
+
+
+def get_student_risk_score(
+    student_id: int,
+    subject_id: int = None,
+    created_by_id: int = None,
+) -> dict:
+    """
+    Feature 2 — Composite Risk Score.
+
+    Replaces the binary at-risk rule (recent-3-avg < threshold OR a >10pt
+    drop) with a weighted 0–100 score built from four independent signals,
+    each returned so a teacher can see WHY a student is flagged rather than
+    just THAT they are:
+
+      - trend        (35%): recent trajectory (declining exams raise risk)
+      - volatility   (20%): inconsistency across recent exams
+      - topic_gap    (30%): how weak the student's weakest topics are
+      - pass_margin  (15%): how far the recent average sits below a 45%
+                             safety line (NECTA C boundary)
+
+    Weights are deliberately front-loaded on trend and topic weakness,
+    since those are the most actionable signals for a teacher.
+    """
+    filters = Q(student_id=student_id, is_absent=False)
+    if subject_id:
+        filters &= Q(exam__subject_id=subject_id)
+    if created_by_id:
+        filters &= Q(exam__created_by_id=created_by_id)
+
+    scores = ExamScore.objects.filter(filters).select_related('exam').order_by('exam__exam_date')
+    percentages = [s.percentage for s in scores]
+
+    if len(percentages) < 2:
+        return {
+            'student_id': student_id,
+            'risk_score': None,
+            'risk_level': 'insufficient_data',
+            'factors': {},
+        }
+
+    recent = percentages[-5:]
+
+    # trend component: negative slope → higher risk. Slope is in pct-points
+    # per exam; a slope of -5 or steeper is treated as maximally risky.
+    slope = _linear_slope(recent)
+    trend_component = max(0.0, min(100.0, (-slope / 5.0) * 100))
+
+    # volatility component: std dev of recent scores, capped at 25pts stdev
+    # for a 100 score (very inconsistent performance).
+    volatility = _std_dev(recent)
+    volatility_component = max(0.0, min(100.0, (volatility / 25.0) * 100))
+
+    # topic-gap component: average of the student's 3 weakest topics.
+    topic_data = get_student_topic_analysis(student_id, subject_id=subject_id, created_by_id=created_by_id)
+    weakest = sorted([t['average'] for t in topic_data.get('topics', [])])[:3]
+    if weakest:
+        topic_gap_component = max(0.0, min(100.0, 100 - (sum(weakest) / len(weakest))))
+    else:
+        topic_gap_component = None
+
+    # pass-margin component: how far below the 45% (NECTA C) safety line.
+    recent_avg = sum(recent) / len(recent)
+    pass_margin_component = max(0.0, min(100.0, (45.0 - recent_avg) / 45.0 * 100))
+
+    weights = {'trend': 0.35, 'volatility': 0.20, 'topic_gap': 0.30, 'pass_margin': 0.15}
+    components = {
+        'trend': trend_component,
+        'volatility': volatility_component,
+        'topic_gap': topic_gap_component,
+        'pass_margin': pass_margin_component,
+    }
+
+    used_weight_sum = sum(weights[k] for k, v in components.items() if v is not None)
+    if used_weight_sum == 0:
+        composite = 0.0
+    else:
+        # Re-normalized weighted average: if a component is unavailable
+        # (e.g. no topic data yet), the remaining weights are rescaled so
+        # they still sum to 1 rather than silently under-counting risk.
+        composite = sum(weights[k] * v for k, v in components.items() if v is not None) / used_weight_sum
+
+    if composite >= 65:
+        level = 'critical'
+    elif composite >= 40:
+        level = 'high'
+    elif composite >= 20:
+        level = 'moderate'
+    else:
+        level = 'low'
+
+    return {
+        'student_id': student_id,
+        'risk_score': round(composite, 1),
+        'risk_level': level,
+        'factors': {
+            'trend_contribution': round(trend_component * weights['trend'], 1),
+            'volatility_contribution': round(volatility_component * weights['volatility'], 1),
+            'topic_gap_contribution': round(topic_gap_component * weights['topic_gap'], 1) if topic_gap_component is not None else None,
+            'pass_margin_contribution': round(pass_margin_component * weights['pass_margin'], 1),
+            'recent_average': round(recent_avg, 1),
+            'recent_trend_slope': slope,
+            'volatility': round(volatility, 1),
+            'weakest_topics_avg': round(sum(weakest) / len(weakest), 1) if weakest else None,
+        },
+    }
+
+
+def get_classroom_risk_scores(
+    classroom_id: int,
+    subject_id: int = None,
+    created_by_id: int = None,
+    stream_id: int = None,
+) -> dict:
+    """Batch version of get_student_risk_score for every student in a classroom, sorted highest-risk first."""
+    filters = Q(is_absent=False, student__classroom_id=classroom_id)
+    if subject_id:
+        filters &= Q(exam__subject_id=subject_id)
+    if stream_id:
+        filters &= Q(student__stream_id=stream_id)
+    if created_by_id:
+        filters &= Q(exam__created_by_id=created_by_id)
+
+    # .order_by() clears ExamScore's default Meta ordering (-exam__exam_date),
+    # which would otherwise be pulled into the SELECT and make .distinct()
+    # a no-op — silently returning duplicate student_ids, one per exam.
+    student_ids = ExamScore.objects.filter(filters).order_by().values_list('student_id', flat=True).distinct()
+    names = {
+        sp.id: sp.full_name
+        for sp in StudentProfile.objects.filter(id__in=list(student_ids))
+    }
+
+    results = []
+    for sid in student_ids:
+        r = get_student_risk_score(sid, subject_id=subject_id, created_by_id=created_by_id)
+        if r['risk_score'] is not None:
+            r['student_name'] = names.get(sid, '')
+            results.append(r)
+
+    results.sort(key=lambda r: r['risk_score'], reverse=True)
+    return {'classroom_id': classroom_id, 'students': results}
+
+
+def get_topic_dependency_chains(
+    classroom_id: int = None,
+    subject_id: int = None,
+    created_by_id: int = None,
+    weak_threshold: float = 45.0,
+    min_sample: int = 5,
+    stream_id: int = None,
+) -> dict:
+    """
+    Feature 3 — Root-Cause Topic Dependency Chains.
+
+    For every ordered pair of topics (A, B), compares:
+      - baseline_weak_rate: fraction of ALL students weak in B (avg < threshold)
+      - conditional_weak_rate: fraction of students who are weak in A that
+        are ALSO weak in B
+
+    A `lift` > 1 means weakness in A predicts weakness in B more than the
+    base rate alone would suggest — i.e. a candidate root-cause dependency
+    (e.g. "students weak in Fractions are 2.4x more likely to also be weak
+    in Algebra"). Only pairs with at least `min_sample` co-occurring
+    students are reported, to avoid noise from small classes.
+    """
+    filters = Q(exam_score__is_absent=False)
+    if classroom_id:
+        filters &= Q(exam_score__student__classroom_id=classroom_id)
+    if subject_id:
+        filters &= Q(topic__subject_id=subject_id)
+    if stream_id:
+        filters &= Q(exam_score__student__stream_id=stream_id)
+    if created_by_id:
+        filters &= Q(exam_score__exam__created_by_id=created_by_id)
+
+    topic_scores = TopicScore.objects.filter(filters).select_related('topic', 'exam_score')
+
+    student_topic_pcts = defaultdict(lambda: defaultdict(list))
+    topic_names = {}
+    for ts in topic_scores:
+        student_topic_pcts[ts.exam_score.student_id][ts.topic_id].append(ts.percentage)
+        topic_names[ts.topic_id] = ts.topic.name
+
+    # Average per student per topic, then classify weak/not-weak.
+    student_topic_avg = {
+        sid: {tid: sum(pcts) / len(pcts) for tid, pcts in topics.items()}
+        for sid, topics in student_topic_pcts.items()
+    }
+
+    topic_ids = list(topic_names.keys())
+    weak_students_by_topic = {
+        tid: {sid for sid, avgs in student_topic_avg.items() if tid in avgs and avgs[tid] < weak_threshold}
+        for tid in topic_ids
+    }
+    all_students_by_topic = {
+        tid: {sid for sid, avgs in student_topic_avg.items() if tid in avgs}
+        for tid in topic_ids
+    }
+
+    chains = []
+    for a in topic_ids:
+        weak_in_a = weak_students_by_topic[a]
+        if len(weak_in_a) < min_sample:
+            continue
+        for b in topic_ids:
+            if a == b:
+                continue
+            eligible_for_b = all_students_by_topic[b]
+            weak_in_a_and_eligible_for_b = weak_in_a & eligible_for_b
+            if len(weak_in_a_and_eligible_for_b) < min_sample:
+                continue
+
+            baseline_pool = eligible_for_b
+            baseline_weak_rate = len(weak_students_by_topic[b] & baseline_pool) / len(baseline_pool) if baseline_pool else 0
+
+            conditional_weak = weak_in_a_and_eligible_for_b & weak_students_by_topic[b]
+            conditional_weak_rate = len(conditional_weak) / len(weak_in_a_and_eligible_for_b)
+
+            lift = round(conditional_weak_rate / baseline_weak_rate, 2) if baseline_weak_rate > 0 else None
+            if lift is None or lift <= 1.3:
+                continue
+
+            chains.append({
+                'from_topic': topic_names[a],
+                'to_topic': topic_names[b],
+                'baseline_weak_rate': round(baseline_weak_rate * 100, 1),
+                'conditional_weak_rate': round(conditional_weak_rate * 100, 1),
+                'lift': lift,
+                'sample_size': len(weak_in_a_and_eligible_for_b),
+            })
+
+    chains.sort(key=lambda c: c['lift'], reverse=True)
+    return {'classroom_id': classroom_id, 'dependency_chains': chains[:25]}
+
+
+def get_teacher_grading_consistency(
+    subject_id: int = None,
+    academic_year: str = None,
+    term: str = None,
+) -> dict:
+    """
+    Feature 4 — Teacher Grading Consistency Audit (admin-only; call from a
+    view gated to super_admin — this function itself is not scoped by
+    created_by_id since it exists to COMPARE across teachers).
+
+    For each (topic, teacher) pair, computes the teacher's average score on
+    that topic and a z-score against the population of all teachers who
+    have graded that topic. Teachers with |z| >= 1.5 on a topic (min 5
+    graded scores) are flagged as grading meaningfully more leniently or
+    harshly than their peers on the same material — a leading indicator of
+    grading inconsistency that would otherwise only surface as unexplained
+    classroom-average differences.
+    """
+    filters = Q(exam_score__is_absent=False)
+    if subject_id:
+        filters &= Q(topic__subject_id=subject_id)
+    if academic_year:
+        filters &= Q(exam_score__exam__academic_year=academic_year)
+    if term:
+        filters &= Q(exam_score__exam__term=term)
+
+    rows = TopicScore.objects.filter(filters).select_related(
+        'topic', 'exam_score__exam__created_by'
+    ).values_list(
+        'topic_id', 'topic__name', 'exam_score__exam__created_by_id',
+        'exam_score__exam__created_by__first_name', 'exam_score__exam__created_by__last_name',
+        'exam_score__exam__created_by__email', 'score', 'max_marks',
+    )
+
+    # topic_id -> teacher_id -> [pcts]
+    data = defaultdict(lambda: defaultdict(list))
+    topic_names = {}
+    teacher_names = {}
+
+    for tid, tname, teacher_id, fn, ln, email, score, max_marks in rows:
+        if not max_marks or not teacher_id:
+            continue
+        pct = round((float(score) / float(max_marks)) * 100, 1)
+        data[tid][teacher_id].append(pct)
+        topic_names[tid] = tname
+        teacher_names[teacher_id] = (f'{fn} {ln}'.strip() or email)
+
+    flags = []
+    for tid, by_teacher in data.items():
+        teacher_avgs = {
+            teacher_id: sum(pcts) / len(pcts)
+            for teacher_id, pcts in by_teacher.items() if len(pcts) >= 5
+        }
+        if len(teacher_avgs) < 2:
+            continue  # need at least 2 teachers to compare
+        pop_values = list(teacher_avgs.values())
+        pop_mean = sum(pop_values) / len(pop_values)
+        pop_std = _std_dev(pop_values)
+        if pop_std == 0:
+            continue
+
+        for teacher_id, avg in teacher_avgs.items():
+            z = round((avg - pop_mean) / pop_std, 2)
+            if abs(z) >= 1.5:
+                flags.append({
+                    'topic': topic_names[tid],
+                    'teacher_id': teacher_id,
+                    'teacher_name': teacher_names[teacher_id],
+                    'teacher_average': round(avg, 1),
+                    'peer_average': round(pop_mean, 1),
+                    'z_score': z,
+                    'direction': 'lenient' if z > 0 else 'harsh',
+                    'sample_size': len(by_teacher[teacher_id]),
+                })
+
+    flags.sort(key=lambda f: abs(f['z_score']), reverse=True)
+    return {'flags': flags, 'flag_count': len(flags)}
+
+
+def get_grade_boundary_whatif(
+    student_id: int,
+    subject_id: int = None,
+    created_by_id: int = None,
+) -> dict:
+    """
+    Feature 5 — Grade-Boundary Sensitivity ("What-If") Engine.
+
+    Finds the NECTA grade boundary the student is currently closest to
+    (using the same regression-based prediction as _predict_necta_grade),
+    then ranks the student's topics by (weakness × exam weight) to show
+    which specific topic improvement would close that gap fastest —
+    turning the prediction from a label into a concrete teaching action.
+    """
+    filters = Q(student_id=student_id, is_absent=False)
+    if subject_id:
+        filters &= Q(exam__subject_id=subject_id)
+    if created_by_id:
+        filters &= Q(exam__created_by_id=created_by_id)
+
+    scores = ExamScore.objects.filter(filters).select_related('exam').order_by('exam__exam_date')
+    percentages = [s.percentage for s in scores]
+    if len(percentages) < 3:
+        return {'student_id': student_id, 'status': 'insufficient_data'}
+
+    recent = percentages[-6:]
+    n = len(recent)
+    x_mean = (n - 1) / 2
+    y_mean = sum(recent) / n
+    num = sum((i - x_mean) * (v - y_mean) for i, v in enumerate(recent))
+    den = sum((i - x_mean) ** 2 for i in range(n))
+    slope = num / den if den else 0
+    predicted = max(0.0, min(100.0, y_mean + slope * n))
+
+    boundaries = [('A', 75.0), ('B', 65.0), ('C', 45.0), ('D', 30.0)]
+    current_grade = _predict_necta_grade(percentages)
+
+    # distance to the next boundary UP (the grade the student could reach)
+    next_boundary = None
+    for grade, cutoff in boundaries:
+        if predicted < cutoff:
+            next_boundary = (grade, cutoff)
+    gap = round(next_boundary[1] - predicted, 1) if next_boundary else 0.0
+
+    # weight each topic by its average ExamTopicWeight.weight_percentage
+    # across this student's exams, so a topic that's both weak AND heavily
+    # weighted rises to the top of the recommendation list.
+    exam_ids = list(scores.values_list('exam_id', flat=True))
+    weight_rows = ExamTopicWeight.objects.filter(exam_id__in=exam_ids).values_list('topic_id', 'weight_percentage')
+    topic_weight_sum = defaultdict(float)
+    topic_weight_count = defaultdict(int)
+    for tid, w in weight_rows:
+        topic_weight_sum[tid] += float(w)
+        topic_weight_count[tid] += 1
+    avg_weight = {
+        tid: topic_weight_sum[tid] / topic_weight_count[tid]
+        for tid in topic_weight_sum if topic_weight_count[tid]
+    }
+
+    topic_data = get_student_topic_analysis(student_id, subject_id=subject_id, created_by_id=created_by_id)
+    recommendations = []
+    for t in topic_data.get('topics', []):
+        weight = avg_weight.get(t['topic_id'], 1.0)
+        weakness = max(0.0, 100 - t['average'])
+        priority_score = round(weakness * weight, 1)
+        recommendations.append({
+            'topic_name': t['topic_name'],
+            'current_average': t['average'],
+            'exam_weight_percent': round(weight, 1),
+            'priority_score': priority_score,
+        })
+    recommendations.sort(key=lambda r: r['priority_score'], reverse=True)
+
+    return {
+        'student_id': student_id,
+        'predicted_average': round(predicted, 1),
+        'predicted_grade': current_grade,
+        'next_grade': next_boundary[0] if next_boundary else None,
+        'points_needed': gap,
+        'priority_topics': recommendations[:5],
+    }
 
 
 # ── Private helpers ───────────────────────────────────────────────────────────

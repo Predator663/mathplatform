@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom';
-import { BarChart3, User, AlertTriangle, GitCompare } from 'lucide-react';
+import { BarChart3, User, AlertTriangle, GitCompare, ShieldAlert, GitBranch, ShieldCheck, Scale, Rows3 } from 'lucide-react';
+import { useAuthStore } from '../../store/auth';
 
 const cards = [
   {
@@ -19,6 +20,14 @@ const cards = [
     color: 'violet',
   },
   {
+    icon: Rows3,
+    title: 'Stream Comparison',
+    description: 'Side-by-side averages, pass rates, and at-risk counts for every stream in a classroom (e.g. Form 2 "A" vs "B" vs "C").',
+    action: 'Compare Streams',
+    to: '/analytics/class',
+    color: 'green',
+  },
+  {
     icon: AlertTriangle,
     title: 'At-Risk Tracker',
     description: 'Automatically identifies students with declining scores or performance below the passing threshold.',
@@ -34,6 +43,30 @@ const cards = [
     to: '/analytics/compare',
     color: 'green',
   },
+  {
+    icon: ShieldAlert,
+    title: 'Composite Risk Scores',
+    description: 'A weighted risk score combining trend, volatility, topic weakness, and pass margin — with the factors behind each flag.',
+    action: 'View Risk Scores',
+    to: '/analytics/risk',
+    color: 'amber',
+  },
+  {
+    icon: GitBranch,
+    title: 'Topic Dependencies',
+    description: 'Detects when weakness in one topic statistically predicts weakness in another, surfacing root-cause chains.',
+    action: 'Explore Dependencies',
+    to: '/analytics/dependencies',
+    color: 'violet',
+  },
+  {
+    icon: ShieldCheck,
+    title: 'Grade Integrity',
+    description: 'Mines score-edit history for boundary crossings, large jumps, and unusual editor rates worth a human review.',
+    action: 'View Integrity Flags',
+    to: '/analytics/integrity',
+    color: 'azure',
+  },
 ];
 
 const colorMap: Record<string, string> = {
@@ -41,6 +74,7 @@ const colorMap: Record<string, string> = {
   violet: 'text-violet-400 bg-violet-500/10 border-violet-500/20 hover:border-violet-500/40',
   rose: 'text-rose-400 bg-rose-500/10 border-rose-500/20 hover:border-rose-500/40',
   green: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20 hover:border-emerald-500/40',
+  amber: 'text-amber-400 bg-amber-500/10 border-amber-500/20 hover:border-amber-500/40',
 };
 
 const iconBg: Record<string, string> = {
@@ -48,10 +82,23 @@ const iconBg: Record<string, string> = {
   violet: 'bg-violet-500/15 text-violet-400',
   rose: 'bg-rose-500/15 text-rose-400',
   green: 'bg-emerald-500/15 text-emerald-400',
+  amber: 'bg-amber-500/15 text-amber-400',
+};
+
+const adminCard = {
+  icon: Scale,
+  title: 'Teacher Grading Consistency',
+  description: 'Compares each teacher\'s average score on shared topics against their peers to flag lenient or harsh grading.',
+  action: 'View Audit',
+  to: '/analytics/teacher-consistency',
+  color: 'rose' as const,
 };
 
 export default function AnalyticsPage() {
   const navigate = useNavigate();
+  const { user } = useAuthStore();
+  const isAdmin = user?.role === 'super_admin';
+  const allCards = isAdmin ? [...cards, adminCard] : cards;
 
   return (
     <div className="flex flex-col gap-6 page-enter">
@@ -61,7 +108,7 @@ export default function AnalyticsPage() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {cards.map(({ icon: Icon, title, description, action, to, color }) => (
+        {allCards.map(({ icon: Icon, title, description, action, to, color }) => (
           <button
             key={title}
             onClick={() => navigate(to)}

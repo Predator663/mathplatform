@@ -1,0 +1,19 @@
+{{ greeting }}
+
+{{ exam_title }} has been published.
+{% if is_creator %}Your submitted exam is now live for {{ classroom_name }} and visible to students and parents.{% else %}A new {{ exam_type_label }} for {{ student_first_name }} in {{ classroom_name }} is now visible.{% endif %}
+
+  Subject:      {{ subject_name }}
+  Type:         {{ exam_type_label }}
+  Term:         {{ term_label }}
+  Exam date:    {{ exam_date_display }}
+  Pass mark:    {{ passing_percentage_display }}
+{% if score_recorded %}
+{{ student_first_name }} scored {{ score_display }} on this exam.
+{% endif %}
+{{ action_label }}: {{ action_url }}
+
+—
+You're receiving this because of your notification preferences on {{ platform_name }}.
+{% if preferences_url %}Manage notification settings: {{ preferences_url }}{% endif %}
+{{ footer_text }}

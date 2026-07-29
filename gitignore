@@ -1,0 +1,27 @@
+# --- Python / Django (backend/) ---
+backend/venv/
+__pycache__/
+*.py[cod]
+*.sqlite3
+backend/db.sqlite3
+backend/media/
+backend/staticfiles/
+.env
+backend/.env
+*.env
+!backend/.env.example
+
+# --- Node / React (frontend/) ---
+frontend/node_modules/
+frontend/dist/
+npm-debug.log*
+
+# --- Local run/log artifacts (scripts/) ---
+scripts/run/
+scripts/logs/
+
+# --- Editors / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

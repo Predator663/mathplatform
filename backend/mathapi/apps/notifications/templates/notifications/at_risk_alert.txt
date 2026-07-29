@@ -1,0 +1,23 @@
+{{ greeting }}
+
+{{ student_name }} has been flagged as at-risk.
+
+Based on their {{ exams_taken }} most recent exam(s) in {{ classroom_name }}, {{ student_first_name }}'s performance {% if declining %}has been declining and {% endif %}is currently below the {{ threshold }}% threshold this alert watches for.
+
+  Recent average:    {{ recent_average_display }}
+  Exams considered:  {{ exams_taken }}
+  Trend:             {{ trend_label }}
+{% if recent_scores %}
+  Recent scores (most recent first): {{ recent_scores_display }}
+{% endif %}
+{% if is_parent %}
+A conversation with {{ student_first_name }}'s teacher about extra support could help turn this around early.
+{% else %}
+Consider reaching out to {{ student_first_name }} or looping in a parent/guardian while there's time to course-correct before the next assessment.
+{% endif %}
+{{ action_label }}: {{ action_url }}
+
+—
+You're receiving this because of your notification preferences on {{ platform_name }}.
+{% if preferences_url %}Manage notification settings: {{ preferences_url }}{% endif %}
+{{ footer_text }}

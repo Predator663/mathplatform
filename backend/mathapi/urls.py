@@ -11,4 +11,5 @@ urlpatterns = [
     path('api/analytics/', include('mathapi.apps.analytics.urls')),
     path('api/reports/', include('mathapi.apps.reports.urls')),
     path('api/groups/', include('mathapi.apps.groups.urls')),
+    path('api/notifications/', include('mathapi.apps.notifications.urls')),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

@@ -7,11 +7,20 @@ import {
   BarChart, Bar,
 } from 'recharts';
 import type { TooltipProps } from 'recharts';
+import { ShieldAlert, Target } from 'lucide-react';
 import { analyticsApi } from '../../api';
 import { LoadingPage } from '../../components/ui';
 import { useSubjectStore } from '../../store/subject';
 import { formatDate, gradeBg, gradeColor, trendColor, trendIcon } from '../../utils';
-import type { StudentSummary, StudentTrend, StudentTopicAnalysis } from '../../types';
+import type { StudentSummary, StudentTrend, StudentTopicAnalysis, StudentRiskScore, GradeBoundaryWhatIf, RiskLevel } from '../../types';
+
+const RISK_LEVEL_STYLE: Record<RiskLevel, { color: string; label: string }> = {
+  critical: { color: '#f43f5e', label: 'Critical' },
+  high: { color: '#fb923c', label: 'High' },
+  moderate: { color: '#f59e0b', label: 'Moderate' },
+  low: { color: '#10b981', label: 'Low' },
+  insufficient_data: { color: '#6b7280', label: 'Insufficient Data' },
+};
 
 /* ── Theme-aware chart tokens ──────────────────────────────────────────────
  * Reading CSS custom properties at render-time means the charts respect
@@ -88,6 +97,16 @@ export default function StudentAnalyticsPage() {
   const { data: topicData, isLoading: s3 } = useQuery<StudentTopicAnalysis>({
     queryKey: ['student-topics', studentId, activeSubjectId],
     queryFn: () => analyticsApi.studentTopics(studentId, subjectParams).then(r => r.data),
+  });
+
+  const { data: risk } = useQuery<StudentRiskScore>({
+    queryKey: ['student-risk', studentId, activeSubjectId],
+    queryFn: () => analyticsApi.studentRisk(studentId, subjectParams).then(r => r.data),
+  });
+
+  const { data: whatIf } = useQuery<GradeBoundaryWhatIf>({
+    queryKey: ['student-whatif', studentId, activeSubjectId],
+    queryFn: () => analyticsApi.gradeBoundaryWhatIf(studentId, subjectParams).then(r => r.data),
   });
 
   if (s1 || s2 || s3) return <LoadingPage />;
@@ -372,6 +391,88 @@ export default function StudentAnalyticsPage() {
           </div>
         </div>
       )}
+
+      {/* ── Risk assessment + Grade-boundary what-if ─────────────────────── */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        {/* Composite risk score */}
+        <div className="card p-5">
+          <h2 className="section-title mb-4 flex items-center gap-2">
+            <ShieldAlert size={16} className="text-orange-400" /> Risk Assessment
+          </h2>
+          {!risk || risk.risk_score == null ? (
+            <p className="text-muted text-sm text-center py-8">Not enough exam history yet to compute a risk score.</p>
+          ) : (
+            <>
+              <div className="flex items-center gap-4 mb-4">
+                <div
+                  className="w-16 h-16 rounded-full flex items-center justify-center font-display font-black text-xl text-white flex-shrink-0"
+                  style={{ backgroundColor: RISK_LEVEL_STYLE[risk.risk_level].color }}
+                >
+                  {risk.risk_score}
+                </div>
+                <div>
+                  <p className="font-display font-bold text-lg" style={{ color: RISK_LEVEL_STYLE[risk.risk_level].color }}>
+                    {RISK_LEVEL_STYLE[risk.risk_level].label} Risk
+                  </p>
+                  <p className="text-xs text-secondary">Composite score out of 100 — higher means more concerning.</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-[11px]">
+                <div className="p-2.5 rounded-lg bg-surface-900">
+                  <p className="text-secondary uppercase tracking-wider text-[10px]">Trend</p>
+                  <p className="font-mono font-bold text-primary">{risk.factors.trend_contribution ?? '—'}</p>
+                </div>
+                <div className="p-2.5 rounded-lg bg-surface-900">
+                  <p className="text-secondary uppercase tracking-wider text-[10px]">Volatility</p>
+                  <p className="font-mono font-bold text-primary">{risk.factors.volatility_contribution ?? '—'}</p>
+                </div>
+                <div className="p-2.5 rounded-lg bg-surface-900">
+                  <p className="text-secondary uppercase tracking-wider text-[10px]">Topic Gap</p>
+                  <p className="font-mono font-bold text-primary">{risk.factors.topic_gap_contribution ?? '—'}</p>
+                </div>
+                <div className="p-2.5 rounded-lg bg-surface-900">
+                  <p className="text-secondary uppercase tracking-wider text-[10px]">Pass Margin</p>
+                  <p className="font-mono font-bold text-primary">{risk.factors.pass_margin_contribution ?? '—'}</p>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Grade-boundary what-if */}
+        <div className="card p-5">
+          <h2 className="section-title mb-4 flex items-center gap-2">
+            <Target size={16} className="text-emerald-400" /> Grade-Boundary What-If
+          </h2>
+          {!whatIf || whatIf.status === 'insufficient_data' ? (
+            <p className="text-muted text-sm text-center py-8">Not enough exam history yet to project a grade boundary.</p>
+          ) : (
+            <>
+              <p className="text-sm text-secondary mb-3">
+                Predicted average <strong className="text-primary font-mono">{whatIf.predicted_average}%</strong>
+                {' '}(grade <strong className="text-primary">{whatIf.predicted_grade}</strong>).{' '}
+                {whatIf.next_grade ? (
+                  <>Needs <strong className="text-emerald-400 font-mono">{whatIf.points_needed} pts</strong> to reach grade{' '}
+                  <strong className="text-emerald-400">{whatIf.next_grade}</strong>.</>
+                ) : 'Already at the top grade band.'}
+              </p>
+              <p className="text-xs text-secondary uppercase tracking-wider font-display mb-2">Fastest-Impact Topics</p>
+              <div className="flex flex-col gap-2">
+                {(whatIf.priority_topics ?? []).length === 0 ? (
+                  <p className="text-muted text-sm">No topic data available yet.</p>
+                ) : whatIf.priority_topics!.map(t => (
+                  <div key={t.topic_name} className="flex items-center justify-between gap-2 p-2.5 rounded-lg bg-surface-900">
+                    <span className="text-sm text-primary truncate">{t.topic_name}</span>
+                    <span className="text-[11px] text-secondary flex-shrink-0">
+                      {t.current_average}% avg · {t.exam_weight_percent}% weight
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
 
       {/* ── Recent scores ────────────────────────────────────────────────── */}
       <div className="card p-5">

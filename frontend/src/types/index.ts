@@ -1,3 +1,18 @@
+export type NotificationFrequency = 'immediate' | 'digest' | 'off';
+
+export interface NotificationPreferenceItem {
+  category: string; category_label: string;
+  frequency: NotificationFrequency; is_default: boolean;
+}
+
+export interface NotificationLogEntry {
+  id: number; category: string; category_label: string;
+  subject: string; summary: string;
+  related_object_type: string; related_object_id: number | null;
+  status: 'sent' | 'failed' | 'skipped';
+  sent_at: string; read_at: string | null;
+}
+
 // ── Auth ──────────────────────────────────────────────────────────────────────
 export type UserRole = 'super_admin' | 'teacher' | 'student' | 'parent';
 
@@ -48,6 +63,25 @@ export interface ClassroomTeacherAssignment {
   subject_id: number; subject_name: string; subject_code: string;
 }
 
+export interface Stream {
+  id: number; classroom: number; classroom_name?: string;
+  name: string; capacity: number | null; is_active: boolean;
+  student_count: number; created_at: string;
+}
+
+export interface StreamComparisonRow {
+  stream_id: number | null; stream_name: string;
+  student_count: number; exams_recorded: number;
+  average: number | null; pass_rate: number | null;
+  highest: number | null; lowest: number | null;
+  std_dev: number | null; at_risk_count: number;
+}
+
+export interface StreamComparison {
+  classroom_id: number; classroom_name: string;
+  streams: StreamComparisonRow[];
+}
+
 export interface Classroom {
   id: number; name: string;
   grade_level: number; grade_level_name: string; grade_level_short: string;
@@ -57,6 +91,7 @@ export interface Classroom {
   teacher_assignments: ClassroomTeacherAssignment[];
   is_active: boolean; student_count: number;
   necta_exam: string; math_subject: string; created_at: string;
+  streams: Stream[];
 }
 
 // ── Peer Groups ───────────────────────────────────────────────────────────
@@ -65,10 +100,12 @@ export type PerformanceTier = 'very_strong' | 'strong' | 'average' | 'weak' | 'u
 export interface StudentPerformanceRow {
   student_id: number; student_name: string; student_code: string;
   average: number | null; exams_taken: number; tier: PerformanceTier;
+  stream_id: number | null; stream_name: string | null;
 }
 
 export interface GroupMember {
   id: number; student_id: number; student_name: string; student_code: string;
+  student_stream_id: number | null; student_stream_name: string | null;
   tier: PerformanceTier; tier_display: string;
   average_at_placement: number | null; is_anchor: boolean; joined_at: string;
 }
@@ -77,6 +114,7 @@ export interface StudentGroup {
   id: number; classroom: number; classroom_name: string;
   name: string; academic_year: string;
   subject: number | null; subject_name: string | null;
+  stream: number | null; stream_name: string | null;
   term: string; description: string;
   badge_image_url: string | null; badge_color: string;
   created_by: number | null; created_at: string; updated_at: string;
@@ -158,6 +196,7 @@ export interface StudentProfile {
   id: number; student_id: string; full_name: string;
   first_name: string; last_name: string; email: string;
   classroom: number | null; classroom_name: string | null;
+  stream: number | null; stream_name: string | null;
   grade_level: string | null; education_level: EducationLevel | null;
   date_of_birth: string | null; enrollment_date: string; is_active: boolean;
   notes: string; index_number: string; parent_name: string;
@@ -290,6 +329,68 @@ export interface AtRiskStudent {
   student_id: number; student_name: string; student_code: string;
   classroom: string | null; recent_average: number; recent_scores: number[];
   flags: { below_threshold: boolean; declining: boolean };
+}
+
+// ── Intelligence layer ──────────────────────────────────────────────────────
+
+export interface IntegrityEditEntry {
+  edit_id: number; student_name: string; exam_title: string; exam_date: string;
+  changed_by: string; old_score: number; new_score: number;
+  old_percentage: number; new_percentage: number; delta: number;
+  reason: string; changed_at: string;
+}
+export interface IntegrityEditorRate {
+  teacher_id: number; teacher_name: string; edits_made: number;
+  scores_entered: number; edit_rate_percent: number | null;
+}
+export interface IntegrityFlags {
+  boundary_crossings: IntegrityEditEntry[]; boundary_crossing_count: number;
+  large_jumps: IntegrityEditEntry[]; large_jump_count: number;
+  editor_rates: IntegrityEditorRate[];
+}
+
+export type RiskLevel = 'critical' | 'high' | 'moderate' | 'low' | 'insufficient_data';
+export interface RiskFactors {
+  trend_contribution: number; volatility_contribution: number;
+  topic_gap_contribution: number | null; pass_margin_contribution: number;
+  recent_average: number; recent_trend_slope: number; volatility: number;
+  weakest_topics_avg: number | null;
+}
+export interface StudentRiskScore {
+  student_id: number; student_name?: string;
+  risk_score: number | null; risk_level: RiskLevel; factors: Partial<RiskFactors>;
+}
+export interface ClassroomRiskScores {
+  classroom_id: number; students: StudentRiskScore[];
+}
+
+export interface TopicDependencyChain {
+  from_topic: string; to_topic: string;
+  baseline_weak_rate: number; conditional_weak_rate: number;
+  lift: number; sample_size: number;
+}
+export interface TopicDependencyChains {
+  classroom_id: number | null; dependency_chains: TopicDependencyChain[];
+}
+
+export interface TeacherConsistencyFlag {
+  topic: string; teacher_id: number; teacher_name: string;
+  teacher_average: number; peer_average: number; z_score: number;
+  direction: 'lenient' | 'harsh'; sample_size: number;
+}
+export interface TeacherGradingConsistency {
+  flags: TeacherConsistencyFlag[]; flag_count: number;
+}
+
+export interface GradeBoundaryPriorityTopic {
+  topic_name: string; current_average: number;
+  exam_weight_percent: number; priority_score: number;
+}
+export interface GradeBoundaryWhatIf {
+  student_id: number; status?: string;
+  predicted_average?: number; predicted_grade?: string | null;
+  next_grade?: string | null; points_needed?: number;
+  priority_topics?: GradeBoundaryPriorityTopic[];
 }
 
 export interface DashboardSummary {

@@ -1,17 +1,25 @@
 import { useState, useEffect } from 'react';
 import { Outlet, useLocation, Link } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import Sidebar from './Sidebar';
 import MobileNav from './MobileNav';
 import ErrorBoundary from '../ErrorBoundary';
-import { Menu } from 'lucide-react';
+import { Menu, Bell } from 'lucide-react';
 import { useSiteSettingsStore } from '../../store/siteSettings';
 import ThemeToggle from '../ui/ThemeToggle';
-import api from '../../api';
+import api, { notificationsApi } from '../../api';
 
 export default function AppLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const location = useLocation();
   const { settings, setSettings } = useSiteSettingsStore();
+
+  const { data: unreadData } = useQuery({
+    queryKey: ['notifications-unread-count'],
+    queryFn: () => notificationsApi.unreadCount().then(r => r.data),
+    refetchInterval: 60_000,
+  });
+  const unreadCount: number = (unreadData as { unread_count?: number })?.unread_count ?? 0;
 
   // Fetch settings on mount
   useEffect(() => {
@@ -84,6 +92,14 @@ export default function AppLayout() {
             )}
             <span className="font-display font-bold text-sm text-primary">{platformName}</span>
           </div>
+          <Link to="/notifications" className="relative p-2 text-secondary hover:text-primary transition-colors rounded-xl hover:bg-surface-700" aria-label="Notifications">
+            <Bell size={18} />
+            {unreadCount > 0 && (
+              <span className="absolute top-1 right-1 min-w-[16px] h-[16px] px-1 rounded-full bg-amber-500 text-[9px] font-bold text-white flex items-center justify-center">
+                {unreadCount > 99 ? '99+' : unreadCount}
+              </span>
+            )}
+          </Link>
           <ThemeToggle />
         </div>
 

@@ -5,7 +5,7 @@ import toast from 'react-hot-toast';
 import { examsApi, studentsApi } from '../../api';
 import { Button, Select } from '../../components/ui';
 import { downloadBlob, EXAM_TYPE_LABELS, formatDate } from '../../utils';
-import type { Exam, Classroom, PaginatedResponse } from '../../types';
+import type { Exam, Classroom, Stream, PaginatedResponse } from '../../types';
 import api from '../../api';
 import { useCanManage } from '../../hooks/useCanManage';
 import { EmptyState } from '../../components/ui';
@@ -35,6 +35,7 @@ export default function BulkImportPage() {
   const [mode, setMode] = useState<ImportMode>(availableModes[0] ?? 'students');
   const [selectedExam, setSelectedExam] = useState('');
   const [selectedClassroom, setSelectedClassroom] = useState('');
+  const [selectedStream, setSelectedStream] = useState('');
   const [dragging, setDragging] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
@@ -58,6 +59,15 @@ export default function BulkImportPage() {
   const classrooms: Classroom[] = Array.isArray(classroomsData)
     ? classroomsData
     : (classroomsData as PaginatedResponse<Classroom>)?.results ?? [];
+
+  const { data: streamsData } = useQuery<PaginatedResponse<Stream> | Stream[]>({
+    queryKey: ['streams-for-import', selectedClassroom],
+    queryFn: () => studentsApi.streams({ classroom: selectedClassroom, page_size: 200 }).then(r => r.data),
+    enabled: canImportStudents && !!selectedClassroom,
+  });
+  const streams: Stream[] = Array.isArray(streamsData)
+    ? streamsData
+    : (streamsData as PaginatedResponse<Stream>)?.results ?? [];
 
   const handleFile = (f: File) => {
     if (!f.name.endsWith('.csv')) {
@@ -110,6 +120,7 @@ export default function BulkImportPage() {
       let res;
       if (mode === 'students') {
         if (selectedClassroom) formData.append('classroom_id', selectedClassroom);
+        if (selectedStream) formData.append('stream_id', selectedStream);
         res = await api.post('/students/profiles/bulk_import/', formData, {
           headers: { 'Content-Type': 'multipart/form-data' },
         });
@@ -183,7 +194,7 @@ export default function BulkImportPage() {
           .map(({ id, label, icon: Icon }) => (
           <button
             key={id}
-            onClick={() => { setMode(id); setFile(null); setResult(null); setSelectedClassroom(''); setSelectedExam(''); }}
+            onClick={() => { setMode(id); setFile(null); setResult(null); setSelectedClassroom(''); setSelectedStream(''); setSelectedExam(''); }}
             disabled={loading}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-display font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
               mode === id ? 'bg-surface-700 text-primary shadow' : 'text-secondary hover:text-primary'
@@ -209,13 +220,32 @@ export default function BulkImportPage() {
               })),
             ]}
             value={selectedClassroom}
-            onChange={e => setSelectedClassroom(e.target.value)}
+            onChange={e => { setSelectedClassroom(e.target.value); setSelectedStream(''); }}
             disabled={loading}
           />
           <p className="text-xs text-muted mt-2">
             Every imported student without a classroom_id in the CSV will be placed in this class.
             You can still leave this blank and set classroom_id per row instead.
           </p>
+
+          {selectedClassroom && (
+            <div className="mt-4">
+              <Select
+                label="Default Stream (optional)"
+                options={[
+                  { value: '', label: 'No default — use stream_id / stream_name column only' },
+                  ...streams.map(s => ({ value: s.id, label: s.name })),
+                ]}
+                value={selectedStream}
+                onChange={e => setSelectedStream(e.target.value)}
+                disabled={loading}
+              />
+              <p className="text-xs text-muted mt-2">
+                Applied only to students who end up in this classroom (default or per-row) and don't already
+                specify a stream_id/stream_name in the CSV.
+              </p>
+            </div>
+          )}
         </div>
       )}
 
@@ -260,11 +290,12 @@ export default function BulkImportPage() {
           <div>
             <p className="text-muted text-sm mb-3">Required columns:</p>
             <div className="font-mono text-xs bg-surface-900 rounded-xl p-3 text-emerald-400">
-              first_name, last_name, email, student_id, classroom_id, date_of_birth, notes
+              first_name, last_name, email, student_id, classroom_id, stream_id, stream_name, date_of_birth, notes
             </div>
             <ul className="mt-3 text-xs text-secondary flex flex-col gap-1.5">
               <li>• <b className="text-primary">first_name, last_name, email, student_id</b> — required</li>
               <li>• <b className="text-primary">classroom_id</b> — optional; pick a Default Classroom above instead, or set this per row to mix classrooms in one file</li>
+              <li>• <b className="text-primary">stream_id</b> or <b className="text-primary">stream_name</b> — optional; pick a Default Stream above instead, or set one of these per row (must belong to the row's classroom)</li>
               <li>• <b className="text-primary">date_of_birth</b> — optional, format YYYY-MM-DD</li>
               <li>• Passwords are auto-generated and shown in the results</li>
               <li>• Duplicate emails and student IDs are skipped</li>

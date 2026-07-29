@@ -93,7 +93,7 @@ class ExamScoresPDFView(APIView):
         school_name = _resolve_site_name(request)
 
         scores = ExamScore.objects.filter(exam=exam).select_related(
-            'student__user', 'student__classroom__grade_level'
+            'student__user', 'student__classroom__grade_level', 'student__stream'
         ).prefetch_related('topic_scores__topic')
 
         pdf_bytes = generate_exam_scores_pdf(exam, scores, sort_by=sort_by, school_name=school_name)
@@ -130,7 +130,7 @@ class ClassReportPDFView(APIView):
 
         students = StudentProfile.objects.filter(
             classroom=classroom, is_active=True
-        ).select_related('user').order_by('user__last_name', 'user__first_name')
+        ).select_related('user', 'stream').order_by('user__last_name', 'user__first_name')
 
         exam_filters = {'classrooms': classroom}
         if academic_year:
@@ -252,7 +252,7 @@ class ExamScoresExcelView(APIView):
             sort_by = 'name'
         school_name = _resolve_site_name(request)
 
-        scores = ExamScore.objects.filter(exam=exam).select_related('student__user')
+        scores = ExamScore.objects.filter(exam=exam).select_related('student__user', 'student__stream')
         xlsx_bytes = generate_exam_scores_excel(exam, scores, sort_by=sort_by, school_name=school_name)
 
         response = HttpResponse(xlsx_bytes,
@@ -283,7 +283,7 @@ class ClassReportExcelView(APIView):
 
         students = StudentProfile.objects.filter(
             classroom=classroom, is_active=True
-        ).select_related('user').order_by('user__last_name')
+        ).select_related('user', 'stream').order_by('user__last_name')
 
         exam_filters = {'classrooms': classroom}
         if academic_year: exam_filters['academic_year'] = academic_year
@@ -318,7 +318,7 @@ class ExportScoresCSVView(APIView):
             return Response({'detail': 'Exam not found.'}, status=404)
 
         sort_by = request.query_params.get('sort_by', 'name')
-        scores = list(ExamScore.objects.filter(exam=exam).select_related('student__user'))
+        scores = list(ExamScore.objects.filter(exam=exam).select_related('student__user', 'student__stream'))
 
         sort_map = {
             'name':       lambda s: s.student.full_name.lower(),
@@ -331,17 +331,18 @@ class ExportScoresCSVView(APIView):
         output = io.StringIO()
         writer = csv.writer(output)
         writer.writerow([f'{_resolve_site_name(request)} — {exam.title} Scores'])
-        writer.writerow(['Student ID', 'Student Name', 'Score', 'Max Score', 'Percentage', 'Grade', 'Passed', 'Absent', 'Remarks'])
+        writer.writerow(['Student ID', 'Student Name', 'Stream', 'Score', 'Max Score', 'Percentage', 'Grade', 'Passed', 'Absent', 'Remarks'])
         for s in scores:
+            stream_name = s.student.stream.name if s.student.stream_id else ''
             if s.is_absent:
                 writer.writerow([
-                    s.student.student_id, s.student.full_name,
+                    s.student.student_id, s.student.full_name, stream_name,
                     'ABSENT', float(exam.max_score), '—', '—',
                     '—', 'Yes', s.remarks,
                 ])
             else:
                 writer.writerow([
-                    s.student.student_id, s.student.full_name,
+                    s.student.student_id, s.student.full_name, stream_name,
                     float(s.score), float(exam.max_score),
                     s.percentage, s.letter_grade,
                     'Yes' if s.passed else 'No',
@@ -361,7 +362,7 @@ class ExportClassCSVView(APIView):
             assert_classroom_owned(request.user, classroom_id)
         students = StudentProfile.objects.filter(
             classroom_id=classroom_id, is_active=True
-        ).select_related('user').order_by('user__last_name')
+        ).select_related('user', 'stream').order_by('user__last_name')
 
         sort_by = request.query_params.get('sort_by', 'name')
         students = list(students)
@@ -371,10 +372,11 @@ class ExportClassCSVView(APIView):
         output = io.StringIO()
         writer = csv.writer(output)
         writer.writerow([f'{_resolve_site_name(request)} — Class Student List'])
-        writer.writerow(['Student ID', 'First Name', 'Last Name', 'Email', 'Classroom', 'Enrolled'])
+        writer.writerow(['Student ID', 'First Name', 'Last Name', 'Email', 'Classroom', 'Stream', 'Enrolled'])
         for s in students:
             writer.writerow([s.student_id, s.user.first_name, s.user.last_name,
-                              s.email, str(s.classroom) if s.classroom else '', str(s.enrollment_date)])
+                              s.email, str(s.classroom) if s.classroom else '',
+                              s.stream.name if s.stream_id else '', str(s.enrollment_date)])
 
         response = HttpResponse(output.getvalue(), content_type='text/csv')
         response['Content-Disposition'] = f'attachment; filename="class_{classroom_id}_students.csv"'

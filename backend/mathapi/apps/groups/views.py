@@ -9,7 +9,7 @@ from rest_framework.parsers import MultiPartParser, FormParser
 
 from mathapi.apps.accounts.permissions import IsTeacherOrAdmin
 from mathapi.apps.accounts.scoping import assert_classroom_owned, get_teacher_classrooms
-from mathapi.apps.students.models import Classroom, StudentProfile
+from mathapi.apps.students.models import Classroom, Stream, StudentProfile
 from .models import StudentGroup, GroupMembership, GroupTransferLog, PerformanceTier, DEFAULT_BADGE_COLORS, PeerConstraint
 from .serializers import StudentGroupSerializer, GroupTransferLogSerializer, PeerConstraintSerializer
 from . import services
@@ -20,6 +20,15 @@ def _owned_classroom_or_404(user, classroom_id):
     if user.role == 'teacher':
         assert_classroom_owned(user, classroom_id)  # raises PermissionDenied
     return classroom
+
+
+# A group's stream (if any) must belong to the same classroom the group
+# itself is scoped to — otherwise 'restrict to a stream' would silently
+# restrict to zero students.
+def _stream_in_classroom_or_400(stream, classroom_id):
+    if stream and stream.classroom_id != classroom_id:
+        from rest_framework.exceptions import ValidationError
+        raise ValidationError({'stream': 'That stream does not belong to this classroom.'})
 
 
 class PeerConstraintViewSet(viewsets.ModelViewSet):
@@ -74,6 +83,9 @@ class StudentGroupViewSet(viewsets.ModelViewSet):
         academic_year = self.request.query_params.get('academic_year')
         if academic_year:
             qs = qs.filter(academic_year=academic_year)
+        stream_id = self.request.query_params.get('stream')
+        if stream_id:
+            qs = qs.filter(stream_id=stream_id)
         return qs
 
     def get_serializer_context(self):
@@ -84,6 +96,8 @@ class StudentGroupViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         classroom = serializer.validated_data.get('classroom')
         _owned_classroom_or_404(self.request.user, classroom.id)
+        stream = serializer.validated_data.get('stream')
+        _stream_in_classroom_or_400(stream, classroom.id)
         serializer.save(created_by=self.request.user)
 
     def perform_update(self, serializer):
@@ -93,6 +107,10 @@ class StudentGroupViewSet(viewsets.ModelViewSet):
         if new_classroom and new_classroom.id != classroom.id:
             from rest_framework.exceptions import ValidationError
             raise ValidationError({'classroom': 'A group cannot be moved to a different classroom.'})
+        # 'stream' key present (even as None, meaning "clear it") vs absent
+        # matters here — only validate when the caller actually sent one.
+        if 'stream' in serializer.validated_data:
+            _stream_in_classroom_or_400(serializer.validated_data.get('stream'), classroom.id)
         serializer.save()
 
     def perform_destroy(self, instance):
@@ -122,6 +140,12 @@ class StudentGroupViewSet(viewsets.ModelViewSet):
         _owned_classroom_or_404(request.user, group.classroom_id)
         student_id = request.data.get('student_id')
         student = get_object_or_404(StudentProfile, id=student_id, classroom_id=group.classroom_id)
+        if group.stream_id and student.stream_id != group.stream_id:
+            return Response(
+                {'detail': f'{group.name} is restricted to the "{group.stream.name}" stream — '
+                           f'{student.full_name} is not in that stream.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         # Moving into this group means leaving whatever group they were in
         # within the same classroom — a student only ever belongs to one
@@ -173,6 +197,12 @@ class StudentGroupViewSet(viewsets.ModelViewSet):
         to_group = get_object_or_404(StudentGroup, id=to_group_id)
         _owned_classroom_or_404(request.user, to_group.classroom_id)
         student = get_object_or_404(StudentProfile, id=student_id, classroom_id=to_group.classroom_id)
+        if to_group.stream_id and student.stream_id != to_group.stream_id:
+            return Response(
+                {'detail': f'{to_group.name} is restricted to the "{to_group.stream.name}" stream — '
+                           f'{student.full_name} is not in that stream.'},
+                status=400,
+            )
 
         with transaction.atomic():
             existing = GroupMembership.objects.filter(
@@ -238,13 +268,33 @@ class StudentGroupViewSet(viewsets.ModelViewSet):
         except (TypeError, ValueError):
             return Response({'detail': 'group_count and group_size must be numbers.'}, status=400)
 
+        # Optional: restrict the whole grouping round to one stream (e.g.
+        # Form 2 "A") — the resulting groups only ever draw from and hold
+        # students in that stream, and are tagged with it so later actions
+        # (add-member, transfer) keep enforcing the same boundary.
+        stream_id = request.data.get('stream_id') or None
+        stream = None
+        if stream_id:
+            stream = get_object_or_404(Stream, id=stream_id)
+            _stream_in_classroom_or_400(stream, classroom.id)
+            if replace_existing:
+                # Only replace groups within this stream — a stream-scoped
+                # run shouldn't wipe out unrelated groups from other streams
+                # or the classroom-wide grouping round.
+                StudentGroup.objects.filter(
+                    classroom_id=classroom_id, academic_year=academic_year, stream_id=stream.id,
+                ).delete()
+                replace_existing = False  # already handled above; don't also wipe the whole classroom below
+
         created_by_id = request.user.id if request.user.role == 'teacher' else None
         performance = services.get_classroom_student_performance(
             classroom_id, subject_id=subject_id, term=term or None,
-            academic_year=academic_year, created_by_id=created_by_id,
+            academic_year=academic_year, created_by_id=created_by_id, stream_id=stream_id,
         )
         if not performance:
-            return Response({'detail': 'No active students in this classroom.'}, status=400)
+            detail = ('No active students in this stream.' if stream_id
+                      else 'No active students in this classroom.')
+            return Response({'detail': detail}, status=400)
 
         plan = services.plan_balanced_groups(performance, group_count=group_count, group_size=group_size)
 
@@ -274,12 +324,14 @@ class StudentGroupViewSet(viewsets.ModelViewSet):
                 .values_list('name', flat=True)
             )
 
+            effective_prefix = f'{name_prefix} {stream.name}' if stream else name_prefix
+
             created_groups = []
             for i, members in enumerate(plan['groups']):
                 # Skip auto-naming collisions with groups a teacher already
                 # made by hand (e.g. re-running auto-generate to fill in
                 # remaining students without clobbering custom names).
-                name = f'{name_prefix} {chr(65 + i)}' if i < 26 else f'{name_prefix} {i + 1}'
+                name = f'{effective_prefix} {chr(65 + i)}' if i < 26 else f'{effective_prefix} {i + 1}'
                 n = name
                 suffix = 1
                 while n in existing_names:
@@ -289,7 +341,7 @@ class StudentGroupViewSet(viewsets.ModelViewSet):
 
                 group = StudentGroup.objects.create(
                     classroom_id=classroom_id, name=n, academic_year=academic_year,
-                    subject_id=subject_id, term=term, created_by=request.user,
+                    subject_id=subject_id, stream=stream, term=term, created_by=request.user,
                     badge_color=DEFAULT_BADGE_COLORS[i % len(DEFAULT_BADGE_COLORS)],
                 )
                 for m in members:
@@ -320,16 +372,22 @@ class ClassroomGroupsOverviewView(APIView):
         classroom = _owned_classroom_or_404(request.user, classroom_id)
         subject_id = request.query_params.get('subject_id') or None
         term = request.query_params.get('term') or None
+        stream_id = request.query_params.get('stream_id') or None
         academic_year = request.query_params.get('academic_year') or classroom.academic_year
         created_by_id = request.user.id if request.user.role == 'teacher' else None
 
         performance = services.get_classroom_student_performance(
             classroom_id, subject_id=subject_id, term=term,
-            academic_year=academic_year, created_by_id=created_by_id,
+            academic_year=academic_year, created_by_id=created_by_id, stream_id=stream_id,
         )
         groups = StudentGroup.objects.filter(
             classroom_id=classroom_id, academic_year=academic_year
-        ).select_related('subject').prefetch_related('memberships__student__user').order_by('name')
+        ).select_related('subject', 'stream').prefetch_related('memberships__student__user').order_by('name')
+        # A stream filter narrows to that stream's groups plus any
+        # classroom-wide (unstreamed) group, since an unstreamed group can
+        # still legitimately hold a student from any stream.
+        if stream_id:
+            groups = groups.filter(Q(stream_id=stream_id) | Q(stream__isnull=True))
 
         grouped_student_ids = set(
             GroupMembership.objects.filter(group__classroom_id=classroom_id, group__academic_year=academic_year)
@@ -365,12 +423,13 @@ class ClassroomRebalanceSuggestionsView(APIView):
         classroom = _owned_classroom_or_404(request.user, classroom_id)
         subject_id = request.query_params.get('subject_id') or None
         term = request.query_params.get('term') or None
+        stream_id = request.query_params.get('stream_id') or None
         academic_year = request.query_params.get('academic_year') or classroom.academic_year
         created_by_id = request.user.id if request.user.role == 'teacher' else None
 
         data = services.get_rebalance_suggestions(
             classroom_id, academic_year=academic_year, subject_id=subject_id,
-            term=term, created_by_id=created_by_id,
+            term=term, created_by_id=created_by_id, stream_id=stream_id,
         )
         return Response({
             'classroom_id': classroom.id,
@@ -393,12 +452,13 @@ class ClassroomGroupEffectivenessView(APIView):
         classroom = _owned_classroom_or_404(request.user, classroom_id)
         subject_id = request.query_params.get('subject_id') or None
         term = request.query_params.get('term') or None
+        stream_id = request.query_params.get('stream_id') or None
         academic_year = request.query_params.get('academic_year') or classroom.academic_year
         created_by_id = request.user.id if request.user.role == 'teacher' else None
 
         data = services.get_group_effectiveness(
             classroom_id, academic_year=academic_year, subject_id=subject_id,
-            term=term, created_by_id=created_by_id,
+            term=term, created_by_id=created_by_id, stream_id=stream_id,
         )
         return Response({
             'classroom_id': classroom.id,

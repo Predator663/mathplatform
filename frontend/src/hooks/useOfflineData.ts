@@ -31,6 +31,8 @@ function toStudentProfile(c: CachedStudent): StudentProfile {
     email: c.email,
     classroom: c.classroom,
     classroom_name: c.classroom_name,
+    stream: null,
+    stream_name: null,
     grade_level: c.grade_level,
     education_level: null,
     date_of_birth: null,
@@ -92,6 +94,7 @@ function toClassroom(c: CachedClassroom): Classroom {
     student_count: c.student_count,
     necta_exam: '',
     math_subject: '',
+    streams: [],
     created_at: '',
   };
 }

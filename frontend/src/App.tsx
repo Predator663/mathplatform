@@ -21,6 +21,7 @@ import ExamDetailPage from './pages/exams/ExamDetailPage';
 import CreateExamPage from './pages/exams/CreateExamPage';
 import EditExamPage from './pages/exams/EditExamPage';
 import PendingReviewPage from './pages/exams/PendingReviewPage';
+import TrashPage from './pages/exams/TrashPage';
 import MarkEntryPage from './pages/marks/MarkEntryPage';
 import BulkImportPage from './pages/marks/BulkImportPage';
 import GroupsPage from './pages/groups/GroupsPage';
@@ -29,6 +30,12 @@ import StudentAnalyticsPage from './pages/analytics/StudentAnalyticsPage';
 import ClassAnalyticsPage from './pages/analytics/ClassAnalyticsPage';
 import CompareAnalyticsPage from './pages/analytics/CompareAnalyticsPage';
 import AtRiskPage from './pages/analytics/AtRiskPage';
+import RiskScoresPage from './pages/analytics/RiskScoresPage';
+import TopicDependenciesPage from './pages/analytics/TopicDependenciesPage';
+import IntegrityPage from './pages/analytics/IntegrityPage';
+import TeacherConsistencyPage from './pages/analytics/TeacherConsistencyPage';
+import NotificationsPage from './pages/notifications/NotificationsPage';
+import NotificationSettingsPage from './pages/notifications/NotificationSettingsPage';
 import ReportsPage from './pages/reports/ReportsPage';
 import UsersPage from './pages/users/UsersPage';
 import SettingsPage from './pages/settings/SettingsPage';
@@ -83,6 +90,7 @@ export default function App() {
             <Route path="classrooms/:id"     element={<ClassroomDetailPage />} />
             <Route path="exams"               element={<ExamsPage />} />
             <Route path="exams/pending-review" element={<PendingReviewPage />} />
+            <Route path="exams/trash"          element={<RequireAdmin><TrashPage /></RequireAdmin>} />
             <Route path="exams/new"           element={<CreateExamPage />} />
             <Route path="exams/:id"           element={<ExamDetailPage />} />
             <Route path="exams/:id/edit"      element={<EditExamPage />} />
@@ -93,7 +101,13 @@ export default function App() {
             <Route path="analytics/student/:id" element={<StudentAnalyticsPage />} />
             <Route path="analytics/class"    element={<ClassAnalyticsPage />} />
             <Route path="analytics/compare"  element={<CompareAnalyticsPage />} />
+            <Route path="analytics/risk"     element={<RiskScoresPage />} />
+            <Route path="analytics/dependencies" element={<TopicDependenciesPage />} />
+            <Route path="analytics/integrity" element={<IntegrityPage />} />
+            <Route path="analytics/teacher-consistency" element={<RequireAdmin><TeacherConsistencyPage /></RequireAdmin>} />
             <Route path="at-risk"            element={<AtRiskPage />} />
+            <Route path="notifications"      element={<NotificationsPage />} />
+            <Route path="settings/notifications" element={<NotificationSettingsPage />} />
             <Route path="reports"            element={<ReportsPage />} />
             <Route path="users"              element={<UsersPage />} />
             <Route path="settings"           element={<SettingsPage />} />

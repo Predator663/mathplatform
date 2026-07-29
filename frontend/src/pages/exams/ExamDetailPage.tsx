@@ -12,7 +12,7 @@ import { useAuthStore } from '../../store/auth';
 import { useCanManage } from '../../hooks/useCanManage';
 import type { Exam, ExamScore } from '../../types';
 import toast from 'react-hot-toast';
-import { Download, Edit, Send, Clock } from 'lucide-react';
+import { Download, Edit, Send, Clock, Trash2 } from 'lucide-react';
 
 interface ExamStats {
   exam_id: number;
@@ -38,6 +38,7 @@ export default function ExamDetailPage() {
   const queryClient = useQueryClient();
   const [editScore, setEditScore] = useState<ExamScore | null>(null);
   const [editValue, setEditValue] = useState('');
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const { user } = useAuthStore();
   const isAdmin = user?.role === 'super_admin';
   // Covers both "Enter Marks" (bulk_scores) and "Edit" (exam details) —
@@ -76,6 +77,19 @@ export default function ExamDetailPage() {
       queryClient.invalidateQueries({ queryKey: ['exam', examId] });
       queryClient.invalidateQueries({ queryKey: ['exams'] });
       toast.success('Exam moved back to draft');
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: () => examsApi.deleteExam(examId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['exams'] });
+      toast.success('Exam moved to trash');
+      navigate('/exams');
+    },
+    onError: () => {
+      toast.error('Failed to delete exam');
+      setDeleteConfirmOpen(false);
     },
   });
 
@@ -179,6 +193,11 @@ export default function ExamDetailPage() {
           {canEditExam && (
             <Button variant="secondary" size="sm" onClick={() => navigate(`/exams/${examId}/edit`)}>
               <Edit size={13} /> Edit
+            </Button>
+          )}
+          {(isAdmin || exam.created_by === user?.id) && (
+            <Button variant="danger" size="sm" onClick={() => setDeleteConfirmOpen(true)}>
+              <Trash2 size={13} /> Delete
             </Button>
           )}
         </div>
@@ -365,6 +384,28 @@ export default function ExamDetailPage() {
             onChangeValue={setEditValue}
           />
         )}
+      </Modal>
+
+      {/* Delete confirmation modal */}
+      <Modal
+        open={deleteConfirmOpen}
+        onClose={() => setDeleteConfirmOpen(false)}
+        title="Delete this exam?"
+        size="sm"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setDeleteConfirmOpen(false)}>Cancel</Button>
+            <Button variant="danger" loading={deleteMutation.isPending} onClick={() => deleteMutation.mutate()}>
+              <Trash2 size={14} /> Delete Exam
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-secondary">
+          <span className="text-primary font-display font-medium">{exam.title}</span> and all {exam.score_count} recorded
+          score{exam.score_count !== 1 ? 's' : ''} will move to the trash. An administrator can restore it later, or
+          permanently clear it from there.
+        </p>
       </Modal>
     </div>
   );

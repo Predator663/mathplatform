@@ -164,7 +164,7 @@ def generate_exam_scores_excel(exam, scores, sort_by='name',
     avg = round(sum(pcts)/len(pcts), 1) if pcts else 0
     pass_rate = round(sum(1 for s in present if s.passed)/len(present)*100, 1) if present else 0
 
-    ncols = 8
+    ncols = 9
     next_row = _write_platform_header(
         ws, school_name,
         f'{exam.title} — Score Report',
@@ -192,7 +192,7 @@ def generate_exam_scores_excel(exam, scores, sort_by='name',
     next_row += 3
 
     # Column headers
-    col_headers = ['#', 'Student ID', 'Student Name', 'Score', 'Max Score', '% Score', 'Grade', 'Pass?']
+    col_headers = ['#', 'Student ID', 'Student Name', 'Stream', 'Score', 'Max Score', '% Score', 'Grade', 'Pass?']
     for j, h in enumerate(col_headers, 1):
         c = ws.cell(next_row, j, h)
         c.font = _font(bold=True, color=WHITE, size=9)
@@ -206,11 +206,12 @@ def generate_exam_scores_excel(exam, scores, sort_by='name',
     for rank, s in enumerate(scores_list, 1):
         is_even = rank % 2 == 0
         row_fill = PatternFill('solid', fgColor='FFF8FAFC') if is_even else PatternFill('solid', fgColor=WHITE)
+        stream_name = s.student.stream.name if s.student.stream_id else '—'
 
         if s.is_absent:
-            row_data = [rank, s.student.student_id, s.student.full_name, 'ABSENT', exam.max_score, '—', '—', '—']
+            row_data = [rank, s.student.student_id, s.student.full_name, stream_name, 'ABSENT', exam.max_score, '—', '—', '—']
         else:
-            row_data = [rank, s.student.student_id, s.student.full_name,
+            row_data = [rank, s.student.student_id, s.student.full_name, stream_name,
                         float(s.score), float(exam.max_score), s.percentage/100,
                         s.letter_grade, 'Pass' if s.passed else 'Fail']
 
@@ -223,21 +224,21 @@ def generate_exam_scores_excel(exam, scores, sort_by='name',
 
         # Percentage as percentage format
         if not s.is_absent:
-            ws.cell(next_row, 6).number_format = '0.0%'
+            ws.cell(next_row, 7).number_format = '0.0%'
             # Colour pass/fail
-            pf_cell = ws.cell(next_row, 8)
+            pf_cell = ws.cell(next_row, 9)
             pf_cell.font = _font(bold=True, size=9,
                                   color=GREEN[2:] if s.passed else ROSE[2:])
             # Colour grade
-            ws.cell(next_row, 7).font = _font(bold=True, size=9,
+            ws.cell(next_row, 8).font = _font(bold=True, size=9,
                 color=GREEN[2:] if s.percentage>=75 else AMBER[2:] if s.percentage>=45 else ROSE[2:])
 
         next_row += 1
 
     # Totals row
     ws.cell(next_row, 3, 'CLASS AVERAGE').font = _font(bold=True, size=9)
-    ws.cell(next_row, 6, avg/100).number_format = '0.0%'
-    ws.cell(next_row, 6).font = _font(bold=True, size=9)
+    ws.cell(next_row, 7, avg/100).number_format = '0.0%'
+    ws.cell(next_row, 7).font = _font(bold=True, size=9)
     for j in range(1, ncols+1):
         ws.cell(next_row, j).fill = PatternFill('solid', fgColor='FFE8EFF9')
         ws.cell(next_row, j).border = _border()
@@ -280,7 +281,7 @@ def generate_class_report_excel(classroom, students, scores_map, exams,
     ws.title = 'Class Report'
     ws.sheet_view.showGridLines = False
 
-    ncols = 3 + len(exams) + 1  # rank, id, name + exams + avg
+    ncols = 4 + len(exams) + 1  # rank, id, name, stream + exams + avg
     _write_platform_header(
         ws, school_name,
         f'{classroom} — Class Performance Report',
@@ -291,16 +292,16 @@ def generate_class_report_excel(classroom, students, scores_map, exams,
     )
 
     next_row = 6
-    col_headers = ['#', 'Student ID', 'Name'] + [e.title for e in exams] + ['AVERAGE']
+    col_headers = ['#', 'Student ID', 'Name', 'Stream'] + [e.title for e in exams] + ['AVERAGE']
     # Exam-title columns are rotated 90° so a long exam name doesn't force
     # the column itself to widen (which used to push later columns off the
     # printable page and made scores overlap the header text). The rank/ID/
-    # name/average columns stay horizontal since they're short labels.
-    exam_col_nums = set(range(4, 4 + len(exams)))
+    # name/stream/average columns stay horizontal since they're short labels.
+    exam_col_nums = set(range(5, 5 + len(exams)))
     for j, h in enumerate(col_headers, 1):
         c = ws.cell(next_row, j, h)
         c.font = _font(bold=True, color=WHITE, size=8)
-        bg = HEADER[2:] if j <= 3 or j == ncols else SUBHDR[2:]
+        bg = HEADER[2:] if j <= 4 or j == ncols else SUBHDR[2:]
         c.fill = PatternFill('solid', fgColor=bg)
         if j in exam_col_nums:
             c.alignment = Alignment(horizontal='center', vertical='bottom',
@@ -331,7 +332,13 @@ def generate_class_report_excel(classroom, students, scores_map, exams,
         ws.cell(next_row, 3).border = _border()
         ws.cell(next_row, 3).font = _font(size=8)
 
-        for ei, e in enumerate(exams, 4):
+        stream_cell = ws.cell(next_row, 4, s.stream.name if s.stream_id else '—')
+        stream_cell.fill = row_fill
+        stream_cell.border = _border()
+        stream_cell.alignment = _align('center')
+        stream_cell.font = _font(size=8)
+
+        for ei, e in enumerate(exams, 5):
             pct = s_scores.get(e.id)
             c = ws.cell(next_row, ei, f'{pct}%' if pct is not None else '—')
             c.fill = row_fill
@@ -364,8 +371,8 @@ def generate_class_report_excel(classroom, students, scores_map, exams,
     # Exam columns get a fixed narrow width (they hold "87%" style values,
     # not the rotated header text) instead of being auto-sized off the long
     # exam title — that autofit was the source of the column blowout.
-    min_widths = [4, 12, 22] + [9] * len(exams) + [10]
-    _freeze_and_autofit(ws, 7, 4, min_widths=min_widths, fixed_cols=exam_col_nums)
+    min_widths = [4, 12, 22, 10] + [9] * len(exams) + [10]
+    _freeze_and_autofit(ws, 7, 5, min_widths=min_widths, fixed_cols=exam_col_nums)
 
     buf = io.BytesIO()
     wb.save(buf)

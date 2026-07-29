@@ -1,18 +1,24 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { School, Users, BarChart3, FileText, Plus, Trash2, UserPlus, Edit2, Save, X } from 'lucide-react';
+import { School, Users, BarChart3, FileText, Plus, Trash2, UserPlus, Edit2, Save, X, Layers } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { studentsApi, authApi, subjectsApi, assignmentsApi } from '../../api';
 import { LoadingPage, Button, Select, Modal, Input } from '../../components/ui';
 import { EDUCATION_LEVEL_LABELS } from '../../utils';
 import { useAuthStore } from '../../store/auth';
 import { useCanManage } from '../../hooks/useCanManage';
-import type { Classroom, User, Subject, TeacherAssignment, PaginatedResponse } from '../../types';
+import type { Classroom, User, Subject, TeacherAssignment, Stream, PaginatedResponse } from '../../types';
 
 interface EditClassroomForm {
   name: string;
   academic_year: string;
+}
+
+interface StreamFormState {
+  id: number | null;
+  name: string;
+  capacity: string;
 }
 
 export default function ClassroomDetailPage() {
@@ -24,6 +30,9 @@ export default function ClassroomDetailPage() {
   const isAdmin = user?.role === 'super_admin';
   const canEdit = useCanManage('classrooms', 'edit');
   const canDelete = useCanManage('classrooms', 'delete');
+  const canAddStream = useCanManage('classrooms', 'add');
+  const canEditStream = useCanManage('classrooms', 'edit');
+  const canDeleteStream = useCanManage('classrooms', 'delete');
 
   const [modalOpen, setModalOpen] = useState(false);
   const [teacherId, setTeacherId] = useState('');
@@ -31,6 +40,8 @@ export default function ClassroomDetailPage() {
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState('');
   const [editYear, setEditYear] = useState('');
+  const [streamModalOpen, setStreamModalOpen] = useState(false);
+  const [streamForm, setStreamForm] = useState<StreamFormState>({ id: null, name: '', capacity: '' });
 
   const { data: classroom, isLoading } = useQuery<Classroom>({
     queryKey: ['classroom', classroomId],
@@ -59,6 +70,82 @@ export default function ClassroomDetailPage() {
   const allAssignments: TeacherAssignment[] = Array.isArray(assignmentsData)
     ? assignmentsData : (assignmentsData as PaginatedResponse<TeacherAssignment>)?.results ?? [];
   const assignments = allAssignments.filter(a => a.classroom === classroomId);
+
+  const { data: streamsData, isLoading: streamsLoading } = useQuery<PaginatedResponse<Stream> | Stream[]>({
+    queryKey: ['streams', classroomId],
+    queryFn: () => studentsApi.streams({ classroom: classroomId, page_size: 200 }).then(r => r.data),
+  });
+  const streams: Stream[] = Array.isArray(streamsData)
+    ? streamsData : (streamsData as PaginatedResponse<Stream>)?.results ?? [];
+
+  const createStreamMutation = useMutation({
+    mutationFn: (data: { classroom: number; name: string; capacity: number | null }) =>
+      studentsApi.createStream(data),
+    onSuccess: () => {
+      toast.success('Stream created');
+      qc.invalidateQueries({ queryKey: ['streams', classroomId] });
+      qc.invalidateQueries({ queryKey: ['classroom', classroomId] });
+      setStreamModalOpen(false);
+      setStreamForm({ id: null, name: '', capacity: '' });
+    },
+    onError: (err: unknown) => {
+      const e = err as { response?: { data?: Record<string, string[]> } };
+      const msgs = e?.response?.data;
+      if (msgs) Object.values(msgs).flat().forEach(m => toast.error(String(m)));
+      else toast.error('Failed to create stream');
+    },
+  });
+
+  const updateStreamMutation = useMutation({
+    mutationFn: ({ id, data }: { id: number; data: { name: string; capacity: number | null } }) =>
+      studentsApi.updateStream(id, data),
+    onSuccess: () => {
+      toast.success('Stream updated');
+      qc.invalidateQueries({ queryKey: ['streams', classroomId] });
+      qc.invalidateQueries({ queryKey: ['classroom', classroomId] });
+      setStreamModalOpen(false);
+      setStreamForm({ id: null, name: '', capacity: '' });
+    },
+    onError: (err: unknown) => {
+      const e = err as { response?: { data?: Record<string, string[]> } };
+      const msgs = e?.response?.data;
+      if (msgs) Object.values(msgs).flat().forEach(m => toast.error(String(m)));
+      else toast.error('Failed to update stream');
+    },
+  });
+
+  const deleteStreamMutation = useMutation({
+    mutationFn: (id: number) => studentsApi.deleteStream(id),
+    onSuccess: () => {
+      toast.success('Stream deleted');
+      qc.invalidateQueries({ queryKey: ['streams', classroomId] });
+      qc.invalidateQueries({ queryKey: ['classroom', classroomId] });
+    },
+    onError: () => toast.error('Failed to delete stream — students assigned to it will be unassigned instead if you retry.'),
+  });
+
+  const openCreateStream = () => {
+    setStreamForm({ id: null, name: '', capacity: '' });
+    setStreamModalOpen(true);
+  };
+
+  const openEditStream = (s: Stream) => {
+    setStreamForm({ id: s.id, name: s.name, capacity: s.capacity != null ? String(s.capacity) : '' });
+    setStreamModalOpen(true);
+  };
+
+  const handleSaveStream = () => {
+    if (!streamForm.name.trim()) {
+      toast.error('Stream name is required');
+      return;
+    }
+    const capacity = streamForm.capacity.trim() ? Number(streamForm.capacity) : null;
+    if (streamForm.id) {
+      updateStreamMutation.mutate({ id: streamForm.id, data: { name: streamForm.name.trim(), capacity } });
+    } else {
+      createStreamMutation.mutate({ classroom: classroomId, name: streamForm.name.trim(), capacity });
+    }
+  };
 
   const updateMutation = useMutation({
     mutationFn: (data: EditClassroomForm) => studentsApi.updateClassroom(classroomId, data),
@@ -272,6 +359,76 @@ export default function ClassroomDetailPage() {
         )}
       </div>
 
+      {/* Streams (sections within this classroom, e.g. A / B) */}
+      <div className="card p-5 flex flex-col gap-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="section-title">Streams</h2>
+            <p className="text-muted text-xs mt-0.5">Sections within this classroom (e.g. "A", "B") — used to group and bulk-assign students</p>
+          </div>
+          {canAddStream && (
+            <Button size="sm" onClick={openCreateStream}>
+              <Plus size={13} /> Add Stream
+            </Button>
+          )}
+        </div>
+
+        {streamsLoading ? (
+          <LoadingPage />
+        ) : streams.length === 0 ? (
+          <div className="text-center py-8 text-secondary">
+            <p className="text-sm">No streams yet.</p>
+            <p className="text-xs mt-1">Add streams like "A" or "B" to organize students within this classroom.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {streams.map(s => (
+              <div key={s.id} className="flex items-center justify-between gap-3 bg-surface-900 rounded-xl p-3">
+                <button
+                  onClick={() => navigate(`/students?classroom=${classroomId}&stream=${s.id}`)}
+                  className="flex items-center gap-3 min-w-0 text-left flex-1"
+                >
+                  <div className="w-8 h-8 rounded-lg bg-violet-500/15 flex items-center justify-center flex-shrink-0">
+                    <Layers size={14} className="text-violet-400" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-primary truncate">Stream {s.name}</p>
+                    <p className="text-xs text-secondary truncate">
+                      {s.student_count} student{s.student_count === 1 ? '' : 's'}
+                      {s.capacity != null ? ` · capacity ${s.capacity}` : ''}
+                      {!s.is_active ? ' · inactive' : ''}
+                    </p>
+                  </div>
+                </button>
+                <div className="flex items-center gap-1 flex-shrink-0">
+                  {canEditStream && (
+                    <button
+                      onClick={() => openEditStream(s)}
+                      className="text-secondary hover:text-azure-400 transition-colors p-1.5"
+                      title="Edit stream"
+                    >
+                      <Edit2 size={13} />
+                    </button>
+                  )}
+                  {canDeleteStream && (
+                    <button
+                      onClick={() => {
+                        if (confirm(`Delete stream "${s.name}"? Students in it will become unassigned (not deleted).`))
+                          deleteStreamMutation.mutate(s.id);
+                      }}
+                      className="text-secondary hover:text-rose-400 transition-colors p-1.5"
+                      title="Delete stream"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       {/* Assign teacher modal */}
       {isAdmin && (
         <Modal
@@ -317,6 +474,37 @@ export default function ClassroomDetailPage() {
           </div>
         </Modal>
       )}
+
+      {/* Create/edit stream modal */}
+      <Modal
+        open={streamModalOpen}
+        onClose={() => setStreamModalOpen(false)}
+        title={streamForm.id ? 'Edit Stream' : 'Add Stream'}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setStreamModalOpen(false)}>Cancel</Button>
+            <Button onClick={handleSaveStream} loading={createStreamMutation.isPending || updateStreamMutation.isPending}>
+              <Save size={14} /> {streamForm.id ? 'Save' : 'Create'}
+            </Button>
+          </>
+        }
+      >
+        <div className="flex flex-col gap-4">
+          <Input
+            label="Stream Name"
+            placeholder="e.g. A, B, Blue"
+            value={streamForm.name}
+            onChange={e => setStreamForm(f => ({ ...f, name: e.target.value }))}
+          />
+          <Input
+            label="Capacity (optional)"
+            type="number"
+            placeholder="e.g. 40"
+            value={streamForm.capacity}
+            onChange={e => setStreamForm(f => ({ ...f, capacity: e.target.value }))}
+          />
+        </div>
+      </Modal>
     </div>
   );
 }

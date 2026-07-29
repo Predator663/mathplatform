@@ -1,18 +1,18 @@
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { BarChart3, Edit2, Save, X, Trash2, ToggleLeft, ToggleRight } from 'lucide-react';
 import { studentsApi } from '../../api';
 import { useCanManage } from '../../hooks/useCanManage';
 import { LoadingPage, Button, Input, Select } from '../../components/ui';
 import { formatDate } from '../../utils';
-import type { StudentProfile, Classroom, PaginatedResponse } from '../../types';
+import type { StudentProfile, Classroom, Stream, PaginatedResponse } from '../../types';
 import toast from 'react-hot-toast';
 import { useForm } from 'react-hook-form';
 
 interface EditForm {
   first_name: string; last_name: string; student_id: string;
-  classroom: string; date_of_birth: string; notes: string;
+  classroom: string; stream: string; date_of_birth: string; notes: string;
   index_number: string; parent_name: string; parent_phone: string;
   district: string; region: string; is_active: boolean;
 }
@@ -38,10 +38,34 @@ export default function StudentDetailPage() {
     ? classroomsData
     : (classroomsData as PaginatedResponse<Classroom>)?.results ?? [];
 
-  const { register, handleSubmit, reset, formState: { errors } } = useForm<EditForm>();
+  const { register, handleSubmit, reset, watch, setValue, formState: { errors } } = useForm<EditForm>();
+  const editingClassroom = watch('classroom');
+
+  const { data: streamsData } = useQuery<PaginatedResponse<Stream> | Stream[]>({
+    queryKey: ['streams-for-edit', editingClassroom],
+    queryFn: () => studentsApi.streams({ classroom: editingClassroom, page_size: 200 }).then(r => r.data),
+    enabled: editing && !!editingClassroom,
+  });
+  const editStreams: Stream[] = Array.isArray(streamsData)
+    ? streamsData : (streamsData as PaginatedResponse<Stream>)?.results ?? [];
+
+  const lastClassroomRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!editing) { lastClassroomRef.current = null; return; }
+    if (lastClassroomRef.current === null) {
+      // First render after entering edit mode — this is the reset() value,
+      // not a user change, so don't touch the stream field.
+      lastClassroomRef.current = editingClassroom;
+      return;
+    }
+    if (editingClassroom !== lastClassroomRef.current) {
+      lastClassroomRef.current = editingClassroom;
+      setValue('stream', '');
+    }
+  }, [editing, editingClassroom, setValue]);
 
   const updateMutation = useMutation({
-    mutationFn: (data: Partial<EditForm>) =>
+    mutationFn: (data: Record<string, unknown>) =>
       studentsApi.updateStudent(Number(id), data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['student', id] });
@@ -74,6 +98,7 @@ export default function StudentDetailPage() {
       first_name: student.first_name, last_name: student.last_name,
       student_id: student.student_id,
       classroom: student.classroom ? String(student.classroom) : '',
+      stream: student.stream ? String(student.stream) : '',
       date_of_birth: student.date_of_birth ?? '',
       notes: student.notes,
       index_number: student.index_number ?? '',
@@ -90,6 +115,7 @@ export default function StudentDetailPage() {
     updateMutation.mutate({
       ...data,
       classroom: data.classroom ? data.classroom : undefined,
+      stream: data.stream ? data.stream : null,
     });
   };
 
@@ -117,6 +143,7 @@ export default function StudentDetailPage() {
               <p className="text-muted mt-0.5 flex flex-wrap items-center gap-2">
                 <span className="font-mono text-secondary text-xs bg-surface-800 px-2 py-0.5 rounded">{student.student_id}</span>
                 <span className="truncate">{student.classroom_name ?? 'No classroom assigned'}</span>
+                {student.stream_name && <span className="badge badge-violet text-[10px]">Stream {student.stream_name}</span>}
               </p>
             </div>
           </div>
@@ -195,6 +222,16 @@ export default function StudentDetailPage() {
               ]}
               {...register('classroom')}
             />
+            {editingClassroom && (
+              <Select
+                label="Stream"
+                options={[
+                  { value: '', label: 'None' },
+                  ...editStreams.map(s => ({ value: s.id, label: `Stream ${s.name}` })),
+                ]}
+                {...register('stream')}
+              />
+            )}
             <Input
               label="Date of Birth"
               type="date"
@@ -233,6 +270,7 @@ export default function StudentDetailPage() {
                 { dt: 'Email Address', dd: student.email },
                 { dt: 'Student ID', dd: student.student_id },
                 { dt: 'Classroom', dd: student.classroom_name ?? '—' },
+                { dt: 'Stream', dd: student.stream_name ? `Stream ${student.stream_name}` : '—' },
                 { dt: 'Date of Birth', dd: student.date_of_birth ? formatDate(student.date_of_birth) : '—' },
                 { dt: 'Enrolled', dd: formatDate(student.enrollment_date) },
                 { dt: 'Status', dd: student.is_active ? 'Active' : 'Inactive' },

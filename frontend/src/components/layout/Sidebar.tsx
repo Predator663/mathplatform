@@ -2,11 +2,11 @@ import { NavLink, useNavigate, Link } from 'react-router-dom';
 import {
   LayoutDashboard, Users, Users2, BookOpen, BarChart3, GraduationCap,
   AlertTriangle, LogOut, Settings, FileText, Upload, School, X,
-  BookMarked, ClipboardList, ClipboardCheck, Layers,
+  BookMarked, ClipboardList, ClipboardCheck, Layers, Trash2, Bell,
 } from 'lucide-react';
 import { useAuthStore } from '../../store/auth';
 import { useSiteSettingsStore } from '../../store/siteSettings';
-import { authApi, examsApi } from '../../api';
+import { authApi, examsApi, notificationsApi } from '../../api';
 import { useQuery } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { cn } from '../../utils';
@@ -49,6 +49,23 @@ export default function Sidebar({ onClose }: SidebarProps) {
     refetchInterval: 60_000, // refresh every minute
   });
   const pendingCount: number = (pendingData as { count?: number })?.count ?? 0;
+
+  // Live trash count badge — only fetched for admins.
+  const { data: trashData } = useQuery({
+    queryKey: ['exams-trash'],
+    queryFn: () => examsApi.trash().then(r => r.data),
+    enabled: isAdmin,
+    refetchInterval: 60_000,
+  });
+  const trashCount: number = (trashData as { count?: number })?.count ?? 0;
+
+  // Live unread-notifications badge — for every signed-in user, not just admins.
+  const { data: unreadData } = useQuery({
+    queryKey: ['notifications-unread-count'],
+    queryFn: () => notificationsApi.unreadCount().then(r => r.data),
+    refetchInterval: 60_000,
+  });
+  const unreadCount: number = (unreadData as { unread_count?: number })?.unread_count ?? 0;
 
   const handleLogout = async () => {
     try { if (refreshToken) await authApi.logout(refreshToken); } catch { /* ignore */ }
@@ -118,12 +135,14 @@ export default function Sidebar({ onClose }: SidebarProps) {
       {/* Nav */}
       <nav className="flex-1 px-3 py-3 flex flex-col gap-0.5 overflow-y-auto">
         {navItems.map(({ to, icon: Icon, label, pageKey }) => navLink(to, Icon, label, pageKey))}
+        {navLink('/notifications', Bell, 'Notifications', null, unreadCount)}
 
         {isAdmin && (
           <>
             <div className="my-2 border-t border-surface" style={{borderColor: 'var(--border)'}} />
             <p className="px-3 mb-1 text-[10px] font-display font-semibold text-secondary uppercase tracking-widest">Admin</p>
             {navLink('/exams/pending-review', ClipboardCheck, 'Pending Review', null, pendingCount)}
+            {navLink('/exams/trash', Trash2, 'Trash', null, trashCount)}
             {adminItems.map(({ to, icon: Icon, label, pageKey }) => navLink(to, Icon, label, pageKey))}
           </>
         )}

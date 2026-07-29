@@ -35,6 +35,7 @@ export default function MarkEntryPage() {
   const [rows, setRows]               = useState<ScoreRow[]>([]);
   const [searchText, setSearchText]   = useState('');
   const [filterClass, setFilterClass] = useState('');
+  const [filterStream, setFilterStream] = useState('');
   const [sortField, setSortField]     = useState<SortField>('name');
   const [sortDir, setSortDir]         = useState<SortDir>('asc');
   const [saveStatus, setSaveStatus]   = useState<SaveStatus>('idle');
@@ -185,8 +186,22 @@ export default function MarkEntryPage() {
       r.student.full_name.toLowerCase().includes(searchText.toLowerCase()) ||
       r.student.student_id.toLowerCase().includes(searchText.toLowerCase());
     const matchClass = !filterClass || String(r.student.classroom) === filterClass;
-    return matchSearch && matchClass;
+    const matchStream = !filterStream || String(r.student.stream) === filterStream;
+    return matchSearch && matchClass && matchStream;
   });
+
+  // Streams are only meaningful within one classroom, so this list is
+  // derived from whichever students are currently in view (after the class
+  // filter) rather than a separate API call — keeps the mark-entry page
+  // fully usable offline, same as everything else here.
+  const availableStreams = Array.from(
+    new Map(
+      rows
+        .filter(r => !filterClass || String(r.student.classroom) === filterClass)
+        .filter(r => r.student.stream != null)
+        .map(r => [String(r.student.stream), r.student.stream_name ?? String(r.student.stream)])
+    ).entries()
+  ).sort((a, b) => a[1].localeCompare(b[1]));
 
   // Status rank used for the "Status" sort: students with nothing entered yet
   // float to one end so a teacher can quickly find who's left to mark.
@@ -290,7 +305,13 @@ export default function MarkEntryPage() {
           <Select className="w-full sm:w-40" options={[
             { value: '', label: 'All Classes' },
             ...classrooms.map(c => ({ value: c.id, label: c.name })),
-          ]} value={filterClass} onChange={e => setFilterClass(e.target.value)} />
+          ]} value={filterClass} onChange={e => { setFilterClass(e.target.value); setFilterStream(''); }} />
+        )}
+        {availableStreams.length > 0 && (
+          <Select className="w-full sm:w-32" options={[
+            { value: '', label: 'All Streams' },
+            ...availableStreams.map(([id, name]) => ({ value: id, label: `Stream ${name}` })),
+          ]} value={filterStream} onChange={e => setFilterStream(e.target.value)} />
         )}
         <div className="flex items-center gap-1.5 w-full sm:w-auto">
           <Select className="w-full sm:w-36" aria-label="Sort by" options={[
