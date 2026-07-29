@@ -286,6 +286,13 @@ export interface TopicAnalysis {
 
 export interface StudentTopicAnalysis { student_id: number; topics: TopicAnalysis[]; }
 
+export interface StudentClassroomComparison {
+  by_exam: Record<string, number>; // exam_id -> classroom average %
+  rank: number | null;
+  class_size: number;
+  percentile: number | null;
+}
+
 export interface ExamSummary {
   exam_id: number; exam_title: string; exam_type: ExamType; term: TermType;
   exam_date: string; subject: string | null; student_count: number; average: number;

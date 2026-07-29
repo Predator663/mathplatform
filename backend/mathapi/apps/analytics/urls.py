@@ -6,6 +6,7 @@ urlpatterns = [
     path('students/<int:student_id>/summary/', views.StudentSummaryView.as_view(), name='student_summary'),
     path('students/<int:student_id>/trend/', views.StudentTrendView.as_view(), name='student_trend'),
     path('students/<int:student_id>/topics/', views.StudentTopicAnalysisView.as_view(), name='student_topics'),
+    path('students/<int:student_id>/classroom-comparison/', views.StudentClassroomComparisonView.as_view(), name='student_classroom_comparison'),
     path('classrooms/<int:classroom_id>/', views.ClassAnalyticsView.as_view(), name='class_analytics'),
     path('classrooms/<int:classroom_id>/heatmap/', views.TopicHeatmapView.as_view(), name='topic_heatmap'),
     path('at-risk/', views.AtRiskStudentsView.as_view(), name='at_risk'),

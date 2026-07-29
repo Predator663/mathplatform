@@ -99,6 +99,19 @@ class StudentTopicAnalysisView(APIView):
         return Response(data)
 
 
+class StudentClassroomComparisonView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, student_id):
+        _check_student_access(request.user, student_id)
+        subject_id = _get_subject_id(request)
+        created_by_id = request.user.id if request.user.role == 'teacher' else None
+        data = services.get_student_classroom_comparison(
+            student_id, subject_id=subject_id, created_by_id=created_by_id,
+        )
+        return Response(data)
+
+
 class ClassAnalyticsView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 

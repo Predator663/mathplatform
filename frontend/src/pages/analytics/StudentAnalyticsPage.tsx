@@ -12,7 +12,7 @@ import { analyticsApi } from '../../api';
 import { LoadingPage } from '../../components/ui';
 import { useSubjectStore } from '../../store/subject';
 import { formatDate, gradeBg, gradeColor, trendColor, trendIcon } from '../../utils';
-import type { StudentSummary, StudentTrend, StudentTopicAnalysis, StudentRiskScore, GradeBoundaryWhatIf, RiskLevel } from '../../types';
+import type { StudentSummary, StudentTrend, StudentTopicAnalysis, StudentRiskScore, GradeBoundaryWhatIf, RiskLevel, StudentClassroomComparison } from '../../types';
 
 const RISK_LEVEL_STYLE: Record<RiskLevel, { color: string; label: string }> = {
   critical: { color: '#f43f5e', label: 'Critical' },
@@ -43,9 +43,9 @@ const ChartTooltip = ({ active, payload, label }: TooltipProps<number, string>) 
   return (
     <div className="card px-3 py-2 text-xs shadow-xl border border-surface">
       <p className="font-display font-semibold text-primary mb-1">{label}</p>
-      {payload.map(p => (
-        <p key={String(p.name)} style={{ color: p.name === 'percentage' ? '#3b82f6' : '#a78bfa' }}>
-          {p.name === 'percentage' ? 'Score' : 'Moving Avg'}: {p.value}%
+      {payload.filter(p => p.value != null).map(p => (
+        <p key={String(p.name)} style={{ color: p.name === 'percentage' ? '#3b82f6' : p.name === 'classAvg' ? '#34d399' : '#a78bfa' }}>
+          {p.name === 'percentage' ? 'Score' : p.name === 'classAvg' ? 'Class Avg' : 'Moving Avg'}: {p.value}%
         </p>
       ))}
     </div>
@@ -109,6 +109,11 @@ export default function StudentAnalyticsPage() {
     queryFn: () => analyticsApi.gradeBoundaryWhatIf(studentId, subjectParams).then(r => r.data),
   });
 
+  const { data: comparison } = useQuery<StudentClassroomComparison>({
+    queryKey: ['student-classroom-comparison', studentId, activeSubjectId],
+    queryFn: () => analyticsApi.studentClassroomComparison(studentId, subjectParams).then(r => r.data),
+  });
+
   if (s1 || s2 || s3) return <LoadingPage />;
   if (!summary) return <div className="text-muted">Student not found.</div>;
 
@@ -117,6 +122,7 @@ export default function StudentAnalyticsPage() {
     name: t.exam_title.length > 10 ? t.exam_title.slice(0, 10) + '…' : t.exam_title,
     percentage: t.percentage,
     movingAvg: trend?.moving_average[i] ?? t.percentage,
+    classAvg: comparison?.by_exam[String(t.exam_id)] ?? null,
     date: formatDate(t.exam_date),
     grade: t.letter_grade,
   }));
@@ -167,8 +173,15 @@ export default function StudentAnalyticsPage() {
       </div>
 
       {/* ── Summary stat tiles ──────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 xl:grid-cols-5 gap-3">
         {([
+          {
+            label: 'Class Rank',
+            value: comparison?.rank != null
+              ? `#${comparison.rank} of ${comparison.class_size}`
+              : '—',
+            color: 'bg-emerald-500/15 text-emerald-400',
+          },
           {
             label: 'Average Score',
             value: summary.average_percentage != null ? `${summary.average_percentage}%` : '—',
@@ -232,6 +245,13 @@ export default function StudentAnalyticsPage() {
                   type="monotone" dataKey="movingAvg" stroke="#a78bfa"
                   strokeWidth={1.5} strokeDasharray="5 3" dot={false} name="movingAvg"
                 />
+                {comparison && comparison.class_size > 0 && (
+                  <Line
+                    type="monotone" dataKey="classAvg" stroke="#34d399"
+                    strokeWidth={1.5} dot={{ fill: '#34d399', r: 2.5, strokeWidth: 0 }}
+                    connectNulls name="classAvg"
+                  />
+                )}
               </LineChart>
             </ResponsiveContainer>
           ) : (
@@ -248,6 +268,12 @@ export default function StudentAnalyticsPage() {
                 <div className="w-5 h-px border-t-2 border-dashed border-violet-400" />
                 <span className="text-xs text-secondary">Moving Avg</span>
               </div>
+              {comparison && comparison.class_size > 0 && (
+                <div className="flex items-center gap-1.5">
+                  <div className="w-5 h-0.5 bg-emerald-400 rounded-full" />
+                  <span className="text-xs text-secondary">Class Avg</span>
+                </div>
+              )}
             </div>
           )}
         </div>
