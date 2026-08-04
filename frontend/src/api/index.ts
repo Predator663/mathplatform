@@ -116,6 +116,8 @@ export const studentsApi = {
   createStudent: (data: object) => api.post('/students/profiles/', data),
   updateStudent: (id: number, data: object) => api.patch(`/students/profiles/${id}/`, data),
   deleteStudent: (id: number) => api.delete(`/students/profiles/${id}/`),
+  bulkDeleteStudents: (student_ids: number[]) => api.post('/students/profiles/bulk_delete/', { student_ids }),
+  duplicateStudents: (params?: object) => api.get('/students/profiles/duplicates/', { params }),
   studentPerformance: (id: number) => api.get(`/students/profiles/${id}/performance_summary/`),
 };
 
@@ -182,6 +184,8 @@ export const reportsApi = {
     api.get(`/reports/export/exam/${examId}/csv/`, { responseType: 'blob' }),
   exportClassCsv: (classId: number) =>
     api.get(`/reports/export/classroom/${classId}/csv/`, { responseType: 'blob' }),
+  exportAtRiskPdf: (params?: object) =>
+    api.get('/reports/export/at-risk/pdf/', { params, responseType: 'blob' }),
 };
 
 // ── Peer Groups ───────────────────────────────────────────────────────────

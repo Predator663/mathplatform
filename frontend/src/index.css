@@ -155,10 +155,24 @@
 }
 
 /* Page enter animation */
-.page-enter { animation: pageEnter 0.18s ease-out; }
+.page-enter { animation: pageEnter 0.32s cubic-bezier(0.16, 1, 0.3, 1); }
 @keyframes pageEnter {
-  from { opacity: 0; transform: translateY(6px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; transform: translateY(10px) scale(0.995); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Respect reduced-motion preference: collapse entrance/hover motion to a
+   simple fade so the app stays usable for people who've asked their OS to
+   minimise animation. Framer Motion components handle their own check via
+   prefersReducedMotion in TiltCard; this covers plain CSS animations. */
+@media (prefers-reduced-motion: reduce) {
+  .page-enter { animation: none; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 /* Mobile bottom nav active */

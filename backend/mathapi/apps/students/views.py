@@ -256,9 +256,11 @@ class StreamViewSet(viewsets.ModelViewSet):
 class StudentProfileViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ['classroom', 'stream', 'is_active', 'classroom__academic_year']
+    filterset_fields = ['classroom', 'stream', 'is_active', 'classroom__academic_year',
+                         'classroom__grade_level']
     search_fields = ['user__first_name', 'user__last_name', 'user__email', 'student_id']
-    ordering_fields = ['user__last_name', 'student_id', 'enrollment_date']
+    ordering_fields = ['user__last_name', 'user__first_name', 'student_id',
+                        'enrollment_date', 'classroom__name', 'is_active']
 
     def get_permissions(self):
         # create() and bulk_import previously bypassed get_queryset() scoping
@@ -281,8 +283,10 @@ class StudentProfileViewSet(viewsets.ModelViewSet):
             return [IsTeacherOrAdmin(), TeacherFeatureEnabled('students', 'add')]
         if self.action in ['update', 'partial_update']:
             return [IsTeacherOrAdmin(), TeacherFeatureEnabled('students', 'edit')]
-        if self.action == 'destroy':
+        if self.action in ['destroy', 'bulk_delete']:
             return [IsTeacherOrAdmin(), TeacherFeatureEnabled('students', 'delete')]
+        if self.action == 'duplicates':
+            return [IsTeacherOrAdmin()]
         return [permissions.IsAuthenticated()]
 
     def get_queryset(self):
@@ -302,6 +306,91 @@ class StudentProfileViewSet(viewsets.ModelViewSet):
             return StudentCreateSerializer
         return StudentProfileSerializer
 
+    # Fields a "possible duplicate" can be matched on. `name` is a virtual
+    # key (first + last name combined) since full_name isn't a real DB
+    # column; the rest are matched on the column directly. Kept as a class
+    # attr (not a local dict in the action) so the frontend's choices and
+    # the backend's validation can't drift apart from a single glance here.
+    DUPLICATE_MATCH_FIELDS = {
+        'name': ['user__first_name', 'user__last_name'],
+        'email': ['user__email'],
+        'index_number': ['index_number'],
+        'parent_phone': ['parent_phone'],
+        'date_of_birth': ['date_of_birth'],
+    }
+
+    @action(detail=False, methods=['get'])
+    def duplicates(self, request):
+        """
+        Groups students that share the same value for `by` (default:
+        name) and returns only the groups with more than one student —
+        i.e. likely-duplicate records for a teacher/admin to review and
+        merge/delete manually. Respects the same classroom/stream/
+        active/grade-level query-param filters as the main list, and the
+        same scoping as get_queryset (a teacher only ever sees duplicates
+        within their own classrooms).
+        """
+        from django.db.models import Count, F
+        from django.db.models.functions import Lower, Trim
+
+        by = request.query_params.get('by', 'name')
+        fields = self.DUPLICATE_MATCH_FIELDS.get(by)
+        if not fields:
+            return Response(
+                {'detail': f'Unsupported "by" value. Choose one of: {", ".join(self.DUPLICATE_MATCH_FIELDS)}'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Reuse filter_queryset so classroom/stream/is_active/grade_level
+        # (and search) filters already applied on the list page carry over
+        # into the duplicate search, rather than always scanning everyone.
+        qs = self.filter_queryset(self.get_queryset())
+
+        # A shared blank value isn't a duplicate — exclude rows missing
+        # any of the match fields before grouping. DateField has no notion
+        # of an empty string (Django raises trying to parse '' as a date),
+        # so the blank-string exclude only applies to the text fields.
+        for f in fields:
+            if f != 'date_of_birth':
+                qs = qs.exclude(**{f: ''})
+            qs = qs.exclude(**{f'{f}__isnull': True})
+
+        annotations = {}
+        group_keys = []
+        for f in fields:
+            key = f'dupe_{f}'
+            # DateField has no .strip()/lower(), so only normalize text fields.
+            annotations[key] = Lower(Trim(F(f))) if f != 'date_of_birth' else F(f)
+            group_keys.append(key)
+
+        qs = qs.annotate(**annotations)
+        dupe_values = (
+            qs.values(*group_keys)
+              .annotate(count=Count('id'))
+              .filter(count__gt=1)
+              .order_by('-count')
+        )
+
+        groups = []
+        for row in dupe_values:
+            match = {k: row[k] for k in group_keys}
+            students = (
+                qs.filter(**match)
+                  .select_related('user', 'classroom__grade_level')
+                  .order_by('user__last_name', 'user__first_name')
+            )
+            students_data = StudentProfileSerializer(students, many=True).data
+            label_field = {'name': 'full_name', 'email': 'email', 'index_number': 'index_number',
+                            'parent_phone': 'parent_phone', 'date_of_birth': 'date_of_birth'}[by]
+            label = students_data[0].get(label_field, '') if students_data else ''
+            groups.append({
+                'key': label,
+                'count': row['count'],
+                'students': students_data,
+            })
+
+        return Response({'by': by, 'groups': groups})
+
     def create(self, request, *args, **kwargs):
         serializer = StudentCreateSerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
@@ -311,6 +400,23 @@ class StudentProfileViewSet(viewsets.ModelViewSet):
         if hasattr(profile, '_generated_password'):
             response_data['generated_password'] = profile._generated_password
         return Response(response_data, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=['post'])
+    def bulk_delete(self, request):
+        """Delete a batch of students (by id) in one call, for the
+        multi-select checkboxes in the student list. Reuses get_queryset()
+        so a teacher can only ever delete students in classrooms they're
+        assigned to — the same scoping the list view itself is subject to."""
+        student_ids = request.data.get('student_ids') or []
+        if not isinstance(student_ids, list) or not student_ids:
+            return Response({'detail': 'student_ids must be a non-empty list.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        qs = self.get_queryset().filter(id__in=student_ids)
+        deleted_count = qs.count()
+        if not deleted_count:
+            return Response({'detail': 'No matching students found.'}, status=status.HTTP_404_NOT_FOUND)
+        qs.delete()
+        return Response({'deleted': deleted_count})
 
     @action(detail=True, methods=['get'])
     def performance_summary(self, request, pk=None):

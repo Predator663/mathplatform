@@ -1,4 +1,4 @@
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState, useRef, useEffect } from 'react';
 import { BarChart3, Edit2, Save, X, Trash2, ToggleLeft, ToggleRight } from 'lucide-react';
@@ -20,6 +20,7 @@ interface EditForm {
 export default function StudentDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
   const canEdit = useCanManage('students', 'edit');
@@ -110,6 +111,18 @@ export default function StudentDetailPage() {
     });
     setEditing(true);
   };
+
+  // Supports the list page's per-row Edit button, which links here with
+  // ?edit=1 so the profile opens straight into edit mode instead of
+  // requiring a second click. The param is stripped once consumed so a
+  // page refresh (or hitting Cancel then reloading) doesn't reopen it.
+  useEffect(() => {
+    if (student && canEdit && searchParams.get('edit') === '1') {
+      startEdit();
+      setSearchParams({}, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [student, canEdit]);
 
   const onSubmit = (data: EditForm) => {
     updateMutation.mutate({

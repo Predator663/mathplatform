@@ -203,6 +203,12 @@ export interface StudentProfile {
   parent_phone: string; district: string; region: string;
 }
 
+export type DuplicateMatchField = 'name' | 'email' | 'index_number' | 'parent_phone' | 'date_of_birth';
+
+export interface DuplicateGroup {
+  key: string; count: number; students: StudentProfile[];
+}
+
 // ── Exams ─────────────────────────────────────────────────────────────────────
 export type ExamType =
   | 'monthly_test' | 'mid_term' | 'terminal' | 'mock'

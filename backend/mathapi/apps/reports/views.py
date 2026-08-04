@@ -3,8 +3,8 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import permissions, status
 from mathapi.apps.analytics import services
-from mathapi.apps.analytics.views import _check_student_access
-from mathapi.apps.accounts.scoping import assert_classroom_owned, scope_exams
+from mathapi.apps.analytics.views import _check_student_access, _get_subject_id, _get_stream_id
+from mathapi.apps.accounts.scoping import assert_classroom_owned, scope_exams, get_teacher_classrooms
 from mathapi.apps.accounts.models import SiteSettings
 from mathapi.apps.students.models import StudentProfile, Classroom
 from mathapi.apps.exams.models import Exam, ExamScore
@@ -12,6 +12,7 @@ from .pdf_engine import (
     generate_exam_scores_pdf,
     generate_class_report_pdf,
     generate_student_report_pdf,
+    generate_at_risk_pdf,
 )
 from .excel_engine import (
     generate_exam_scores_excel,
@@ -479,4 +480,56 @@ class AnalyticsReportExcelView(APIView):
         response['Content-Disposition'] = (
             f'attachment; filename="analytics_{cls_name}_{data["classroom"]["academic_year"]}.xlsx"'
         )
+        return response
+
+
+class AtRiskPDFView(APIView):
+    """
+    GET /api/reports/export/at-risk/pdf/
+    ?classroom_id=&threshold=&subject_id=&stream_id=
+    ?sort_by=score_asc|score_desc|name|classroom
+    ?school_name=My+School
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        classroom_id = request.query_params.get('classroom_id')
+        threshold = float(request.query_params.get('threshold', 30))
+        subject_id = _get_subject_id(request)
+        stream_id = _get_stream_id(request)
+        sort_by = request.query_params.get('sort_by', 'score_asc')
+        if sort_by not in ('score_asc', 'score_desc', 'name', 'classroom'):
+            sort_by = 'score_asc'
+        school_name = _resolve_site_name(request)
+
+        if classroom_id and user.role == 'teacher':
+            assert_classroom_owned(user, int(classroom_id))
+
+        if user.role == 'teacher' and not classroom_id:
+            classroom_ids = list(get_teacher_classrooms(user).values_list('id', flat=True))
+        else:
+            classroom_ids = [int(classroom_id)] if classroom_id else None
+
+        created_by_id = user.id if user.role == 'teacher' else None
+        students = services.get_at_risk_students(
+            classroom_ids=classroom_ids,
+            threshold=threshold,
+            subject_id=subject_id,
+            created_by_id=created_by_id,
+            stream_id=stream_id,
+        )
+
+        scope_label = 'All Classrooms' if not classroom_id else None
+        if classroom_id:
+            try:
+                scope_label = str(Classroom.objects.get(id=classroom_id))
+            except Classroom.DoesNotExist:
+                scope_label = 'Selected Classroom'
+
+        meta = {'threshold': threshold, 'scope_label': scope_label}
+        pdf_bytes = generate_at_risk_pdf(students, meta, sort_by=sort_by, school_name=school_name)
+
+        response = HttpResponse(pdf_bytes, content_type='application/pdf')
+        response['Content-Disposition'] = 'attachment; filename="at_risk_students.pdf"'
         return response

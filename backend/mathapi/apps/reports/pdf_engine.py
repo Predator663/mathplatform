@@ -1031,3 +1031,129 @@ def _std_dev_pdf(values):
         return 0
     m = sum(values) / len(values)
     return (sum((v - m) ** 2 for v in values) / len(values)) ** 0.5
+
+
+def generate_at_risk_pdf(students, meta: dict, sort_by='score_asc', school_name='School of Excellence') -> bytes:
+    """
+    Generate a PDF export of at-risk students.
+    students: list of dicts shaped like analytics.services.get_at_risk_students() output
+              (student_id, student_name, student_code, classroom, recent_average,
+               recent_scores, flags{below_threshold, declining}).
+    sort_by: 'score_asc' (most at risk first) | 'score_desc' | 'name' | 'classroom'
+    """
+    sort_map = {
+        'score_asc':  lambda s: s['recent_average'],
+        'score_desc': lambda s: -s['recent_average'],
+        'name':       lambda s: s['student_name'].lower(),
+        'classroom':  lambda s: (s['classroom'] or '').lower(),
+    }
+    rows = sorted(students, key=sort_map.get(sort_by, sort_map['score_asc']))
+
+    buf = io.BytesIO()
+    styles = _make_styles()
+
+    threshold = meta.get('threshold')
+    doc_meta = {
+        'school_name': school_name,
+        'academic_year': meta.get('academic_year', ''),
+        'doc_title': 'At-Risk Students Report',
+        'doc_subtitle': (
+            f"Scope: {meta.get('scope_label', 'All Classrooms')}  ·  "
+            f"Pass Threshold: {threshold}%  ·  "
+            f"Flagged: {len(rows)} student{'s' if len(rows) != 1 else ''}"
+        ),
+        'footer_centre': 'At-Risk Students · Analytics',
+    }
+
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=MARGIN, rightMargin=MARGIN,
+        topMargin=4.2*cm, bottomMargin=2.2*cm,
+    )
+
+    story = []
+
+    # ── Summary stats ────────────────────────────────────────────────────────
+    below = sum(1 for s in rows if s['flags']['below_threshold'])
+    declining = sum(1 for s in rows if s['flags']['declining'])
+    avg = round(sum(s['recent_average'] for s in rows) / len(rows), 1) if rows else 0
+
+    summary_items = [
+        ('FLAGGED', len(rows)),
+        ('BELOW THRESHOLD', below),
+        ('DECLINING', declining),
+        ('AVERAGE SCORE', f'{avg}%' if rows else '—'),
+    ]
+    story.append(_meta_grid(summary_items, styles))
+    story.append(Spacer(1, 0.4*cm))
+
+    # ── Students table ───────────────────────────────────────────────────────
+    sort_label = {
+        'score_asc': 'Sorted by Recent Average (Lowest → Highest)',
+        'score_desc': 'Sorted by Recent Average (Highest → Lowest)',
+        'name': 'Sorted by Name',
+        'classroom': 'Sorted by Classroom',
+    }.get(sort_by, '')
+
+    story.append(Paragraph(
+        f'Flagged Students  <font color="#6b7280" size="8">({sort_label})</font>',
+        styles['section'],
+    ))
+
+    if not rows:
+        story.append(Spacer(1, 0.3*cm))
+        story.append(Paragraph('No students are currently flagged as at-risk for this scope.', styles['body']))
+    else:
+        col_w = [(PAGE_W - 2*MARGIN) * p for p in [0.05, 0.13, 0.24, 0.18, 0.11, 0.14, 0.15]]
+        headers = ['#', 'ID', 'Student Name', 'Classroom', 'Avg %', 'Trend', 'Flags']
+        table_data = [headers]
+
+        for rank, s in enumerate(rows, 1):
+            scores = s['recent_scores']
+            trend = ' → '.join(str(p) for p in reversed(scores)) if scores else '—'
+            flags = []
+            if s['flags']['below_threshold']:
+                flags.append(f'Below {threshold}%')
+            if s['flags']['declining']:
+                flags.append('Declining')
+            table_data.append([
+                str(rank),
+                s['student_code'],
+                s['student_name'],
+                s['classroom'] or '—',
+                f"{s['recent_average']}%",
+                trend,
+                ', '.join(flags) if flags else '—',
+            ])
+
+        tbl = Table(table_data, colWidths=col_w, repeatRows=1)
+
+        row_styles = [
+            ('BACKGROUND', (0,0), (-1,0), BRAND_ROSE),
+            ('TEXTCOLOR', (0,0), (-1,0), WHITE),
+            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0,0), (-1,0), 8),
+            ('FONTSIZE', (0,1), (-1,-1), 8),
+            ('FONTNAME', (0,1), (-1,-1), 'Helvetica'),
+            ('ROWBACKGROUNDS', (0,1), (-1,-1), [WHITE, BRAND_LIGHT]),
+            ('GRID', (0,0), (-1,-1), 0.3, colors.HexColor('#e5e7eb')),
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+            ('TOPPADDING', (0,0), (-1,-1), 4),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+            ('LEFTPADDING', (0,0), (-1,-1), 5),
+            ('ALIGN', (0,0), (0,-1), 'CENTER'),
+            ('ALIGN', (4,0), (4,-1), 'CENTER'),
+            ('FONTSIZE', (5,1), (5,-1), 7),
+        ]
+
+        # Colour the average column by risk severity
+        for i, s in enumerate(rows, 1):
+            row_styles.append(('TEXTCOLOR', (4, i), (4, i), _grade_color(s['recent_average'])))
+            row_styles.append(('FONTNAME', (4, i), (4, i), 'Helvetica-Bold'))
+
+        tbl.setStyle(TableStyle(row_styles))
+        story.append(tbl)
+
+    doc.build(story, onFirstPage=lambda c, d: _header_footer(c, d, doc_meta),
+              onLaterPages=lambda c, d: _header_footer(c, d, doc_meta))
+    return buf.getvalue()

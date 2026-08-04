@@ -6,6 +6,8 @@ export { Pagination } from './Pagination';
 export { default as ThemeToggle } from './ThemeToggle';
 export { SearchableSelect } from './SearchableSelect';
 export type { SearchableSelectOption } from './SearchableSelect';
+export { TiltCard } from './TiltCard';
+export { Reveal } from './Reveal';
 
 // ── Spinner ───────────────────────────────────────────────────────────────────
 export function Spinner({ className }: { className?: string }) {

@@ -10,6 +10,7 @@ urlpatterns = [
     path('export/exam/<int:exam_id>/pdf/', views.ExamScoresPDFView.as_view(), name='exam_pdf'),
     path('export/classroom/<int:classroom_id>/pdf/', views.ClassReportPDFView.as_view(), name='class_pdf'),
     path('export/student/<int:student_id>/pdf/', views.StudentReportPDFView.as_view(), name='student_pdf'),
+    path('export/at-risk/pdf/', views.AtRiskPDFView.as_view(), name='at_risk_pdf'),
 
     # Excel exports
     path('export/exam/<int:exam_id>/excel/', views.ExamScoresExcelView.as_view(), name='exam_excel'),

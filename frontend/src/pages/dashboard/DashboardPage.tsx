@@ -4,8 +4,9 @@ import {
   Users, BookOpen, AlertTriangle, TrendingUp, ArrowRight,
   Award, School, Target, Zap, Activity, BarChart2, Shield,
 } from 'lucide-react';
+import { motion } from 'framer-motion';
 import { analyticsApi } from '../../api';
-import { LoadingPage } from '../../components/ui';
+import { LoadingPage, TiltCard, Reveal } from '../../components/ui';
 import { formatDate, EXAM_TYPE_LABELS, TERM_LABELS } from '../../utils';
 import { useAuthStore } from '../../store/auth';
 import { useSubjectStore } from '../../store/subject';
@@ -205,7 +206,12 @@ export default function DashboardPage() {
     <div className="flex flex-col gap-5">
 
       {/* ── Header ────────────────────────────────────────────────── */}
-      <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-2">
+      <motion.div
+        className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-2"
+        initial={{ opacity: 0, y: -8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+      >
         <div>
           <h1 className="page-title">
             Good {getGreeting()},{' '}
@@ -224,7 +230,7 @@ export default function DashboardPage() {
             </div>
           </div>
         )}
-      </div>
+      </motion.div>
 
       {/* ── Stat tiles ────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
@@ -233,22 +239,27 @@ export default function DashboardPage() {
           { label: 'Exams', value: data?.total_exams ?? 0, sub: 'All terms', color: '#8b5cf6', icon: <BookOpen size={16} />, glow: 'shadow-violet-500/10' },
           { label: 'Pass Rate', value: null, pct: avg, sub: 'Overall', color: avg >= 50 ? '#10b981' : '#f59e0b', icon: <Target size={16} />, glow: 'shadow-emerald-500/10' },
           { label: 'At Risk', value: data?.at_risk_count ?? 0, sub: 'Need attention', color: '#f43f5e', icon: <AlertTriangle size={16} />, glow: 'shadow-rose-500/10' },
-        ].map(({ label, value, pct, sub, color, icon, glow }) => (
-          <div key={label} className={`card p-4 border transition-all hover:shadow-lg ${glow} group`}
-            style={{ borderColor: `${color}22` }}>
-            <div className="flex items-center justify-between mb-3">
-              <p className="text-xs text-secondary font-display font-semibold uppercase tracking-wider">{label}</p>
-              <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ backgroundColor: `${color}20`, color }}>
-                {icon}
+        ].map(({ label, value, pct, sub, color, icon, glow }, i) => (
+          <Reveal key={label} index={i}>
+            <TiltCard
+              className={`p-4 border transition-shadow hover:shadow-lg ${glow}`}
+              style={{ borderColor: `${color}22` }}
+              maxTilt={6}
+            >
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-xs text-secondary font-display font-semibold uppercase tracking-wider">{label}</p>
+                <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ backgroundColor: `${color}20`, color }}>
+                  {icon}
+                </div>
               </div>
-            </div>
-            <p className="font-display font-black text-2xl sm:text-3xl text-primary leading-none" style={{ color }}>
-              {pct != null
-                ? <AnimatedNumber value={pct} decimals={1} suffix="%" />
-                : <AnimatedNumber value={value ?? 0} />}
-            </p>
-            <p className="text-xs text-secondary mt-1">{sub}</p>
-          </div>
+              <p className="font-display font-black text-2xl sm:text-3xl text-primary leading-none" style={{ color }}>
+                {pct != null
+                  ? <AnimatedNumber value={pct} decimals={1} suffix="%" />
+                  : <AnimatedNumber value={value ?? 0} />}
+              </p>
+              <p className="text-xs text-secondary mt-1">{sub}</p>
+            </TiltCard>
+          </Reveal>
         ))}
       </div>
 
