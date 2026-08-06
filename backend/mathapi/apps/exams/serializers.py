@@ -33,18 +33,42 @@ class ExamSerializer(serializers.ModelSerializer):
     subject_name       = serializers.CharField(source='subject.name', read_only=True)
     subject_code       = serializers.CharField(source='subject.code', read_only=True)
     subject_color      = serializers.CharField(source='subject.color', read_only=True)
+    # Exams can span several classrooms (and the same exam title can recur
+    # across classes/subjects), so the list view needs more than raw IDs to
+    # tell two similarly-named exams apart at a glance.
+    classroom_details   = serializers.SerializerMethodField()
+    classroom_names     = serializers.SerializerMethodField()
 
     class Meta:
         model = Exam
         fields = [
             'id', 'title', 'exam_type', 'term', 'academic_year', 'exam_date',
             'max_score', 'passing_score', 'passing_percentage', 'classrooms',
+            'classroom_names', 'classroom_details',
             'topic_weights', 'created_by', 'created_by_name', 'description',
             'is_published', 'created_at', 'updated_at', 'score_count',
             'average_score', 'pass_rate',
             'subject', 'subject_name', 'subject_code', 'subject_color',
         ]
         read_only_fields = ['created_by', 'created_at', 'updated_at', 'is_deleted']
+
+    def _classrooms(self, obj):
+        # classrooms is prefetch_related() in the viewset, so .all() here
+        # hits the prefetch cache rather than issuing a fresh query per exam.
+        return list(obj.classrooms.all())
+
+    def get_classroom_names(self, obj):
+        return [c.name for c in self._classrooms(obj)]
+
+    def get_classroom_details(self, obj):
+        details = []
+        for c in self._classrooms(obj):
+            try:
+                short = c.grade_level.short_name if c.grade_level_id else ''
+            except Exception:
+                short = ''
+            details.append({'id': c.id, 'name': c.name, 'grade_level_short': short})
+        return details
 
     def _present_scores(self, obj):
         """Return present (non-absent) scores, using the prefetch cache when available."""

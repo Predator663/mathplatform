@@ -142,6 +142,12 @@ export const examsApi = {
   scoreHistory: (scoreId: number) => api.get(`/exams/scores/${scoreId}/history/`),
   scoresTemplate: (examId: number) =>
     api.get(`/exams/exams/${examId}/scores_template/`, { responseType: 'blob' }),
+  // Export the *exam list* (whatever search/filter/ordering is active),
+  // not an individual exam's scores — see reportsApi for the latter.
+  exportExamsCsv: (params?: object) =>
+    api.get('/exams/exams/export-csv/', { params, responseType: 'blob' }),
+  exportExamsExcel: (params?: object) =>
+    api.get('/exams/exams/export-excel/', { params, responseType: 'blob' }),
 };
 
 // ── Analytics ─────────────────────────────────────────────────────────────

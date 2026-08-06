@@ -228,11 +228,18 @@ export interface ExamTopicWeight {
   topic_color: string; max_marks: number; weight_percentage: number;
 }
 
+export interface ExamClassroomDetail {
+  id: number; name: string; grade_level_short: string;
+}
+
 export interface Exam {
   id: number; title: string; exam_type: ExamType; term: TermType;
   academic_year: string; exam_date: string; max_score: number;
   passing_score: number; passing_percentage: number;
   classrooms: number[]; topic_weights: ExamTopicWeight[];
+  // Present on list/detail reads; absent from create/update payloads and
+  // the offline cache reconstruction — treat as optional everywhere.
+  classroom_names?: string[]; classroom_details?: ExamClassroomDetail[];
   created_by: number; created_by_name: string; description: string;
   is_published: boolean; created_at: string; updated_at: string;
   score_count: number; average_score: number | null; pass_rate: number | null;

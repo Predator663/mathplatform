@@ -4,10 +4,12 @@ import { useQuery } from '@tanstack/react-query';
 import Sidebar from './Sidebar';
 import MobileNav from './MobileNav';
 import ErrorBoundary from '../ErrorBoundary';
-import { Menu, Bell } from 'lucide-react';
+import CommandPalette, { openCommandPalette } from '../command/CommandPalette';
+import { Menu, Bell, Search } from 'lucide-react';
 import { useSiteSettingsStore } from '../../store/siteSettings';
 import ThemeToggle from '../ui/ThemeToggle';
 import api, { notificationsApi } from '../../api';
+import { recordRecentPage } from '../../lib/commandNav';
 
 export default function AppLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -41,6 +43,9 @@ export default function AppLayout() {
   // Close drawer on route change
   useEffect(() => { setSidebarOpen(false); }, [location.pathname]);
 
+  // Remember top-level page visits for the command palette's "Recent" section
+  useEffect(() => { recordRecentPage(location.pathname); }, [location.pathname]);
+
   // Close on escape
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') setSidebarOpen(false); };
@@ -53,6 +58,7 @@ export default function AppLayout() {
 
   return (
     <div className="flex h-screen overflow-hidden" style={{backgroundColor: 'var(--bg-950)', color: 'var(--text-primary)'}}>
+      <CommandPalette />
       {/* Desktop sidebar */}
       <div className="hidden lg:block flex-shrink-0">
         <Sidebar />
@@ -100,6 +106,13 @@ export default function AppLayout() {
               </span>
             )}
           </Link>
+          <button
+            onClick={openCommandPalette}
+            className="p-2 text-secondary hover:text-primary transition-colors rounded-xl hover:bg-surface-700"
+            aria-label="Search"
+          >
+            <Search size={18} />
+          </button>
           <ThemeToggle />
         </div>
 

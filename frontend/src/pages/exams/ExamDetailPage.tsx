@@ -12,7 +12,7 @@ import { useAuthStore } from '../../store/auth';
 import { useCanManage } from '../../hooks/useCanManage';
 import type { Exam, ExamScore } from '../../types';
 import toast from 'react-hot-toast';
-import { Download, Edit, Send, Clock, Trash2 } from 'lucide-react';
+import { Download, Edit, Send, Clock, Trash2, GraduationCap } from 'lucide-react';
 
 interface ExamStats {
   exam_id: number;
@@ -148,12 +148,38 @@ export default function ExamDetailPage() {
           </div>
           <h1 className="page-title break-words">{exam.title}</h1>
           <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+            {exam.subject_name && (
+              <span
+                className="badge border"
+                style={{
+                  backgroundColor: `${exam.subject_color || '#6366f1'}22`,
+                  color: exam.subject_color || '#6366f1',
+                  borderColor: `${exam.subject_color || '#6366f1'}44`,
+                }}
+              >
+                {exam.subject_code || exam.subject_name}
+              </span>
+            )}
             <span className="badge badge-violet">{EXAM_TYPE_LABELS[exam.exam_type]}</span>
             <span className="badge badge-blue">{TERM_LABELS[exam.term]}</span>
             <span className={`badge ${exam.is_published ? 'badge-green' : 'badge-amber'}`}>
               {exam.is_published ? 'Published' : 'Draft'}
             </span>
             <span className="text-muted text-xs">{formatDate(exam.exam_date)}</span>
+          </div>
+          {/* Which class(es) this exam belongs to — the same exam title can
+              recur across classes, so this is the disambiguator. */}
+          <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+            <GraduationCap size={13} className="text-secondary flex-shrink-0" />
+            {(exam.classroom_details?.length ?? 0) > 0 ? (
+              exam.classroom_details!.map(c => (
+                <span key={c.id} className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-display font-medium bg-surface-700 text-secondary border border-surface">
+                  {c.name}{c.grade_level_short ? ` · ${c.grade_level_short}` : ''}
+                </span>
+              ))
+            ) : (
+              <span className="text-muted text-xs">No classroom assigned</span>
+            )}
           </div>
           {!exam.is_published && !isAdmin && (
             <div className="flex items-center gap-1.5 mt-2 text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-lg px-2.5 py-1.5 w-fit">
@@ -280,6 +306,8 @@ export default function ExamDetailPage() {
           <h2 className="section-title mb-4">Exam Details</h2>
           <dl className="flex flex-col gap-3">
             {[
+              { dt: 'Subject', dd: exam.subject_name || '—' },
+              { dt: 'Classrooms', dd: exam.classroom_names?.length ? exam.classroom_names.join(', ') : 'None assigned' },
               { dt: 'Academic Year', dd: exam.academic_year },
               { dt: 'Max Score', dd: exam.max_score },
               { dt: 'Passing Score', dd: `${exam.passing_score} (${exam.passing_percentage}%)` },
