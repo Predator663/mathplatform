@@ -1,0 +1,12 @@
+{{ report_title }}
+{{ platform_name }} · generated {{ generated_at_display }} · triggered by {{ triggered_by }}
+
+{% for stat in stats %}{{ stat.label }}: {{ stat.value }}
+{% endfor %}
+{% if at_risk_rows %}
+At-risk students (top {{ at_risk_rows|length }}):
+{% for row in at_risk_rows %}  - {{ row.student_name }} ({{ row.student_code }}) — {{ row.classroom|default:"—" }} — avg {{ row.recent_average }}%
+{% endfor %}{% endif %}
+Open the full dashboard at {{ platform_name }} for the complete breakdown.
+
+{{ footer_text }}

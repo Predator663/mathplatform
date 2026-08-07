@@ -78,17 +78,12 @@ class ExamViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         from django.db.models import Prefetch
-        from mathapi.apps.students.models import Classroom
         present_scores = ExamScore.objects.filter(is_absent=False)
-        # select_related('grade_level') on the classrooms prefetch avoids an
-        # N+1 query per exam when the serializer's classroom_details field
-        # reads classroom.grade_level.short_name for each classroom.
-        classrooms_qs = Classroom.objects.select_related('grade_level')
         return scope_exams(
             self.request.user,
             Exam.objects.prefetch_related(
                 'topic_weights__topic',
-                Prefetch('classrooms', queryset=classrooms_qs),
+                'classrooms',
                 Prefetch('scores', queryset=present_scores, to_attr='present_scores'),
             ).select_related('subject', 'created_by'),
         )
@@ -128,15 +123,13 @@ class ExamViewSet(viewsets.ModelViewSet):
         place deleted rows are meant to become visible again, so admins can
         see what's sitting in the trash before permanently clearing it."""
         from django.db.models import Prefetch
-        from mathapi.apps.students.models import Classroom
         present_scores = ExamScore.objects.filter(is_absent=False)
-        classrooms_qs = Classroom.objects.select_related('grade_level')
         qs = (
             Exam.objects
             .filter(is_deleted=True)
             .select_related('subject', 'created_by')
             .prefetch_related(
-                Prefetch('classrooms', queryset=classrooms_qs),
+                'classrooms',
                 Prefetch('scores', queryset=present_scores, to_attr='present_scores'),
             )
             .order_by('-updated_at')
@@ -210,13 +203,10 @@ class ExamViewSet(viewsets.ModelViewSet):
         from mathapi.apps.accounts.permissions import IsAdminRole
         if request.user.role != 'super_admin':
             return Response({'detail': 'Admin access required.'}, status=status.HTTP_403_FORBIDDEN)
-        from django.db.models import Prefetch
-        from mathapi.apps.students.models import Classroom
-        classrooms_qs = Classroom.objects.select_related('grade_level')
         qs = (
             Exam.objects
             .filter(is_published=False, is_deleted=False)
-            .prefetch_related(Prefetch('classrooms', queryset=classrooms_qs), 'topic_weights__topic')
+            .prefetch_related('classrooms', 'topic_weights__topic')
             .select_related('subject', 'created_by')
             .order_by('-created_at')
         )
@@ -471,74 +461,6 @@ class ExamViewSet(viewsets.ModelViewSet):
             'pass_rate': round((len(passed) / len(score_values)) * 100, 1),
             'distribution': buckets,
         })
-
-    @action(detail=False, methods=['get'], url_path='export-csv')
-    def export_csv(self, request):
-        """Export the *exam list* (not scores) currently in view — respects
-        whatever search/filter/ordering params are active, via
-        filter_queryset(), so what downloads matches what's on screen."""
-        qs = self.filter_queryset(self.get_queryset())
-        output = io.StringIO()
-        writer = csv.writer(output)
-        writer.writerow([
-            'Title', 'Subject', 'Classrooms', 'Type', 'Term', 'Academic Year',
-            'Exam Date', 'Max Score', 'Passing Score', 'Status',
-            'Students Scored', 'Average %', 'Pass Rate %', 'Created By', 'Created At',
-        ])
-        for exam in qs:
-            present = getattr(exam, 'present_scores', None)
-            if present is None:
-                present = list(exam.scores.filter(is_absent=False))
-            avg = None
-            pass_rate = None
-            if present:
-                total = sum(float(s.score) for s in present)
-                avg = round((total / len(present) / float(exam.max_score)) * 100, 1)
-                passed = sum(1 for s in present if float(s.score) >= float(exam.passing_score))
-                pass_rate = round((passed / len(present)) * 100, 1)
-            writer.writerow([
-                exam.title,
-                exam.subject.name if exam.subject_id else '',
-                ', '.join(c.name for c in exam.classrooms.all()),
-                exam.get_exam_type_display(),
-                exam.get_term_display(),
-                exam.academic_year,
-                exam.exam_date.strftime('%Y-%m-%d'),
-                exam.max_score,
-                exam.passing_score,
-                'Published' if exam.is_published else 'Draft',
-                len(present),
-                avg if avg is not None else '',
-                pass_rate if pass_rate is not None else '',
-                exam.created_by.get_full_name() if exam.created_by_id else '',
-                exam.created_at.strftime('%Y-%m-%d %H:%M') if exam.created_at else '',
-            ])
-
-        from django.http import HttpResponse
-        response = HttpResponse(output.getvalue(), content_type='text/csv')
-        response['Content-Disposition'] = 'attachment; filename="exams_export.csv"'
-        return response
-
-    @action(detail=False, methods=['get'], url_path='export-excel')
-    def export_excel(self, request):
-        """Same filtered exam list as export_csv, but as a styled workbook
-        via the shared reports excel_engine (branded header, colour-coded
-        pass/fail, auto-fit columns) — matching the look of every other
-        export in the platform."""
-        from django.http import HttpResponse
-        from mathapi.apps.accounts.models import SiteSettings
-        from mathapi.apps.reports.excel_engine import generate_exams_list_excel
-
-        qs = self.filter_queryset(self.get_queryset())
-        school_name = request.query_params.get('school_name') or SiteSettings.get().platform_name
-        data = generate_exams_list_excel(list(qs), school_name=school_name)
-
-        response = HttpResponse(
-            data,
-            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        )
-        response['Content-Disposition'] = 'attachment; filename="exams_export.xlsx"'
-        return response
 
 
 class ExamScoreViewSet(viewsets.ModelViewSet):

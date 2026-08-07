@@ -5,6 +5,7 @@ import { useSiteSettings } from './hooks/useSiteSettings';
 import AppLayout from './components/layout/AppLayout';
 import OfflineIndicator from './components/offline/OfflineIndicator';
 import InstallBanner from './components/offline/InstallBanner';
+import CommandPalette from './components/command-palette/CommandPalette';
 
 // Pages
 import LoginPage from './pages/auth/LoginPage';
@@ -60,6 +61,7 @@ function RequireAdmin({ children }: { children: React.ReactNode }) {
 export default function App() {
   // Bootstrap site settings globally on first load (public endpoint, no auth needed)
   useSiteSettings();
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
 
   return (
     <BrowserRouter>
@@ -67,6 +69,8 @@ export default function App() {
       <SyncProvider>
         <OfflineIndicator />
         <InstallBanner />
+        {/* Site-wide command palette — Ctrl/Cmd+Shift+K from anywhere once signed in */}
+        {isAuthenticated && <CommandPalette />}
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/privacy-policy" element={<PrivacyPolicyPage />} />

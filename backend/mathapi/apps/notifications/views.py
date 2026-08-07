@@ -170,3 +170,45 @@ class TestEmailView(APIView):
             {'detail': f'Sending failed: {error_detail}'},
             status=status.HTTP_502_BAD_GATEWAY,
         )
+
+
+class SendAnalyticsReportView(APIView):
+    """
+    Teacher/admin: emails an analytics report (overview / at-risk / class
+    performance) to an arbitrary list of email addresses — not required
+    to be platform users. Powers the command palette's `analytics send`
+    command, but is a plain REST endpoint so it's usable from anywhere.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        if request.user.role not in ('teacher', 'super_admin'):
+            return Response({'detail': 'Only teachers and administrators can send analytics reports.'}, status=status.HTTP_403_FORBIDDEN)
+
+        recipients = request.data.get('recipients')
+        report_type = request.data.get('report_type', 'overview')
+        classroom_id = request.data.get('classroom_id')
+
+        if not isinstance(recipients, list) or not recipients:
+            return Response({'detail': 'recipients must be a non-empty list of email addresses.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        from django.core.validators import validate_email
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        invalid = []
+        for addr in recipients:
+            try:
+                validate_email((addr or '').strip())
+            except DjangoValidationError:
+                invalid.append(addr)
+        if invalid:
+            return Response({'detail': f'Invalid email address(es): {", ".join(map(str, invalid))}'}, status=status.HTTP_400_BAD_REQUEST)
+
+        result = services.send_analytics_report(
+            sender=request.user,
+            recipient_emails=recipients,
+            report_type=report_type,
+            classroom_id=classroom_id,
+        )
+        if result.get('sent'):
+            return Response(result)
+        return Response({'detail': result.get('error', 'Failed to send report.')}, status=status.HTTP_400_BAD_REQUEST)

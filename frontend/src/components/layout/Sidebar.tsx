@@ -12,7 +12,6 @@ import toast from 'react-hot-toast';
 import { cn } from '../../utils';
 import ThemeToggle from '../ui/ThemeToggle';
 import SubjectSwitcher from './SubjectSwitcher';
-import { CommandPaletteTrigger } from '../command/CommandPalette';
 
 const navItems = [
   { to: '/dashboard',  icon: LayoutDashboard, label: 'Dashboard',   pageKey: 'dashboard' },
@@ -126,11 +125,6 @@ export default function Sidebar({ onClose }: SidebarProps) {
             <X size={18} />
           </button>
         )}
-      </div>
-
-      {/* Search / Command Palette trigger */}
-      <div className="px-3 pt-3">
-        <CommandPaletteTrigger />
       </div>
 
       {/* Subject Switcher */}

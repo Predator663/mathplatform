@@ -106,9 +106,45 @@ class NotificationLog(models.Model):
         db_table = 'notification_logs'
         ordering = ['-sent_at']
         indexes = [
-            models.Index(fields=['recipient', 'sent_at']),
-            models.Index(fields=['category', 'related_object_type', 'related_object_id', 'sent_at']),
+            models.Index(fields=['recipient', 'sent_at'], name='notif_log_recipient_sent_idx'),
+            models.Index(fields=['category', 'related_object_type', 'related_object_id', 'sent_at'], name='notif_log_dedupe_idx'),
         ]
 
     def __str__(self):
         return f'{self.category} → {self.recipient.email} ({self.status})'
+
+
+class AnalyticsReportLog(models.Model):
+    """
+    Audit trail for ad-hoc analytics reports emailed out via the command
+    palette's `analytics send` command. Deliberately separate from
+    NotificationLog: that model's `recipient` is a required FK to a
+    platform User (it powers per-user preferences/cooldowns/in-app
+    history), whereas a report can be sent to any email address —
+    a director, a parent not yet in the system, etc.
+    """
+    class Status(models.TextChoices):
+        SENT   = 'sent', 'Sent'
+        FAILED = 'failed', 'Failed'
+
+    class ReportType(models.TextChoices):
+        OVERVIEW = 'overview', 'Platform Overview'
+        AT_RISK  = 'at-risk', 'At-Risk Students'
+        CLASS    = 'class', 'Class Performance'
+
+    sender      = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+                                     related_name='analytics_reports_sent')
+    recipients  = models.JSONField(default=list, help_text='Raw email addresses the report was sent to')
+    report_type = models.CharField(max_length=20, choices=ReportType.choices)
+    classroom   = models.ForeignKey('students.Classroom', on_delete=models.SET_NULL, null=True, blank=True)
+
+    status        = models.CharField(max_length=10, choices=Status.choices, default=Status.SENT)
+    error_message = models.TextField(blank=True)
+    sent_at       = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'analytics_report_logs'
+        ordering = ['-sent_at']
+
+    def __str__(self):
+        return f'{self.report_type} → {len(self.recipients)} recipient(s) ({self.status})'

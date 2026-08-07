@@ -555,3 +555,127 @@ def send_daily_digest() -> int:
         ))
 
     return sent
+
+
+# ── Ad-hoc analytics reports (command palette: `analytics send`) ───────────
+
+ANALYTICS_REPORT_TYPES = ('overview', 'at-risk', 'class')
+
+
+def _build_analytics_report_context(report_type: str, classroom=None) -> dict | None:
+    """Gathers the data + display context for one report type. Reuses the
+    exact same analytics.services functions the dashboard pages call, so
+    a report never drifts from what's shown on-screen. Returns None for
+    an unknown type or a `class` report with no resolvable classroom."""
+    if report_type == 'overview':
+        at_risk = analytics_services.get_at_risk_students()
+        total_students = StudentProfile.objects.filter(is_active=True).count()
+        total_classrooms = Classroom.objects.count()
+        return {
+            'report_title': 'Platform Analytics Overview',
+            'stats': [
+                {'label': 'Active students', 'value': str(total_students)},
+                {'label': 'At-risk students', 'value': str(len(at_risk))},
+                {'label': 'Classrooms tracked', 'value': str(total_classrooms)},
+            ],
+            'at_risk_rows': at_risk[:10],
+            'classroom_name': None,
+        }
+
+    if report_type == 'at-risk':
+        at_risk = analytics_services.get_at_risk_students(classroom_ids=classroom.id if classroom else None)
+        return {
+            'report_title': f'At-Risk Students — {classroom}' if classroom else 'At-Risk Students — All Classrooms',
+            'stats': [{'label': 'At-risk students', 'value': str(len(at_risk))}],
+            'at_risk_rows': at_risk[:25],
+            'classroom_name': str(classroom) if classroom else None,
+        }
+
+    if report_type == 'class':
+        if not classroom:
+            return None
+        data = analytics_services.get_class_analytics(classroom.id)
+        if not data:
+            return None
+        avg = data.get('overall_average')
+        return {
+            'report_title': f'Class Performance — {classroom}',
+            'stats': [
+                {'label': 'Overall average', 'value': f"{avg}%" if avg is not None else '—'},
+                {'label': 'Students ranked', 'value': str(len(data.get('student_rankings') or []))},
+                {'label': 'At-risk in class', 'value': str(len(data.get('at_risk_students') or []))},
+                {'label': 'Weak topics flagged', 'value': str(data.get('weak_topic_count', 0))},
+            ],
+            'at_risk_rows': [],
+            'classroom_name': str(classroom),
+        }
+
+    return None
+
+
+def send_analytics_report(*, sender, recipient_emails: list, report_type: str, classroom_id: int = None) -> dict:
+    """
+    Ad-hoc report send — powers the command palette's flagship
+    `analytics send --to <emails> --report <type>` command. Deliberately
+    separate from send_notification(): recipients here are raw email
+    addresses (not required to be platform Users), there's no
+    preference/cooldown check, and every attempt is logged to
+    AnalyticsReportLog rather than NotificationLog.
+    """
+    from .models import AnalyticsReportLog
+
+    if report_type not in ANALYTICS_REPORT_TYPES:
+        return {'sent': False, 'error': f'Unknown report type "{report_type}". Choose one of: {", ".join(ANALYTICS_REPORT_TYPES)}.'}
+
+    recipient_emails = [e.strip() for e in recipient_emails if e and e.strip()]
+    if not recipient_emails:
+        return {'sent': False, 'error': 'No valid recipient email addresses given.'}
+
+    classroom = None
+    if classroom_id:
+        classroom = Classroom.objects.filter(id=classroom_id).first()
+        if not classroom:
+            return {'sent': False, 'error': f'Classroom {classroom_id} not found.'}
+
+    context = _build_analytics_report_context(report_type, classroom)
+    if context is None:
+        return {'sent': False, 'error': '"class" reports require a valid --classroom.'}
+
+    site = SiteSettings.get()
+    subject = f"{site.platform_name} — {context['report_title']} ({timezone.now().strftime('%d %b %Y')})"
+    full_context = {
+        **context,
+        'subject': subject,
+        'platform_name': site.platform_name,
+        'logo_url': site.logo_url,
+        'logo_letter': site.logo_letter,
+        'footer_text': site.footer_text,
+        'generated_at_display': timezone.now().strftime('%d %b %Y, %H:%M'),
+        'triggered_by': sender.get_full_name() or sender.email,
+    }
+
+    try:
+        html_body = render_to_string('notifications/analytics_report.html', full_context)
+        text_body = render_to_string('notifications/analytics_report.txt', full_context)
+        # BCC keeps the recipient list private from one another for a
+        # broadcast like this; the sender gets a `to` copy for their records.
+        msg = EmailMultiAlternatives(
+            subject, text_body, settings.DEFAULT_FROM_EMAIL,
+            to=[sender.email] if sender.email else [settings.DEFAULT_FROM_EMAIL],
+            bcc=recipient_emails,
+        )
+        msg.attach_alternative(html_body, 'text/html')
+        msg.send(fail_silently=False)
+    except Exception as exc:
+        AnalyticsReportLog.objects.create(
+            sender=sender, recipients=recipient_emails, report_type=report_type,
+            classroom=classroom, status=AnalyticsReportLog.Status.FAILED,
+            error_message=str(exc)[:2000],
+        )
+        return {'sent': False, 'error': str(exc)}
+
+    AnalyticsReportLog.objects.create(
+        sender=sender, recipients=recipient_emails, report_type=report_type,
+        classroom=classroom, status=AnalyticsReportLog.Status.SENT,
+    )
+    return {'sent': True, 'recipient_count': len(recipient_emails), 'report_title': context['report_title']}
