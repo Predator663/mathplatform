@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ShieldCheck, ArrowUpRight, Zap, Users } from 'lucide-react';
 import { analyticsApi, studentsApi } from '../../api';
-import { LoadingPage, EmptyState, Select } from '../../components/ui';
+import { LoadingPage, EmptyState, Select, Pagination } from '../../components/ui';
+import { useSiteSettingsStore } from '../../store/siteSettings';
 import { useSubjectStore } from '../../store/subject';
 import { formatDate } from '../../utils';
 import type { IntegrityFlags, Classroom, PaginatedResponse, Stream } from '../../types';
@@ -10,7 +11,12 @@ import type { IntegrityFlags, Classroom, PaginatedResponse, Stream } from '../..
 export default function IntegrityPage() {
   const [selectedClass, setSelectedClass] = useState<number | null>(null);
   const [streamId, setStreamId] = useState('');
+  const [crossingsPage, setCrossingsPage] = useState(1);
+  const [jumpsPage, setJumpsPage] = useState(1);
+  const [editorsPage, setEditorsPage] = useState(1);
   const { activeSubjectId } = useSubjectStore();
+  const { getPage } = useSiteSettingsStore();
+  const pageSize = getPage('exams').page_size;
 
   const { data: classroomsData } = useQuery<PaginatedResponse<Classroom> | Classroom[]>({
     queryKey: ['classrooms', activeSubjectId],
@@ -41,6 +47,21 @@ export default function IntegrityPage() {
   const largeJumps = data?.large_jumps ?? [];
   const editorRates = data?.editor_rates ?? [];
 
+  const pageSlice = <T,>(items: T[], page: number) => items.slice((page - 1) * pageSize, page * pageSize);
+  const visibleCrossings = pageSlice(boundaryCrossings, crossingsPage);
+  const visibleJumps = pageSlice(largeJumps, jumpsPage);
+  const visibleEditors = pageSlice(editorRates, editorsPage);
+
+  const handleClassroomChange = (val: number | null) => {
+    setSelectedClass(val);
+    setStreamId('');
+    setCrossingsPage(1); setJumpsPage(1); setEditorsPage(1);
+  };
+  const handleStreamChange = (val: string) => {
+    setStreamId(val);
+    setCrossingsPage(1); setJumpsPage(1); setEditorsPage(1);
+  };
+
   return (
     <div className="flex flex-col gap-4 md:gap-5 page-enter">
       <div>
@@ -63,7 +84,7 @@ export default function IntegrityPage() {
               ...classrooms.map(c => ({ value: c.id, label: `${c.name}${c.grade_level_name ? ` — ${c.grade_level_name}` : ''}` })),
             ]}
             value={selectedClass ?? ''}
-            onChange={e => { setSelectedClass(e.target.value ? Number(e.target.value) : null); setStreamId(''); }}
+            onChange={e => handleClassroomChange(e.target.value ? Number(e.target.value) : null)}
           />
         </div>
         {streams.length > 0 && (
@@ -72,7 +93,7 @@ export default function IntegrityPage() {
               label="Stream"
               options={[{ value: '', label: 'All Streams' }, ...streams.map(s => ({ value: s.id, label: `Stream ${s.name}` }))]}
               value={streamId}
-              onChange={e => setStreamId(e.target.value)}
+              onChange={e => handleStreamChange(e.target.value)}
             />
           </div>
         )}
@@ -107,7 +128,7 @@ export default function IntegrityPage() {
               <p className="text-muted text-sm text-center py-6">No fail→pass edits found.</p>
             ) : (
               <div className="flex flex-col gap-2">
-                {boundaryCrossings.map(e => (
+                {visibleCrossings.map(e => (
                   <div key={e.edit_id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 rounded-xl bg-surface-900">
                     <div className="min-w-0">
                       <p className="text-sm font-display font-medium text-primary">{e.student_name} — {e.exam_title}</p>
@@ -121,6 +142,7 @@ export default function IntegrityPage() {
                     </span>
                   </div>
                 ))}
+                <Pagination page={crossingsPage} pageSize={pageSize} total={boundaryCrossings.length} onChange={setCrossingsPage} />
               </div>
             )}
           </div>
@@ -132,7 +154,7 @@ export default function IntegrityPage() {
               <p className="text-muted text-sm text-center py-6">No large edits found.</p>
             ) : (
               <div className="flex flex-col gap-2">
-                {largeJumps.map(e => (
+                {visibleJumps.map(e => (
                   <div key={e.edit_id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 rounded-xl bg-surface-900">
                     <div className="min-w-0">
                       <p className="text-sm font-display font-medium text-primary">{e.student_name} — {e.exam_title}</p>
@@ -146,6 +168,7 @@ export default function IntegrityPage() {
                     </span>
                   </div>
                 ))}
+                <Pagination page={jumpsPage} pageSize={pageSize} total={largeJumps.length} onChange={setJumpsPage} />
               </div>
             )}
           </div>
@@ -157,7 +180,7 @@ export default function IntegrityPage() {
               <p className="text-muted text-sm text-center py-6">No edits recorded.</p>
             ) : (
               <div className="flex flex-col gap-2">
-                {editorRates.map(r => (
+                {visibleEditors.map(r => (
                   <div key={r.teacher_id} className="flex items-center justify-between gap-2 p-3 rounded-xl bg-surface-900">
                     <p className="text-sm font-display font-medium text-primary truncate">{r.teacher_name}</p>
                     <p className="text-xs text-secondary flex-shrink-0">
@@ -168,6 +191,7 @@ export default function IntegrityPage() {
                     </p>
                   </div>
                 ))}
+                <Pagination page={editorsPage} pageSize={pageSize} total={editorRates.length} onChange={setEditorsPage} />
               </div>
             )}
           </div>

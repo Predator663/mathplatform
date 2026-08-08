@@ -126,8 +126,11 @@ export const examsApi = {
   topics: (params?: object) => api.get('/exams/topics/', { params }),
   exams: (params?: object) => api.get('/exams/exams/', { params }),
   exam: (id: number) => api.get(`/exams/exams/${id}/`),
-  pendingReview: () => api.get('/exams/exams/pending-review/'),
-  trash: () => api.get('/exams/exams/trash/'),
+  academicYears: () => api.get('/exams/exams/academic-years/'),
+  exportCsv: (params?: object) =>
+    api.get('/exams/exams/export-csv/', { params, responseType: 'blob' }),
+  pendingReview: (params?: object) => api.get('/exams/exams/pending-review/', { params }),
+  trash: (params?: object) => api.get('/exams/exams/trash/', { params }),
   restoreExam: (id: number) => api.post(`/exams/exams/${id}/restore/`),
   emptyTrash: () => api.post('/exams/exams/trash/empty/', { confirm: true }),
   createExam: (data: object) => api.post('/exams/exams/', data),

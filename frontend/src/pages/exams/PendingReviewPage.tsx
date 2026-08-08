@@ -1,9 +1,11 @@
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { ClipboardCheck, Send, Eye, Calendar, User, BookOpen } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { examsApi } from '../../api';
-import { LoadingPage, EmptyState, Button } from '../../components/ui';
+import { LoadingPage, EmptyState, Button, Pagination } from '../../components/ui';
+import { useSiteSettingsStore } from '../../store/siteSettings';
 import { formatDate, EXAM_TYPE_LABELS, TERM_LABELS } from '../../utils';
 import type { Exam, PaginatedResponse } from '../../types';
 
@@ -12,10 +14,13 @@ interface PendingResponse { results: Exam[]; count: number }
 export default function PendingReviewPage() {
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const [page, setPage] = useState(1);
+  const { getPage } = useSiteSettingsStore();
+  const pageSize = getPage('exams').page_size;
 
   const { data, isLoading } = useQuery<PendingResponse>({
-    queryKey: ['exams-pending'],
-    queryFn: () => examsApi.pendingReview().then(r => r.data),
+    queryKey: ['exams-pending', page, pageSize],
+    queryFn: () => examsApi.pendingReview({ page, page_size: pageSize }).then(r => r.data),
   });
 
   const publishMutation = useMutation({
@@ -30,6 +35,7 @@ export default function PendingReviewPage() {
   });
 
   const exams = data?.results ?? [];
+  const total = data?.count ?? 0;
 
   return (
     <div className="flex flex-col gap-6 page-enter">
@@ -46,13 +52,13 @@ export default function PendingReviewPage() {
       {/* Summary badge */}
       {!isLoading && (
         <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border text-sm font-medium ${
-          exams.length > 0
+          total > 0
             ? 'bg-amber-500/10 border-amber-500/25 text-amber-400'
             : 'bg-emerald-500/10 border-emerald-500/25 text-emerald-400'
         }`}>
           <ClipboardCheck size={15} />
-          {exams.length > 0
-            ? `${exams.length} exam${exams.length !== 1 ? 's' : ''} waiting for review`
+          {total > 0
+            ? `${total} exam${total !== 1 ? 's' : ''} waiting for review`
             : 'No exams pending — all clear!'}
         </div>
       )}
@@ -138,6 +144,7 @@ export default function PendingReviewPage() {
               )}
             </div>
           ))}
+          <Pagination page={page} pageSize={pageSize} total={total} onChange={setPage} />
         </div>
       )}
     </div>

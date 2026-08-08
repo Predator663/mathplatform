@@ -46,7 +46,7 @@ class ExamViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['exam_type', 'term', 'academic_year', 'is_published', 'classrooms', 'subject']
     search_fields = ['title', 'description']
-    ordering_fields = ['exam_date', 'title', 'created_at']
+    ordering_fields = ['exam_date', 'title', 'created_at', 'academic_year', 'term', 'exam_type', 'max_score', 'is_published']
     ordering = ['-exam_date']
 
     def get_permissions(self):
@@ -134,6 +134,12 @@ class ExamViewSet(viewsets.ModelViewSet):
             )
             .order_by('-updated_at')
         )
+        # Paginated — a school running for a few years can accumulate a long
+        # trash list, and this previously returned every row in one response.
+        page = self.paginate_queryset(qs)
+        if page is not None:
+            serializer = ExamSerializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
         serializer = ExamSerializer(qs, many=True)
         return Response({'results': serializer.data, 'count': qs.count()})
 
@@ -195,6 +201,73 @@ class ExamViewSet(viewsets.ModelViewSet):
             pass
         return Response({'detail': f'Permanently deleted {count} exam(s).', 'deleted_count': count})
 
+    @action(detail=False, methods=['get'], url_path='academic-years')
+    def academic_years(self, request):
+        """Distinct academic years across every exam this user can see
+        (ignoring pagination/search/other filters, but still respecting
+        scope_exams() so a teacher only sees years for their own exams).
+        Used to populate the Academic Year filter dropdown on the list."""
+        years = (
+            self.get_queryset()
+            .exclude(academic_year='')
+            .order_by('-academic_year')
+            .values_list('academic_year', flat=True)
+            .distinct()
+        )
+        return Response(list(years))
+
+    @action(detail=False, methods=['get'], url_path='export-csv')
+    def export_csv(self, request):
+        """Export the current filtered/searched/sorted exam list as CSV —
+        applies the same DjangoFilterBackend/SearchFilter/OrderingFilter
+        the list endpoint uses, so the export always matches what's on
+        screen. Not paginated: exports every matching row."""
+        from django.http import HttpResponse
+
+        queryset = self.filter_queryset(self.get_queryset())
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow([
+            'Title', 'Subject', 'Exam Type', 'Term', 'Academic Year',
+            'Exam Date', 'Classrooms', 'Max Score', 'Passing Score',
+            'Status', 'Students Scored', 'Average %', 'Pass Rate %',
+            'Created By', 'Created At',
+        ])
+        for exam in queryset:
+            classroom_names = ', '.join(c.name for c in exam.classrooms.all())
+            present_scores = self._present_scores_for_export(exam)
+            score_count = len(present_scores)
+            avg = round(sum(float(s.score) for s in present_scores) / float(exam.max_score) / score_count * 100, 1) if score_count else ''
+            passed = [s for s in present_scores if float(s.score) >= float(exam.passing_score)]
+            pass_rate = round(len(passed) / score_count * 100, 1) if score_count else ''
+            writer.writerow([
+                exam.title,
+                exam.subject.name if exam.subject_id else '',
+                exam.get_exam_type_display(),
+                exam.get_term_display(),
+                exam.academic_year,
+                exam.exam_date.isoformat(),
+                classroom_names,
+                exam.max_score,
+                exam.passing_score,
+                'Published' if exam.is_published else 'Draft',
+                score_count,
+                avg,
+                pass_rate,
+                exam.created_by.get_full_name() if exam.created_by_id else '',
+                exam.updated_at.strftime('%Y-%m-%d %H:%M'),
+            ])
+
+        response = HttpResponse(output.getvalue(), content_type='text/csv')
+        response['Content-Disposition'] = 'attachment; filename="exams_export.csv"'
+        return response
+
+    def _present_scores_for_export(self, exam):
+        if hasattr(exam, 'present_scores'):
+            return exam.present_scores
+        return list(exam.scores.filter(is_absent=False))
+
     @action(detail=False, methods=['get'], url_path='pending-review')
     def pending_review(self, request):
         """Admin-only: all unpublished exams awaiting approval, across all teachers.
@@ -210,6 +283,12 @@ class ExamViewSet(viewsets.ModelViewSet):
             .select_related('subject', 'created_by')
             .order_by('-created_at')
         )
+        # Paginated for the same reason as trash() below — a school with
+        # many teachers can build up a long pending-review queue.
+        page = self.paginate_queryset(qs)
+        if page is not None:
+            serializer = ExamSerializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
         serializer = ExamSerializer(qs, many=True)
         return Response({'results': serializer.data, 'count': qs.count()})
 

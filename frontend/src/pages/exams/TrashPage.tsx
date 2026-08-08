@@ -4,7 +4,8 @@ import { useNavigate } from 'react-router-dom';
 import { Trash2, RotateCcw, Calendar, User, BookOpen, AlertTriangle, Eye } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { examsApi } from '../../api';
-import { LoadingPage, EmptyState, Button, Modal } from '../../components/ui';
+import { LoadingPage, EmptyState, Button, Modal, Pagination } from '../../components/ui';
+import { useSiteSettingsStore } from '../../store/siteSettings';
 import { formatDate, EXAM_TYPE_LABELS, TERM_LABELS } from '../../utils';
 import type { Exam } from '../../types';
 
@@ -14,10 +15,13 @@ export default function TrashPage() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [page, setPage] = useState(1);
+  const { getPage } = useSiteSettingsStore();
+  const pageSize = getPage('exams').page_size;
 
   const { data, isLoading } = useQuery<TrashResponse>({
-    queryKey: ['exams-trash'],
-    queryFn: () => examsApi.trash().then(r => r.data),
+    queryKey: ['exams-trash', page, pageSize],
+    queryFn: () => examsApi.trash({ page, page_size: pageSize }).then(r => r.data),
   });
 
   const restoreMutation = useMutation({
@@ -41,6 +45,7 @@ export default function TrashPage() {
       );
       qc.invalidateQueries({ queryKey: ['exams-trash'] });
       setConfirmOpen(false);
+      setPage(1);
     },
     onError: () => {
       toast.error('Failed to empty trash.');
@@ -49,6 +54,7 @@ export default function TrashPage() {
   });
 
   const exams = data?.results ?? [];
+  const total = data?.count ?? 0;
 
   return (
     <div className="flex flex-col gap-6 page-enter">
@@ -62,9 +68,9 @@ export default function TrashPage() {
             Deleted exams end up here first. Restore one, or permanently clear everything at once.
           </p>
         </div>
-        {exams.length > 0 && (
+        {total > 0 && (
           <Button variant="danger" onClick={() => setConfirmOpen(true)}>
-            <Trash2 size={14} /> Empty Trash ({exams.length})
+            <Trash2 size={14} /> Empty Trash ({total})
           </Button>
         )}
       </div>
@@ -143,6 +149,7 @@ export default function TrashPage() {
               </div>
             </div>
           ))}
+          <Pagination page={page} pageSize={pageSize} total={total} onChange={setPage} />
         </div>
       )}
 
@@ -161,7 +168,7 @@ export default function TrashPage() {
               loading={emptyTrashMutation.isPending}
               onClick={() => emptyTrashMutation.mutate()}
             >
-              <Trash2 size={14} /> Permanently Delete {exams.length} Exam{exams.length !== 1 ? 's' : ''}
+              <Trash2 size={14} /> Permanently Delete {total} Exam{total !== 1 ? 's' : ''}
             </Button>
           </>
         }
