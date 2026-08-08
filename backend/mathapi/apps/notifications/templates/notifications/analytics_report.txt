@@ -7,6 +7,10 @@
 At-risk students (top {{ at_risk_rows|length }}):
 {% for row in at_risk_rows %}  - {{ row.student_name }} ({{ row.student_code }}) — {{ row.classroom|default:"—" }} — avg {{ row.recent_average }}%
 {% endfor %}{% endif %}
+{% if recent_scores %}
+Recent exams:
+{% for s in recent_scores %}  - {{ s.exam_title }} ({{ s.exam_date }}) — {{ s.percentage }}% [{{ s.letter_grade|default:"—" }}]
+{% endfor %}{% endif %}
 Open the full dashboard at {{ platform_name }} for the complete breakdown.
 
 {{ footer_text }}

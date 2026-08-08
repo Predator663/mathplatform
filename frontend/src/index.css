@@ -199,3 +199,15 @@
 /* ── no-scrollbar utility ─────────────────────────────────────────── */
 .no-scrollbar::-webkit-scrollbar { display: none; }
 .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* ── Command palette: terminal glitch effect ──────────────────────── */
+@keyframes term-glitch {
+  0%   { transform: translate(0, 0); opacity: 1; }
+  10%  { transform: translate(-2px, 1px); opacity: 0.8; text-shadow: 2px 0 #ff4d4d, -2px 0 #4dffe0; }
+  20%  { transform: translate(2px, -1px); opacity: 1; text-shadow: -2px 0 #ff4d4d, 2px 0 #4dffe0; }
+  30%  { transform: translate(-1px, 0); opacity: 0.9; text-shadow: 1px 0 #ff4d4d, -1px 0 #4dffe0; }
+  40%  { transform: translate(1px, 1px); opacity: 1; text-shadow: none; }
+  100% { transform: translate(0, 0); opacity: 1; text-shadow: none; }
+}
+.term-glitch { animation: term-glitch 0.35s steps(2, end) 1; }
+

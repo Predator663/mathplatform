@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../store/auth';
 import { COMMANDS, findCommand, parseCommandLine, type OutputLine, type Tone } from './commands';
+import { usePaletteEffects } from './paletteEffects';
+import MatrixRain from './MatrixRain';
 
 interface HistoryEntry {
   kind: 'input' | 'output';
@@ -39,6 +41,8 @@ export default function CommandPalette() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
+  const matrixOn = usePaletteEffects((s) => s.matrixOn);
+  const glitchTick = usePaletteEffects((s) => s.glitchTick);
 
   const close = useCallback(() => setOpen(false), []);
 
@@ -149,27 +153,30 @@ export default function CommandPalette() {
     : [];
 
   return (
-    <div
-      className="fixed inset-0 z-[999] flex items-start justify-center pt-[8vh] px-4"
-      style={{ background: 'rgba(0,0,0,0.82)' }}
-      onClick={close}
-    >
+    <>
+      {matrixOn && <MatrixRain />}
       <div
-        className="w-full max-w-3xl rounded-lg overflow-hidden border relative"
-        style={{
-          background: '#020603',
-          borderColor: 'rgba(57,255,106,0.35)',
-          boxShadow: '0 0 0 1px rgba(57,255,106,0.08), 0 0 40px rgba(57,255,106,0.15), 0 20px 60px rgba(0,0,0,0.6)',
-        }}
-        onClick={(e) => e.stopPropagation()}
+        className="fixed inset-0 z-[999] flex items-start justify-center pt-[8vh] px-4"
+        style={{ background: 'rgba(0,0,0,0.82)' }}
+        onClick={close}
       >
-        {/* Scanline overlay */}
         <div
-          className="pointer-events-none absolute inset-0 opacity-[0.06]"
+          key={glitchTick}
+          className="w-full max-w-3xl rounded-lg overflow-hidden border relative term-glitch"
           style={{
-            backgroundImage: 'repeating-linear-gradient(0deg, #39ff6a 0px, #39ff6a 1px, transparent 1px, transparent 3px)',
+            background: '#020603',
+            borderColor: 'rgba(57,255,106,0.35)',
+            boxShadow: '0 0 0 1px rgba(57,255,106,0.08), 0 0 40px rgba(57,255,106,0.15), 0 20px 60px rgba(0,0,0,0.6)',
           }}
-        />
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Scanline overlay */}
+          <div
+            className="pointer-events-none absolute inset-0 opacity-[0.06]"
+            style={{
+              backgroundImage: 'repeating-linear-gradient(0deg, #39ff6a 0px, #39ff6a 1px, transparent 1px, transparent 3px)',
+            }}
+          />
 
         {/* Title bar */}
         <div className="flex items-center justify-between px-4 py-2 border-b" style={{ borderColor: 'rgba(57,255,106,0.2)', background: 'rgba(57,255,106,0.04)' }}>
@@ -227,7 +234,8 @@ export default function CommandPalette() {
             ))}
           </div>
         )}
+        </div>
       </div>
-    </div>
+    </>
   );
 }

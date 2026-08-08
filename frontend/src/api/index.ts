@@ -153,8 +153,10 @@ export const notificationsApi = {
   unreadCount: () => api.get('/notifications/unread-count/'),
   markRead: (id?: number) => api.post('/notifications/mark-read/', id ? { id } : {}),
   testEmail: () => api.post('/notifications/test-email/'),
-  sendAnalyticsReport: (data: { recipients: string[]; report_type: string; classroom_id?: number }) =>
+  sendAnalyticsReport: (data: { recipients: string[]; report_type: string; classroom_id?: number; student_id?: number }) =>
     api.post('/notifications/send-analytics-report/', data),
+  ping: () => api.get('/notifications/ping/'),
+  systemStatus: () => api.get('/notifications/system-status/'),
 };
 
 export const analyticsApi = {

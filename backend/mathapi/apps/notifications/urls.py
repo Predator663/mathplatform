@@ -9,6 +9,8 @@ urlpatterns = [
     path('mark-read/', views.NotificationMarkReadView.as_view(), name='notification_mark_read'),
     path('test-email/', views.TestEmailView.as_view(), name='notification_test_email'),
     path('send-analytics-report/', views.SendAnalyticsReportView.as_view(), name='notification_send_analytics_report'),
+    path('ping/', views.PingView.as_view(), name='notification_ping'),
+    path('system-status/', views.SystemStatusView.as_view(), name='notification_system_status'),
     # HTTP triggers for a free external scheduler — see _CronTriggerView docstring.
     path('cron/run-alerts/', views.RunAnalyticsAlertsView.as_view(), name='notification_cron_alerts'),
     path('cron/run-digest/', views.RunDailyDigestView.as_view(), name='notification_cron_digest'),

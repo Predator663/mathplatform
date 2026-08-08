@@ -131,12 +131,15 @@ class AnalyticsReportLog(models.Model):
         OVERVIEW = 'overview', 'Platform Overview'
         AT_RISK  = 'at-risk', 'At-Risk Students'
         CLASS    = 'class', 'Class Performance'
+        STUDENT  = 'student', 'Individual Student'
 
     sender      = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
                                      related_name='analytics_reports_sent')
     recipients  = models.JSONField(default=list, help_text='Raw email addresses the report was sent to')
     report_type = models.CharField(max_length=20, choices=ReportType.choices)
     classroom   = models.ForeignKey('students.Classroom', on_delete=models.SET_NULL, null=True, blank=True)
+    student     = models.ForeignKey('students.StudentProfile', on_delete=models.SET_NULL, null=True, blank=True,
+                                     related_name='analytics_reports')
 
     status        = models.CharField(max_length=10, choices=Status.choices, default=Status.SENT)
     error_message = models.TextField(blank=True)

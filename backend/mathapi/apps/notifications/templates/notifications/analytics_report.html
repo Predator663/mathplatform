@@ -74,6 +74,26 @@ with an account/preferences to manage.
             </table>
             {% endif %}
 
+            {% if recent_scores %}
+            <p style="margin:0 0 8px 0;font-size:12px;font-weight:700;color:#8a8a99;text-transform:uppercase;letter-spacing:0.04em;">Recent exams</p>
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:20px;font-size:13px;">
+              <tr>
+                <td style="padding:6px 0;border-bottom:2px solid #eeeeee;font-weight:700;color:#8a8a99;font-size:11px;text-transform:uppercase;">Exam</td>
+                <td style="padding:6px 0;border-bottom:2px solid #eeeeee;font-weight:700;color:#8a8a99;font-size:11px;text-transform:uppercase;">Date</td>
+                <td align="right" style="padding:6px 0;border-bottom:2px solid #eeeeee;font-weight:700;color:#8a8a99;font-size:11px;text-transform:uppercase;">Score</td>
+                <td align="right" style="padding:6px 0;border-bottom:2px solid #eeeeee;font-weight:700;color:#8a8a99;font-size:11px;text-transform:uppercase;">Grade</td>
+              </tr>
+              {% for s in recent_scores %}
+              <tr>
+                <td style="padding:6px 0;border-bottom:1px solid #f4f4f4;color:#1a1a26;">{{ s.exam_title }}</td>
+                <td style="padding:6px 0;border-bottom:1px solid #f4f4f4;color:#4a4a5a;">{{ s.exam_date }}</td>
+                <td align="right" style="padding:6px 0;border-bottom:1px solid #f4f4f4;color:#166534;font-weight:700;font-family:monospace;">{{ s.percentage }}%</td>
+                <td align="right" style="padding:6px 0;border-bottom:1px solid #f4f4f4;color:#4a4a5a;font-family:monospace;">{{ s.letter_grade|default:"—" }}</td>
+              </tr>
+              {% endfor %}
+            </table>
+            {% endif %}
+
             <p style="margin:0;font-size:13px;color:#8a8a99;line-height:1.6;">
               Open the full dashboard at {{ platform_name }} for the complete breakdown, trends, and per-student detail.
             </p>

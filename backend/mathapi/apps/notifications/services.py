@@ -559,14 +559,43 @@ def send_daily_digest() -> int:
 
 # ── Ad-hoc analytics reports (command palette: `analytics send`) ───────────
 
-ANALYTICS_REPORT_TYPES = ('overview', 'at-risk', 'class')
+ANALYTICS_REPORT_TYPES = ('overview', 'at-risk', 'class', 'student')
 
 
-def _build_analytics_report_context(report_type: str, classroom=None) -> dict | None:
+def _build_analytics_report_context(report_type: str, classroom=None, student=None) -> dict | None:
     """Gathers the data + display context for one report type. Reuses the
     exact same analytics.services functions the dashboard pages call, so
     a report never drifts from what's shown on-screen. Returns None for
-    an unknown type or a `class` report with no resolvable classroom."""
+    an unknown type, a `class` report with no resolvable classroom, or a
+    `student` report with no resolvable student."""
+    if report_type == 'student':
+        if not student:
+            return None
+        summary = analytics_services.get_student_summary(student.id)
+        if not summary:
+            return None
+        if not summary.get('total_exams'):
+            return {
+                'report_title': f"Student Report — {summary['student_name']}",
+                'stats': [{'label': 'Exams recorded', 'value': '0'}],
+                'at_risk_rows': [],
+                'classroom_name': summary.get('classroom'),
+                'recent_scores': [],
+            }
+        return {
+            'report_title': f"Student Report — {summary['student_name']}",
+            'stats': [
+                {'label': 'Average score', 'value': f"{summary['average_percentage']}%"},
+                {'label': 'Exams recorded', 'value': str(summary['total_exams'])},
+                {'label': 'Pass rate', 'value': f"{summary['pass_rate']}%"},
+                {'label': 'Trend', 'value': (summary['trend'] or '').replace('_', ' ').title() or '—'},
+                {'label': 'Predicted NECTA grade', 'value': summary['predicted_necta_grade'] or '—'},
+            ],
+            'at_risk_rows': [],
+            'classroom_name': summary.get('classroom'),
+            'recent_scores': summary['recent_scores'][-10:],
+        }
+
     if report_type == 'overview':
         at_risk = analytics_services.get_at_risk_students()
         total_students = StudentProfile.objects.filter(is_active=True).count()
@@ -613,7 +642,7 @@ def _build_analytics_report_context(report_type: str, classroom=None) -> dict | 
     return None
 
 
-def send_analytics_report(*, sender, recipient_emails: list, report_type: str, classroom_id: int = None) -> dict:
+def send_analytics_report(*, sender, recipient_emails: list, report_type: str, classroom_id: int = None, student_id: int = None) -> dict:
     """
     Ad-hoc report send — powers the command palette's flagship
     `analytics send --to <emails> --report <type>` command. Deliberately
@@ -637,9 +666,18 @@ def send_analytics_report(*, sender, recipient_emails: list, report_type: str, c
         if not classroom:
             return {'sent': False, 'error': f'Classroom {classroom_id} not found.'}
 
-    context = _build_analytics_report_context(report_type, classroom)
+    student = None
+    if student_id:
+        student = StudentProfile.objects.filter(id=student_id).first()
+        if not student:
+            return {'sent': False, 'error': f'Student {student_id} not found.'}
+
+    context = _build_analytics_report_context(report_type, classroom, student)
     if context is None:
-        return {'sent': False, 'error': '"class" reports require a valid --classroom.'}
+        error = '"class" reports require a valid --classroom.' if report_type == 'class' else \
+                '"student" reports require a valid --student.' if report_type == 'student' else \
+                'Could not build that report.'
+        return {'sent': False, 'error': error}
 
     site = SiteSettings.get()
     subject = f"{site.platform_name} — {context['report_title']} ({timezone.now().strftime('%d %b %Y')})"
@@ -669,13 +707,13 @@ def send_analytics_report(*, sender, recipient_emails: list, report_type: str, c
     except Exception as exc:
         AnalyticsReportLog.objects.create(
             sender=sender, recipients=recipient_emails, report_type=report_type,
-            classroom=classroom, status=AnalyticsReportLog.Status.FAILED,
+            classroom=classroom, student=student, status=AnalyticsReportLog.Status.FAILED,
             error_message=str(exc)[:2000],
         )
         return {'sent': False, 'error': str(exc)}
 
     AnalyticsReportLog.objects.create(
         sender=sender, recipients=recipient_emails, report_type=report_type,
-        classroom=classroom, status=AnalyticsReportLog.Status.SENT,
+        classroom=classroom, student=student, status=AnalyticsReportLog.Status.SENT,
     )
     return {'sent': True, 'recipient_count': len(recipient_emails), 'report_title': context['report_title']}

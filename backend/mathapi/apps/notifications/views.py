@@ -188,6 +188,7 @@ class SendAnalyticsReportView(APIView):
         recipients = request.data.get('recipients')
         report_type = request.data.get('report_type', 'overview')
         classroom_id = request.data.get('classroom_id')
+        student_id = request.data.get('student_id')
 
         if not isinstance(recipients, list) or not recipients:
             return Response({'detail': 'recipients must be a non-empty list of email addresses.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -208,7 +209,65 @@ class SendAnalyticsReportView(APIView):
             recipient_emails=recipients,
             report_type=report_type,
             classroom_id=classroom_id,
+            student_id=student_id,
         )
         if result.get('sent'):
             return Response(result)
         return Response({'detail': result.get('error', 'Failed to send report.')}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class PingView(APIView):
+    """Cheap round-trip endpoint for the command palette's `ping` command."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        return Response({'pong': True, 'server_time': timezone.now().isoformat()})
+
+
+class SystemStatusView(APIView):
+    """
+    Admin-only health snapshot for the command palette's `system status`
+    command: DB reachability, whether SMTP looks configured (vs. still
+    the placeholder from .env.example), and a couple of headline counts.
+    Doesn't send a real test email — that's what `notifications test` is for.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        if request.user.role != 'super_admin':
+            return Response({'detail': 'Administrators only.'}, status=status.HTTP_403_FORBIDDEN)
+
+        from django.conf import settings as dj_settings
+        from django.db import connection
+        from django.contrib.auth import get_user_model
+        from mathapi.apps.students.models import StudentProfile
+
+        checks = []
+
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute('SELECT 1')
+            checks.append({'name': 'database', 'ok': True, 'detail': connection.vendor})
+        except Exception as exc:
+            checks.append({'name': 'database', 'ok': False, 'detail': str(exc)[:200]})
+
+        email_host_user = getattr(dj_settings, 'EMAIL_HOST_USER', '') or ''
+        placeholder_markers = ('change-me', 'example', 'your-email', 'youremail')
+        email_configured = bool(email_host_user) and not any(m in email_host_user.lower() for m in placeholder_markers)
+        checks.append({
+            'name': 'smtp_config', 'ok': email_configured,
+            'detail': email_host_user if email_configured else 'not configured (placeholder in .env)',
+        })
+
+        recent_failures = NotificationLog.objects.filter(status=NotificationLog.Status.FAILED).count()
+        checks.append({
+            'name': 'notification_failures', 'ok': recent_failures == 0,
+            'detail': f'{recent_failures} failed send(s) logged',
+        })
+
+        User = get_user_model()
+        checks.append({'name': 'students', 'ok': True, 'detail': f'{StudentProfile.objects.filter(is_active=True).count()} active records'})
+        checks.append({'name': 'accounts', 'ok': True, 'detail': f'{User.objects.filter(is_active=True).count()} active accounts'})
+        checks.append({'name': 'debug_mode', 'ok': not dj_settings.DEBUG, 'detail': 'ON — should be OFF in production' if dj_settings.DEBUG else 'off'})
+
+        return Response({'checks': checks, 'server_time': timezone.now().isoformat()})
