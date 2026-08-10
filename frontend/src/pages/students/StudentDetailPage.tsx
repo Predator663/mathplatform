@@ -1,14 +1,58 @@
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState, useRef, useEffect } from 'react';
-import { BarChart3, Edit2, Save, X, Trash2, ToggleLeft, ToggleRight } from 'lucide-react';
-import { studentsApi } from '../../api';
+import { BarChart3, Edit2, Save, X, Trash2, ToggleLeft, ToggleRight, Flame, Award } from 'lucide-react';
+import { studentsApi, gamificationApi } from '../../api';
 import { useCanManage } from '../../hooks/useCanManage';
 import { LoadingPage, Button, Input, Select } from '../../components/ui';
 import { formatDate } from '../../utils';
-import type { StudentProfile, Classroom, Stream, PaginatedResponse } from '../../types';
+import type { StudentProfile, Classroom, Stream, PaginatedResponse, StudentProgress } from '../../types';
 import toast from 'react-hot-toast';
 import { useForm } from 'react-hook-form';
+
+function StudentProgressWidget({ studentId }: { studentId: number }) {
+  const { data: progress, isLoading } = useQuery<StudentProgress>({
+    queryKey: ['gamification-student-progress', studentId],
+    queryFn: () => gamificationApi.studentProgress(studentId).then(r => r.data),
+    retry: false,
+  });
+
+  if (isLoading || !progress) return null;
+  const { streak, badges } = progress;
+
+  return (
+    <div className="card p-4 flex items-center gap-6 flex-wrap">
+      <div className="flex items-center gap-2">
+        <div className="w-9 h-9 rounded-xl bg-amber-500/15 flex items-center justify-center flex-shrink-0">
+          <Flame size={16} className="text-amber-400" />
+        </div>
+        <div>
+          <p className="text-xs text-secondary">Current Streak</p>
+          <p className="font-display font-bold text-primary">{streak.current_streak} exam{streak.current_streak !== 1 ? 's' : ''}</p>
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        <div className="w-9 h-9 rounded-xl bg-violet-500/15 flex items-center justify-center flex-shrink-0">
+          <Award size={16} className="text-violet-400" />
+        </div>
+        <div>
+          <p className="text-xs text-secondary">Badges Earned</p>
+          <p className="font-display font-bold text-primary">{badges.length}</p>
+        </div>
+      </div>
+      {badges.length > 0 && (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {badges.slice(0, 6).map(b => (
+            <span key={b.id} className="badge badge-amber text-[10px]" title={b.badge.description}>
+              {b.badge.name}
+            </span>
+          ))}
+          {badges.length > 6 && <span className="text-xs text-secondary">+{badges.length - 6} more</span>}
+        </div>
+      )}
+    </div>
+  );
+}
 
 interface EditForm {
   first_name: string; last_name: string; student_id: string;
@@ -305,6 +349,9 @@ export default function StudentDetailPage() {
           </>
         )}
       </div>
+
+      {/* Progress: streak + badges (compact) */}
+      {!editing && <StudentProgressWidget studentId={student.id} />}
 
       {/* Quick links */}
       {!editing && (

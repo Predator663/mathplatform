@@ -216,6 +216,40 @@ class SendAnalyticsReportView(APIView):
         return Response({'detail': result.get('error', 'Failed to send report.')}, status=status.HTTP_400_BAD_REQUEST)
 
 
+class SendWhatsAppResultView(APIView):
+    """
+    Teacher/admin: sends one student's result on one exam via WhatsApp to
+    their linked parent(s) (falling back to the student's own number if no
+    parent phone is on file). Delivery goes through
+    notifications.whatsapp.send_whatsapp_message — Twilio if configured,
+    otherwise logged instead of sent (see settings.TWILIO_ACCOUNT_SID).
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        if request.user.role not in ('teacher', 'super_admin'):
+            return Response({'detail': 'Only teachers and administrators can send WhatsApp results.'}, status=status.HTTP_403_FORBIDDEN)
+
+        student_id = request.data.get('student_id')
+        exam_id = request.data.get('exam_id')
+        if not student_id or not exam_id:
+            return Response({'detail': 'student_id and exam_id are required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        from mathapi.apps.students.models import StudentProfile
+        from mathapi.apps.exams.models import Exam
+        student = StudentProfile.objects.filter(id=student_id).first()
+        if not student:
+            return Response({'detail': f'Student {student_id} not found.'}, status=status.HTTP_404_NOT_FOUND)
+        exam = Exam.objects.filter(id=exam_id, is_deleted=False).first()
+        if not exam:
+            return Response({'detail': f'Exam {exam_id} not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        result = services.send_whatsapp_exam_result(sender=request.user, student=student, exam=exam)
+        if result.get('sent'):
+            return Response(result)
+        return Response({'detail': result.get('error') or 'Failed to send WhatsApp message.', **result}, status=status.HTTP_400_BAD_REQUEST)
+
+
 class PingView(APIView):
     """Cheap round-trip endpoint for the command palette's `ping` command."""
     permission_classes = [permissions.IsAuthenticated]

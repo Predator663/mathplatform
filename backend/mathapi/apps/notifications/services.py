@@ -562,12 +562,18 @@ def send_daily_digest() -> int:
 ANALYTICS_REPORT_TYPES = ('overview', 'at-risk', 'class', 'student')
 
 
-def _build_analytics_report_context(report_type: str, classroom=None, student=None) -> dict | None:
+def _build_analytics_report_context(report_type: str, classroom=None, student=None, *, sender=None) -> dict | None:
     """Gathers the data + display context for one report type. Reuses the
     exact same analytics.services functions the dashboard pages call, so
     a report never drifts from what's shown on-screen. Returns None for
     an unknown type, a `class` report with no resolvable classroom, or a
-    `student` report with no resolvable student."""
+    `student` report with no resolvable student.
+
+    `sender` scopes the `overview` report's at-risk list down to a
+    teacher's own classrooms. classroom/student-level access itself is
+    already enforced by the caller (send_analytics_report) before this is
+    ever reached, via the same scoping.py helpers every other analytics
+    endpoint uses."""
     if report_type == 'student':
         if not student:
             return None
@@ -597,11 +603,22 @@ def _build_analytics_report_context(report_type: str, classroom=None, student=No
         }
 
     if report_type == 'overview':
-        at_risk = analytics_services.get_at_risk_students()
-        total_students = StudentProfile.objects.filter(is_active=True).count()
-        total_classrooms = Classroom.objects.count()
+        # Teachers get an overview scoped to their own classrooms rather
+        # than a platform-wide at-risk list they have no business seeing.
+        if sender is not None and sender.role == 'teacher':
+            from mathapi.apps.accounts.scoping import get_teacher_classrooms
+            classroom_ids = list(get_teacher_classrooms(sender).values_list('id', flat=True))
+            at_risk = analytics_services.get_at_risk_students(classroom_ids=classroom_ids)
+            total_students = StudentProfile.objects.filter(is_active=True, classroom_id__in=classroom_ids).count()
+            total_classrooms = len(classroom_ids)
+            title = 'My Classrooms — Analytics Overview'
+        else:
+            at_risk = analytics_services.get_at_risk_students()
+            total_students = StudentProfile.objects.filter(is_active=True).count()
+            total_classrooms = Classroom.objects.count()
+            title = 'Platform Analytics Overview'
         return {
-            'report_title': 'Platform Analytics Overview',
+            'report_title': title,
             'stats': [
                 {'label': 'Active students', 'value': str(total_students)},
                 {'label': 'At-risk students', 'value': str(len(at_risk))},
@@ -612,12 +629,25 @@ def _build_analytics_report_context(report_type: str, classroom=None, student=No
         }
 
     if report_type == 'at-risk':
-        at_risk = analytics_services.get_at_risk_students(classroom_ids=classroom.id if classroom else None)
+        if classroom is not None:
+            classroom_ids = classroom.id
+            title = f'At-Risk Students — {classroom}'
+            classroom_name = str(classroom)
+        elif sender is not None and sender.role == 'teacher':
+            from mathapi.apps.accounts.scoping import get_teacher_classrooms
+            classroom_ids = list(get_teacher_classrooms(sender).values_list('id', flat=True))
+            title = 'At-Risk Students — My Classrooms'
+            classroom_name = None
+        else:
+            classroom_ids = None
+            title = 'At-Risk Students — All Classrooms'
+            classroom_name = None
+        at_risk = analytics_services.get_at_risk_students(classroom_ids=classroom_ids)
         return {
-            'report_title': f'At-Risk Students — {classroom}' if classroom else 'At-Risk Students — All Classrooms',
+            'report_title': title,
             'stats': [{'label': 'At-risk students', 'value': str(len(at_risk))}],
             'at_risk_rows': at_risk[:25],
-            'classroom_name': str(classroom) if classroom else None,
+            'classroom_name': classroom_name,
         }
 
     if report_type == 'class':
@@ -672,7 +702,19 @@ def send_analytics_report(*, sender, recipient_emails: list, report_type: str, c
         if not student:
             return {'sent': False, 'error': f'Student {student_id} not found.'}
 
-    context = _build_analytics_report_context(report_type, classroom, student)
+    # A teacher may only email a report about a classroom/student they are
+    # actually assigned to — mirrors the scoping every other analytics
+    # endpoint enforces (see accounts.scoping / analytics._check_student_access).
+    # super_admin is unrestricted; the view already blocks every other role.
+    if sender.role == 'teacher':
+        from mathapi.apps.accounts.scoping import assert_classroom_owned, get_teacher_classrooms
+        if classroom is not None:
+            assert_classroom_owned(sender, classroom.id)
+        if student is not None and not get_teacher_classrooms(sender).filter(id=student.classroom_id).exists():
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('You do not have access to this student.')
+
+    context = _build_analytics_report_context(report_type, classroom, student, sender=sender)
     if context is None:
         error = '"class" reports require a valid --classroom.' if report_type == 'class' else \
                 '"student" reports require a valid --student.' if report_type == 'student' else \
@@ -717,3 +759,85 @@ def send_analytics_report(*, sender, recipient_emails: list, report_type: str, c
         classroom=classroom, student=student, status=AnalyticsReportLog.Status.SENT,
     )
     return {'sent': True, 'recipient_count': len(recipient_emails), 'report_title': context['report_title']}
+
+
+# ── WhatsApp result delivery ────────────────────────────────────────────────
+
+def _exam_result_whatsapp_body(student, exam, exam_score) -> str:
+    result_line = (
+        f'✅ PASSED (needed {exam.passing_score}/{exam.max_score})' if exam_score.passed
+        else f'⚠️ Below pass mark (needed {exam.passing_score}/{exam.max_score})'
+    )
+    return (
+        f'*MathPlatform* — Exam Result\n\n'
+        f'Student: {student.full_name}\n'
+        f'Exam: {exam.title} ({exam.get_term_display()}, {exam.academic_year})\n'
+        f'Score: {exam_score.score}/{exam.max_score} ({exam_score.percentage}%) — Grade {exam_score.letter_grade}\n'
+        f'{result_line}\n\n'
+        f'This is an automated message from {student.classroom} — please contact the school for questions.'
+    )
+
+
+def send_whatsapp_exam_result(*, sender, student, exam) -> dict:
+    """
+    Sends a WhatsApp message with one student's result on one exam to
+    every linked parent's phone number (falling back to the student's own
+    phone if no parent is linked with one on file). Mirrors
+    send_analytics_report's scoping and logging approach, just on a
+    different channel.
+    """
+    from mathapi.apps.students.models import StudentProfile as _StudentProfile  # local import, avoids a cycle at module load
+    from .whatsapp import send_whatsapp_message
+
+    if sender.role == 'teacher':
+        from mathapi.apps.accounts.scoping import get_teacher_classrooms
+        if not get_teacher_classrooms(sender).filter(id=student.classroom_id).exists():
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('You do not have access to this student.')
+
+    if not exam.is_published:
+        return {'sent': False, 'error': 'This exam has not been published yet.'}
+
+    exam_score = ExamScore.objects.filter(exam=exam, student=student, is_absent=False).first()
+    if not exam_score:
+        return {'sent': False, 'error': 'No recorded score for this student on this exam.'}
+
+    body = _exam_result_whatsapp_body(student, exam, exam_score)
+
+    recipients = []
+    parent_links = ParentStudentLink.objects.filter(student=student).select_related('parent')
+    for link in parent_links:
+        if link.parent.phone:
+            recipients.append(link.parent)
+    if not recipients and student.user_id and student.user.phone:
+        recipients.append(student.user)
+
+    if not recipients:
+        return {'sent': False, 'error': 'No phone number on file for this student\'s parents or the student.'}
+
+    sent_count = 0
+    errors = []
+    for recipient in recipients:
+        ok, error = send_whatsapp_message(recipient.phone, body)
+        NotificationLog.objects.create(
+            recipient=recipient,
+            category=NotificationCategory.EXAM_PUBLISHED,
+            channel=NotificationLog.Channel.WHATSAPP,
+            subject=f'Exam Result — {exam.title}',
+            summary=f'{student.full_name}: {exam_score.score}/{exam.max_score} on {exam.title}',
+            related_object_type='exam',
+            related_object_id=exam.id,
+            status=NotificationLog.Status.SENT if ok else NotificationLog.Status.FAILED,
+            error_message='' if ok else error,
+        )
+        if ok:
+            sent_count += 1
+        else:
+            errors.append(f'{recipient.get_full_name()}: {error}')
+
+    return {
+        'sent': sent_count > 0,
+        'recipient_count': sent_count,
+        'attempted_count': len(recipients),
+        'errors': errors,
+    }

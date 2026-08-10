@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Save, Check, WifiOff, Download, Search, CloudOff, ArrowUp, ArrowDown } from 'lucide-react';
+import { Save, Check, WifiOff, Download, Search, CloudOff, ArrowUp, ArrowDown, MessageCircle, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { examsApi } from '../../api';
+import { examsApi, notificationsApi } from '../../api';
 import { LoadingPage, Button, Select } from '../../components/ui';
 import { PermissionGate } from '../../components/ui/PermissionGate';
 import { gradeBg, gradeColor, tanzaniaGrade, EXAM_TYPE_LABELS, TERM_LABELS, downloadBlob } from '../../utils';
@@ -40,6 +40,7 @@ export default function MarkEntryPage() {
   const [sortDir, setSortDir]         = useState<SortDir>('asc');
   const [saveStatus, setSaveStatus]   = useState<SaveStatus>('idle');
   const [autoSave, setAutoSave]       = useState(true);
+  const [sendingWhatsAppId, setSendingWhatsAppId] = useState<number | null>(null);
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dirtyRef = useRef(false);
   const desktopTableRef = useRef<HTMLDivElement>(null);
@@ -226,6 +227,20 @@ export default function MarkEntryPage() {
     return sortDir === 'asc' ? <ArrowUp size={11} className="inline ml-1" /> : <ArrowDown size={11} className="inline ml-1" />;
   };
 
+  const handleSendWhatsApp = async (studentId: number) => {
+    setSendingWhatsAppId(studentId);
+    try {
+      const res = await notificationsApi.sendWhatsappResult({ student_id: studentId, exam_id: examId });
+      const count = res.data.recipient_count ?? 0;
+      toast.success(count > 0 ? `Sent to ${count} recipient${count !== 1 ? 's' : ''} via WhatsApp` : 'Sent');
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { detail?: string } } };
+      toast.error(e?.response?.data?.detail ?? 'Failed to send WhatsApp message');
+    } finally {
+      setSendingWhatsAppId(null);
+    }
+  };
+
   const filteredRows = [...searchedRows].sort((a, b) => {
     let cmp = 0;
     switch (sortField) {
@@ -361,6 +376,17 @@ export default function MarkEntryPage() {
                   : row.saved
                     ? <Check size={16} className="text-emerald-400 flex-shrink-0" />
                     : null}
+                {effectiveExam.is_published && row.saved && !row.is_absent && (
+                  <button
+                    type="button"
+                    onClick={() => handleSendWhatsApp(row.student.id)}
+                    disabled={sendingWhatsAppId === row.student.id}
+                    className="flex-shrink-0 p-2 rounded-lg text-emerald-400 hover:bg-emerald-500/10 transition-colors disabled:opacity-50"
+                    title="Send result via WhatsApp"
+                  >
+                    {sendingWhatsAppId === row.student.id ? <Loader2 size={16} className="animate-spin" /> : <MessageCircle size={16} />}
+                  </button>
+                )}
               </div>
 
               {/* Score input with explicit "/max" context + grade readout */}
@@ -440,6 +466,7 @@ export default function MarkEntryPage() {
                   onClick={() => toggleSort('status')}>
                   ✓{sortIndicator('status')}
                 </th>
+                <th className="text-left text-xs font-display font-semibold text-ink-500 uppercase tracking-widest py-3 px-3 whitespace-nowrap last:pr-4">WhatsApp</th>
               </tr>
             </thead>
             <tbody>
@@ -519,6 +546,19 @@ export default function MarkEntryPage() {
                         : row.saved
                           ? <Check size={13} className="text-emerald-400" />
                           : null}
+                    </td>
+                    <td className="py-2.5 pr-4 pl-3 w-10">
+                      {effectiveExam.is_published && row.saved && !row.is_absent && (
+                        <button
+                          type="button"
+                          onClick={() => handleSendWhatsApp(row.student.id)}
+                          disabled={sendingWhatsAppId === row.student.id}
+                          className="p-1.5 rounded-lg text-emerald-400 hover:bg-emerald-500/10 transition-colors disabled:opacity-50"
+                          title="Send result via WhatsApp"
+                        >
+                          {sendingWhatsAppId === row.student.id ? <Loader2 size={14} className="animate-spin" /> : <MessageCircle size={14} />}
+                        </button>
+                      )}
                     </td>
                   </tr>
                 );

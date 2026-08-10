@@ -6,7 +6,7 @@ from collections import defaultdict
 from django.db.models import Q
 from mathapi.apps.exams.models import ExamScore
 from mathapi.apps.students.models import StudentProfile
-from .models import PerformanceTier
+from .models import PerformanceTier, PeerConstraint, GroupMembership
 
 # Mirrors ExamScore.letter_grade / reports engines exactly (see models.py
 # docstring on PerformanceTier) — do not drift these numbers apart.
@@ -495,3 +495,178 @@ def check_transfer_warnings(source_group_members: list, dest_group_members: list
             warnings.append('The destination group will be notably larger than the classroom average group size.')
 
     return warnings
+
+
+# ── Seating chart generator ─────────────────────────────────────────────────
+
+def _grid_dimensions(count: int, rows: int | None, cols: int | None) -> tuple[int, int]:
+    import math
+    if rows and cols:
+        return rows, cols
+    if cols:
+        return math.ceil(count / cols) if count else 1, cols
+    if rows:
+        return rows, math.ceil(count / rows) if count else 1
+    # Auto: a slightly-wider-than-tall grid reads naturally as classroom rows.
+    cols = math.ceil(math.sqrt(count)) if count else 1
+    rows = math.ceil(count / cols) if count else 1
+    return rows, cols
+
+
+def _neighbor_positions(row: int, col: int, rows: int, cols: int):
+    """Up/down/left/right — diagonal neighbors are deliberately excluded;
+    two desks diagonally apart aren't really 'next to' each other."""
+    candidates = [(row - 1, col), (row + 1, col), (row, col - 1), (row, col + 1)]
+    return [(r, c) for r, c in candidates if 0 <= r < rows and 0 <= c < cols]
+
+
+def generate_seating_chart(
+    classroom, *, stream_id: int = None, group_id: int = None,
+    rows: int = None, cols: int = None,
+) -> dict:
+    """
+    Builds a rows x cols seating grid for a classroom (optionally narrowed
+    to one Stream or one StudentGroup), honoring standing PeerConstraint
+    rules from that classroom:
+
+    - AVOID pairs are kept out of directly-adjacent seats (up/down/left/right)
+      wherever the grid has room to do so.
+    - PREFER pairs are seated in an adjacent seat wherever possible.
+
+    Group membership (StudentGroup / GroupMembership) is used as a
+    secondary signal — students in the same group are clustered near each
+    other in the placement order — but PREFER/AVOID constraints always take
+    priority, since those are the explicit, standing rule.
+
+    Returns a dict with `rows`, `cols`, `seats` (list of
+    {row, col, student} or {row, col, student: None} for empty desks),
+    `unseated` (students who didn't fit if the grid is too small), and
+    `warnings` (any AVOID pairs that ended up adjacent anyway because the
+    grid was too cramped to avoid it).
+    """
+    students_qs = StudentProfile.objects.filter(classroom=classroom, is_active=True).select_related('user')
+    if stream_id:
+        students_qs = students_qs.filter(stream_id=stream_id)
+    if group_id:
+        member_ids = GroupMembership.objects.filter(group_id=group_id).values_list('student_id', flat=True)
+        students_qs = students_qs.filter(id__in=member_ids)
+    students = list(students_qs.order_by('user__last_name', 'user__first_name'))
+
+    count = len(students)
+    grid_rows, grid_cols = _grid_dimensions(count, rows, cols)
+    capacity = grid_rows * grid_cols
+
+    student_ids = {s.id for s in students}
+    constraints = PeerConstraint.objects.filter(classroom=classroom).filter(
+        Q(student_a_id__in=student_ids) & Q(student_b_id__in=student_ids)
+    )
+    avoid_pairs = {frozenset((c.student_a_id, c.student_b_id)) for c in constraints if c.constraint_type == PeerConstraint.ConstraintType.AVOID}
+    prefer_pairs = {frozenset((c.student_a_id, c.student_b_id)) for c in constraints if c.constraint_type == PeerConstraint.ConstraintType.PREFER}
+
+    # Cluster by group membership so groupmates land near each other in the
+    # placement order (soft signal, easily overridden by explicit constraints).
+    group_of = {}
+    if not group_id:
+        memberships = GroupMembership.objects.filter(student_id__in=student_ids).select_related('group')
+        for m in memberships:
+            group_of[m.student_id] = m.group_id
+
+    def placement_order_key(s):
+        return (group_of.get(s.id, s.id), s.id)
+    ordered_students = sorted(students, key=placement_order_key)
+
+    # PREFER-linked students are placed as a unit right after their partner,
+    # so they land in adjacent seats under simple row-major filling.
+    placed_ids = set()
+    sequence = []
+    prefer_partner = {}
+    for pair in prefer_pairs:
+        a, b = tuple(pair)
+        prefer_partner.setdefault(a, b)
+        prefer_partner.setdefault(b, a)
+    for s in ordered_students:
+        if s.id in placed_ids:
+            continue
+        sequence.append(s)
+        placed_ids.add(s.id)
+        partner_id = prefer_partner.get(s.id)
+        if partner_id and partner_id not in placed_ids:
+            partner = next((p for p in ordered_students if p.id == partner_id), None)
+            if partner is not None:
+                sequence.append(partner)
+                placed_ids.add(partner.id)
+
+    positions = [(r, c) for r in range(grid_rows) for c in range(grid_cols)]
+    seat_of = {}   # position -> StudentProfile
+    student_position = {}  # student_id -> position
+    unseated = []
+    warnings = []
+
+    def has_avoid_conflict(student_id, pos):
+        for npos in _neighbor_positions(pos[0], pos[1], grid_rows, grid_cols):
+            neighbor = seat_of.get(npos)
+            if neighbor is not None and frozenset((student_id, neighbor.id)) in avoid_pairs:
+                return True
+        return False
+
+    remaining_positions = list(positions)
+    for student in sequence:
+        if not remaining_positions:
+            unseated.append(student)
+            continue
+        chosen = None
+        # If this student's PREFER partner is already seated, try to land
+        # in one of the partner's actual grid neighbors — being next to
+        # each other in placement *order* doesn't guarantee grid adjacency
+        # (e.g. the last seat of one row and the first seat of the next
+        # row are consecutive in row-major order but not adjacent).
+        partner_id = prefer_partner.get(student.id)
+        if partner_id is not None and partner_id in student_position:
+            partner_pos = student_position[partner_id]
+            for npos in _neighbor_positions(partner_pos[0], partner_pos[1], grid_rows, grid_cols):
+                if npos in remaining_positions and not has_avoid_conflict(student.id, npos):
+                    chosen = npos
+                    break
+        if chosen is None:
+            # Prefer the next open row-major seat; fall back to scanning for
+            # one that doesn't create an AVOID conflict.
+            for pos in remaining_positions:
+                if not has_avoid_conflict(student.id, pos):
+                    chosen = pos
+                    break
+        if chosen is None:
+            chosen = remaining_positions[0]
+            for npos in _neighbor_positions(chosen[0], chosen[1], grid_rows, grid_cols):
+                neighbor = seat_of.get(npos)
+                if neighbor is not None and frozenset((student.id, neighbor.id)) in avoid_pairs:
+                    warnings.append(
+                        f'{student.full_name} and {neighbor.full_name} are seated next to each other — '
+                        f'the grid was too small to keep them apart.'
+                    )
+        seat_of[chosen] = student
+        student_position[student.id] = chosen
+        remaining_positions.remove(chosen)
+
+    seats = []
+    for r in range(grid_rows):
+        for c in range(grid_cols):
+            student = seat_of.get((r, c))
+            seats.append({
+                'row': r, 'col': c,
+                'student': {
+                    'id': student.id,
+                    'name': student.full_name,
+                    'student_id': student.student_id,
+                    'group_id': group_of.get(student.id),
+                } if student else None,
+            })
+
+    return {
+        'rows': grid_rows,
+        'cols': grid_cols,
+        'capacity': capacity,
+        'seated_count': len(student_position),
+        'seats': seats,
+        'unseated': [{'id': s.id, 'name': s.full_name, 'student_id': s.student_id} for s in unseated],
+        'warnings': warnings,
+    }

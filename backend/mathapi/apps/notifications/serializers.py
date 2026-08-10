@@ -26,7 +26,7 @@ class NotificationLogSerializer(serializers.ModelSerializer):
     class Meta:
         model = NotificationLog
         fields = [
-            'id', 'category', 'category_label', 'subject', 'summary',
+            'id', 'category', 'category_label', 'channel', 'subject', 'summary',
             'related_object_type', 'related_object_id',
             'status', 'sent_at', 'read_at',
         ]

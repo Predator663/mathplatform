@@ -2,7 +2,7 @@ import { NavLink, useNavigate, Link } from 'react-router-dom';
 import {
   LayoutDashboard, Users, Users2, BookOpen, BarChart3, GraduationCap,
   AlertTriangle, LogOut, Settings, FileText, Upload, School, X,
-  BookMarked, ClipboardList, ClipboardCheck, Layers, Trash2, Bell,
+  BookMarked, ClipboardList, ClipboardCheck, Layers, Trash2, Bell, Trophy,
 } from 'lucide-react';
 import { useAuthStore } from '../../store/auth';
 import { useSiteSettingsStore } from '../../store/siteSettings';
@@ -40,6 +40,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
   const { settings, getPage } = useSiteSettingsStore();
   const navigate = useNavigate();
   const isAdmin = user?.role === 'super_admin';
+  const isStudent = user?.role === 'student';
 
   // Live pending-review count badge — only fetched for admins.
   const { data: pendingData } = useQuery({
@@ -135,6 +136,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
       {/* Nav */}
       <nav className="flex-1 px-3 py-3 flex flex-col gap-0.5 overflow-y-auto">
         {navItems.map(({ to, icon: Icon, label, pageKey }) => navLink(to, Icon, label, pageKey))}
+        {isStudent && navLink('/progress', Trophy, 'My Progress', null)}
         {navLink('/notifications', Bell, 'Notifications', null, unreadCount)}
 
         {isAdmin && (

@@ -410,6 +410,51 @@ class ClassroomGroupsOverviewView(APIView):
         })
 
 
+class ClassroomSeatingChartView(APIView):
+    """
+    GET /api/groups/classroom/<id>/seating-chart/
+    ?stream_id=&group_id=&rows=&cols=
+    Auto-generates a printable seating grid for the classroom, honoring
+    standing PeerConstraint AVOID/PREFER rules and (softly) clustering
+    students who share a StudentGroup. See services.generate_seating_chart
+    for the placement algorithm.
+    """
+    permission_classes = [permissions.IsAuthenticated, IsTeacherOrAdmin]
+
+    def get(self, request, classroom_id):
+        classroom = _owned_classroom_or_404(request.user, classroom_id)
+
+        def _int_param(name):
+            raw = request.query_params.get(name)
+            if not raw:
+                return None
+            try:
+                return int(raw)
+            except (TypeError, ValueError):
+                return None
+
+        stream_id = _int_param('stream_id')
+        group_id = _int_param('group_id')
+        rows = _int_param('rows')
+        cols = _int_param('cols')
+
+        if stream_id and not Stream.objects.filter(id=stream_id, classroom_id=classroom_id).exists():
+            return Response({'detail': 'That stream does not belong to this classroom.'}, status=status.HTTP_400_BAD_REQUEST)
+        if group_id and not StudentGroup.objects.filter(id=group_id, classroom_id=classroom_id).exists():
+            return Response({'detail': 'That group does not belong to this classroom.'}, status=status.HTTP_400_BAD_REQUEST)
+        if (rows is not None and rows < 1) or (cols is not None and cols < 1):
+            return Response({'detail': 'rows and cols must be positive integers.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        chart = services.generate_seating_chart(
+            classroom, stream_id=stream_id, group_id=group_id, rows=rows, cols=cols,
+        )
+        return Response({
+            'classroom_id': classroom.id,
+            'classroom_name': str(classroom),
+            **chart,
+        })
+
+
 class ClassroomRebalanceSuggestionsView(APIView):
     """
     GET /api/groups/classroom/<id>/rebalance-suggestions/

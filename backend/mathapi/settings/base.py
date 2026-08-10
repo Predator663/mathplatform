@@ -34,6 +34,7 @@ LOCAL_APPS = [
     'mathapi.apps.reports',
     'mathapi.apps.groups',
     'mathapi.apps.notifications',
+    'mathapi.apps.gamification',
 ]
 
 # admin MUST come after local apps so Django sees the custom
@@ -169,6 +170,18 @@ if EMAIL_HOST:
 else:
     EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
 DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='noreply@mathplatform.edu')
+
+# WhatsApp (via Twilio's WhatsApp Business API)
+# Same "free by design until you opt in" pattern as email: leave
+# TWILIO_ACCOUNT_SID unset and messages just get logged instead of sent —
+# handy for local dev, and means WhatsApp support never requires a paid
+# account to run the platform. Twilio's WhatsApp Sandbox is free for
+# development; a production sender number requires WhatsApp Business
+# approval through Twilio (or another routing later, if ever needed) but
+# no code changes.
+TWILIO_ACCOUNT_SID = config('TWILIO_ACCOUNT_SID', default='')
+TWILIO_AUTH_TOKEN = config('TWILIO_AUTH_TOKEN', default='')
+TWILIO_WHATSAPP_FROM = config('TWILIO_WHATSAPP_FROM', default='whatsapp:+14155238886')  # Twilio sandbox default
 
 # Base URL of the deployed frontend, used to build links inside notification
 # emails (e.g. "View student" → FRONTEND_URL + /analytics/student/<id>).

@@ -9,6 +9,7 @@ router.register('constraints', views.PeerConstraintViewSet, basename='peerconstr
 urlpatterns = [
     path('', include(router.urls)),
     path('classroom/<int:classroom_id>/overview/', views.ClassroomGroupsOverviewView.as_view(), name='groups_overview'),
+    path('classroom/<int:classroom_id>/seating-chart/', views.ClassroomSeatingChartView.as_view(), name='groups_seating_chart'),
     path('classroom/<int:classroom_id>/transfers/', views.ClassroomGroupTransfersView.as_view(), name='groups_transfers'),
     path('classroom/<int:classroom_id>/effectiveness/', views.ClassroomGroupEffectivenessView.as_view(), name='groups_effectiveness'),
     path('classroom/<int:classroom_id>/rebalance-suggestions/', views.ClassroomRebalanceSuggestionsView.as_view(), name='groups_rebalance_suggestions'),

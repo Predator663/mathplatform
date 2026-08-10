@@ -158,6 +158,8 @@ export const notificationsApi = {
   testEmail: () => api.post('/notifications/test-email/'),
   sendAnalyticsReport: (data: { recipients: string[]; report_type: string; classroom_id?: number; student_id?: number }) =>
     api.post('/notifications/send-analytics-report/', data),
+  sendWhatsappResult: (data: { student_id: number; exam_id: number }) =>
+    api.post('/notifications/send-whatsapp-result/', data),
   ping: () => api.get('/notifications/ping/'),
   systemStatus: () => api.get('/notifications/system-status/'),
 };
@@ -204,6 +206,8 @@ export const groupsApi = {
     api.get(`/groups/classroom/${classroomId}/effectiveness/`, { params }),
   rebalanceSuggestions: (classroomId: number, params?: object) =>
     api.get(`/groups/classroom/${classroomId}/rebalance-suggestions/`, { params }),
+  seatingChart: (classroomId: number, params?: object) =>
+    api.get(`/groups/classroom/${classroomId}/seating-chart/`, { params }),
   constraints: (classroomId: number) => api.get('/groups/constraints/', { params: { classroom: classroomId } }),
   createConstraint: (data: object) => api.post('/groups/constraints/', data),
   deleteConstraint: (id: number) => api.delete(`/groups/constraints/${id}/`),
@@ -229,6 +233,12 @@ export const groupsApi = {
     api.get(`/groups/export/classroom/${classroomId}/summary/${format}/`, { params, responseType: 'blob' }),
   exportRoster: (classroomId: number, format: 'pdf' | 'excel', params?: object) =>
     api.get(`/groups/export/classroom/${classroomId}/roster/${format}/`, { params, responseType: 'blob' }),
+};
+
+export const gamificationApi = {
+  badges: () => api.get('/gamification/badges/'),
+  myProgress: () => api.get('/gamification/my-progress/'),
+  studentProgress: (studentId: number) => api.get(`/gamification/students/${studentId}/progress/`),
 };
 
 export const settingsApi = {

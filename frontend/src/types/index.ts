@@ -41,11 +41,14 @@ export interface TeacherAssignment {
 
 // ── AuditLog ──────────────────────────────────────────────────────────────────
 export type AuditAction = 'create' | 'update' | 'delete' | 'login' | 'logout';
+export interface AuditLogFieldChange { old: unknown; new: unknown }
+
 export interface AuditLog {
   id: number; user: number; user_name: string; user_email: string;
   action: AuditAction; action_display: string;
   model_name: string; object_id: string;
-  description: string; ip_address: string | null; timestamp: string;
+  description: string; changes: Record<string, AuditLogFieldChange> | null;
+  ip_address: string | null; timestamp: string;
 }
 
 // ── Tanzania Curriculum ───────────────────────────────────────────────────────
@@ -419,4 +422,40 @@ export interface DashboardSummary {
 
 export interface PaginatedResponse<T> {
   count: number; next: string | null; previous: string | null; results: T[];
+}
+
+// ── Gamification ─────────────────────────────────────────────────────────
+export interface Badge {
+  id: number; code: string; name: string; description: string;
+  icon: string; criteria_type: string; threshold: number;
+}
+
+export interface StudentBadgeAward {
+  id: number; badge: Badge; exam: number | null; exam_title: string | null; awarded_at: string;
+}
+
+export interface StudentStreak {
+  current_streak: number; longest_streak: number;
+  last_exam: number | null; last_exam_title: string | null;
+  last_exam_date: string | null; last_result_passed: boolean | null;
+  updated_at: string;
+}
+
+export interface StudentProgress {
+  student_id: number; student_name: string;
+  streak: StudentStreak; badges: StudentBadgeAward[];
+}
+
+// ── Seating chart ─────────────────────────────────────────────────────────
+export interface SeatingChartSeat {
+  row: number; col: number;
+  student: { id: number; name: string; student_id: string; group_id: number | null } | null;
+}
+
+export interface SeatingChart {
+  classroom_id: number; classroom_name: string;
+  rows: number; cols: number; capacity: number; seated_count: number;
+  seats: SeatingChartSeat[];
+  unseated: { id: number; name: string; student_id: string }[];
+  warnings: string[];
 }

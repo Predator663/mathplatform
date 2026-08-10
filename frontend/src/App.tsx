@@ -22,10 +22,12 @@ import ExamDetailPage from './pages/exams/ExamDetailPage';
 import CreateExamPage from './pages/exams/CreateExamPage';
 import EditExamPage from './pages/exams/EditExamPage';
 import PendingReviewPage from './pages/exams/PendingReviewPage';
+import MyProgressPage from './pages/gamification/MyProgressPage';
 import TrashPage from './pages/exams/TrashPage';
 import MarkEntryPage from './pages/marks/MarkEntryPage';
 import BulkImportPage from './pages/marks/BulkImportPage';
 import GroupsPage from './pages/groups/GroupsPage';
+import SeatingChartPage from './pages/groups/SeatingChartPage';
 import AnalyticsPage from './pages/analytics/AnalyticsPage';
 import StudentAnalyticsPage from './pages/analytics/StudentAnalyticsPage';
 import ClassAnalyticsPage from './pages/analytics/ClassAnalyticsPage';
@@ -94,6 +96,7 @@ export default function App() {
             <Route path="classrooms/:id"     element={<ClassroomDetailPage />} />
             <Route path="exams"               element={<ExamsPage />} />
             <Route path="exams/pending-review" element={<PendingReviewPage />} />
+            <Route path="progress" element={<MyProgressPage />} />
             <Route path="exams/trash"          element={<RequireAdmin><TrashPage /></RequireAdmin>} />
             <Route path="exams/new"           element={<CreateExamPage />} />
             <Route path="exams/:id"           element={<ExamDetailPage />} />
@@ -101,6 +104,7 @@ export default function App() {
             <Route path="exams/:id/marks"     element={<MarkEntryPage />} />
             <Route path="import"             element={<BulkImportPage />} />
             <Route path="groups"             element={<GroupsPage />} />
+            <Route path="groups/seating-chart/:classroomId" element={<SeatingChartPage />} />
             <Route path="analytics"          element={<AnalyticsPage />} />
             <Route path="analytics/student/:id" element={<StudentAnalyticsPage />} />
             <Route path="analytics/class"    element={<ClassAnalyticsPage />} />

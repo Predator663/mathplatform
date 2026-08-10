@@ -118,6 +118,12 @@ class AuditLog(models.Model):
     model_name = models.CharField(max_length=100)
     object_id = models.CharField(max_length=50, blank=True)
     description = models.TextField(blank=True)
+    # Field-level diff for CREATE/UPDATE/DELETE, shaped as
+    # {field_name: {"old": <value or null>, "new": <value or null>}}.
+    # Populated by AuditMiddleware when it can resolve the model behind the
+    # request (see MODEL_REGISTRY there) — null for actions it can't
+    # introspect (login/logout, unregistered endpoints).
+    changes = models.JSONField(null=True, blank=True)
     ip_address = models.GenericIPAddressField(null=True, blank=True)
     timestamp = models.DateTimeField(auto_now_add=True)
 

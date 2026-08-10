@@ -1,9 +1,10 @@
 import { useState, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
   Users, Sparkles, Plus, Camera, Trash2, Edit2, ArrowRightLeft, X,
-  FileText, FileSpreadsheet, Award, UserPlus, History, Check, TrendingUp, AlertTriangle,
+  FileText, FileSpreadsheet, Award, UserPlus, History, Check, TrendingUp, AlertTriangle, LayoutGrid,
 } from 'lucide-react';
 import { groupsApi, studentsApi, subjectsApi } from '../../api';
 import {
@@ -34,6 +35,7 @@ function TierPill({ tier }: { tier: PerformanceTier }) {
 
 export default function GroupsPage() {
   const { user } = useAuthStore();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const canAccess = user?.role === 'super_admin' || user?.role === 'teacher';
 
@@ -271,6 +273,9 @@ export default function GroupsPage() {
           </Button>
           <Button variant="secondary" size="sm" onClick={() => setConstraintsOpen(true)} disabled={!selectedClass}>
             <ArrowRightLeft size={14} /> Peer Constraints
+          </Button>
+          <Button variant="secondary" size="sm" onClick={() => selectedClass && navigate(`/groups/seating-chart/${selectedClass}`)} disabled={!selectedClass}>
+            <LayoutGrid size={14} /> Seating Chart
           </Button>
           <Button variant="secondary" size="sm" onClick={() => setCreateOpen(true)} disabled={!selectedClass}>
             <Plus size={14} /> New Group

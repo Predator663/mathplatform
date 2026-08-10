@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, Fragment } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { ClipboardList, Search, Filter, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ClipboardList, Search, ChevronLeft, ChevronRight, ChevronDown, ChevronUp } from 'lucide-react';
 import { auditApi } from '../../api';
 import type { AuditLog, PaginatedResponse } from '../../types';
 
@@ -19,12 +19,31 @@ function formatTs(ts: string) {
   });
 }
 
+function formatDiffValue(value: unknown): string {
+  if (value === null || value === undefined || value === '') return '—';
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  if (Array.isArray(value)) return value.length ? value.join(', ') : '—';
+  return String(value);
+}
+
+function DiffRow({ field, change }: { field: string; change: { old: unknown; new: unknown } }) {
+  return (
+    <div className="flex items-start gap-2 py-1.5 px-3 rounded-lg bg-surface-900/60 text-xs">
+      <span className="font-mono text-secondary min-w-[110px] flex-shrink-0">{field}</span>
+      <span className="text-rose-400/90 line-through decoration-rose-500/50">{formatDiffValue(change.old)}</span>
+      <span className="text-secondary flex-shrink-0">→</span>
+      <span className="text-emerald-400 font-medium break-all">{formatDiffValue(change.new)}</span>
+    </div>
+  );
+}
+
 export default function AuditLogPage() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [action, setAction] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const [expandedId, setExpandedId] = useState<number | null>(null);
   const pageSize = 30;
 
   const params: Record<string, unknown> = { page, page_size: pageSize };
@@ -116,6 +135,7 @@ export default function AuditLogPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-surface">
+                  <th className="w-8"></th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-secondary uppercase tracking-wider">Timestamp</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-secondary uppercase tracking-wider">User</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-secondary uppercase tracking-wider">Action</th>
@@ -125,23 +145,53 @@ export default function AuditLogPage() {
                 </tr>
               </thead>
               <tbody>
-                {logs.map((log, i) => (
-                  <tr key={log.id} className={`border-b border-surface last:border-0 ${i % 2 === 0 ? '' : 'bg-surface-700/30'}`}>
-                    <td className="px-4 py-3 text-xs text-secondary whitespace-nowrap">{formatTs(log.timestamp)}</td>
-                    <td className="px-4 py-3">
-                      <div className="text-xs font-medium text-primary">{log.user_name || '—'}</div>
-                      <div className="text-xs text-secondary">{log.user_email || '—'}</div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className={`inline-flex px-2 py-0.5 rounded-lg text-xs font-medium ${ACTION_COLORS[log.action] ?? 'bg-surface-700 text-secondary'}`}>
-                        {log.action_display}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-xs text-primary font-mono">{log.model_name}</td>
-                    <td className="px-4 py-3 text-xs text-secondary max-w-xs truncate hidden md:table-cell">{log.description}</td>
-                    <td className="px-4 py-3 text-xs text-secondary font-mono hidden lg:table-cell">{log.ip_address ?? '—'}</td>
-                  </tr>
-                ))}
+                {logs.map((log, i) => {
+                  const changeCount = log.changes ? Object.keys(log.changes).length : 0;
+                  const isExpanded = expandedId === log.id;
+                  return (
+                    <Fragment key={log.id}>
+                      <tr
+                        className={`border-b border-surface last:border-0 ${changeCount > 0 ? 'cursor-pointer hover:bg-surface-700/40' : ''} ${i % 2 === 0 ? '' : 'bg-surface-700/30'}`}
+                        onClick={() => changeCount > 0 && setExpandedId(isExpanded ? null : log.id)}
+                      >
+                        <td className="pl-3">
+                          {changeCount > 0 && (
+                            isExpanded ? <ChevronUp size={13} className="text-secondary" /> : <ChevronDown size={13} className="text-secondary" />
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-xs text-secondary whitespace-nowrap">{formatTs(log.timestamp)}</td>
+                        <td className="px-4 py-3">
+                          <div className="text-xs font-medium text-primary">{log.user_name || '—'}</div>
+                          <div className="text-xs text-secondary">{log.user_email || '—'}</div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className={`inline-flex px-2 py-0.5 rounded-lg text-xs font-medium ${ACTION_COLORS[log.action] ?? 'bg-surface-700 text-secondary'}`}>
+                            {log.action_display}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-xs text-primary font-mono">
+                          {log.model_name}{log.object_id && <span className="text-secondary"> #{log.object_id}</span>}
+                        </td>
+                        <td className="px-4 py-3 text-xs text-secondary max-w-xs truncate hidden md:table-cell">{log.description}</td>
+                        <td className="px-4 py-3 text-xs text-secondary font-mono hidden lg:table-cell">{log.ip_address ?? '—'}</td>
+                      </tr>
+                      {isExpanded && log.changes && (
+                        <tr className="bg-surface-900/40 border-b border-surface last:border-0">
+                          <td colSpan={7} className="px-4 py-3">
+                            <div className="flex flex-col gap-1.5 max-w-2xl">
+                              <p className="text-[11px] text-secondary uppercase tracking-wider font-semibold mb-1">
+                                {changeCount} field{changeCount !== 1 ? 's' : ''} changed
+                              </p>
+                              {Object.entries(log.changes).map(([field, change]) => (
+                                <DiffRow key={field} field={field} change={change} />
+                              ))}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>

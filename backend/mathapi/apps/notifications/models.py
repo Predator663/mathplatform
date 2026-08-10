@@ -83,9 +83,14 @@ class NotificationLog(models.Model):
         FAILED  = 'failed', 'Failed'
         SKIPPED = 'skipped', 'Skipped (preference off)'
 
+    class Channel(models.TextChoices):
+        EMAIL    = 'email', 'Email'
+        WHATSAPP = 'whatsapp', 'WhatsApp'
+
     recipient  = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
                                     related_name='notifications')
     category   = models.CharField(max_length=30, choices=NotificationCategory.choices)
+    channel    = models.CharField(max_length=10, choices=Channel.choices, default=Channel.EMAIL)
     subject    = models.CharField(max_length=255)
     summary    = models.CharField(max_length=500, blank=True,
                                    help_text="One-line plain-text summary for the in-app list")
