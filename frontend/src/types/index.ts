@@ -257,7 +257,80 @@ export interface ExamScore {
   entered_by: number; entered_at: string; updated_at: string;
 }
 
-// ── Analytics ─────────────────────────────────────────────────────────────────
+// ── Daily Quizzes ─────────────────────────────────────────────────────────
+export interface DailyQuiz {
+  id: number; date: string; classroom: number; classroom_name: string;
+  subject: number; subject_name: string; subject_color: string;
+  topic: number | null; topic_name: string | null;
+  title: string; display_title: string;
+  term: TermType; academic_year: string;
+  max_score: number; passing_score: number; passing_percentage: number;
+  notes: string; created_by: number | null; created_by_name: string | null;
+  created_at: string; updated_at: string;
+  score_count: number; average_score: number | null; pass_rate: number | null;
+}
+
+export interface DailyQuizScore {
+  id: number; quiz: number; quiz_title: string; quiz_date: string; max_score: number;
+  student: number; student_name: string; student_id_code: string;
+  score: number; percentage: number; passed: boolean; letter_grade: string;
+  is_absent: boolean; remarks: string;
+  entered_by: number | null; entered_at: string; updated_at: string;
+}
+
+export interface QuizAnalyticsOverview {
+  quiz_count: number; scores_entered: number; present_count: number; absent_count: number;
+  average_score: number | null; pass_rate: number | null; participation_rate: number | null;
+}
+
+export interface QuizTrendPoint {
+  date: string; average: number; pass_rate: number; quiz_count: number;
+}
+
+export interface QuizTopicBreakdown {
+  topic_id: number | null; topic_name: string;
+  attempts: number; average: number; highest: number; lowest: number;
+  trend: 'improving' | 'declining' | 'stable';
+}
+
+export interface QuizStudentAverage {
+  student_id: number; student_name: string; average: number; attempts: number;
+}
+
+export interface ClassroomQuizAnalytics {
+  overview: QuizAnalyticsOverview;
+  trend: QuizTrendPoint[];
+  topic_breakdown: QuizTopicBreakdown[];
+  at_risk_students: QuizStudentAverage[];
+  top_students: QuizStudentAverage[];
+}
+
+export interface QuizStreak {
+  current_streak: number; longest_streak: number;
+  last_quiz_date: string | null; updated_at: string;
+}
+
+export interface QuizProgressTimelinePoint {
+  exam_date: string; percentage: number; exam_title: string; exam_id: number;
+}
+
+export interface StudentQuizProgress {
+  student_id?: number;
+  summary: {
+    quizzes_taken: number; quizzes_absent: number;
+    average: number | null; pass_rate: number | null;
+    highest: number | null; lowest: number | null;
+    trend: 'improving' | 'declining' | 'stable';
+    best_topic: string | null; weakest_topic: string | null;
+  };
+  timeline: QuizProgressTimelinePoint[];
+  moving_average: number[];
+  topic_data: QuizTopicBreakdown[];
+  streak: QuizStreak;
+  badges: StudentBadgeAward[];
+}
+
+
 export interface StudentSummary {
   student_id: number; student_name: string; student_code: string;
   classroom: string | null; total_exams: number;

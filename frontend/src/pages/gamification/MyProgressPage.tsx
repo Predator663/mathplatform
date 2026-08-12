@@ -1,8 +1,11 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Flame, Award, Flag, Star, TrendingUp, Trophy, Lock } from 'lucide-react';
-import { gamificationApi } from '../../api';
-import { LoadingPage, StatCard } from '../../components/ui';
-import type { Badge, StudentProgress } from '../../types';
+import { Flame, Award, Flag, Star, TrendingUp, Trophy, Lock, ClipboardList, Download, ArrowUpRight, ArrowDownRight, Minus } from 'lucide-react';
+import toast from 'react-hot-toast';
+import { gamificationApi, quizzesApi } from '../../api';
+import { LoadingPage, StatCard, Button } from '../../components/ui';
+import { downloadBlob, gradeColor } from '../../utils';
+import type { Badge, StudentProgress, StudentQuizProgress } from '../../types';
 
 const ICONS: Record<string, React.ElementType> = {
   flag: Flag, flame: Flame, star: Star, 'trending-up': TrendingUp, award: Award,
@@ -18,7 +21,14 @@ function formatDate(iso: string | null) {
   return new Date(iso).toLocaleDateString('en-TZ', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
+function TrendIcon({ trend }: { trend: string }) {
+  if (trend === 'improving') return <ArrowUpRight size={13} className="text-emerald-400" />;
+  if (trend === 'declining') return <ArrowDownRight size={13} className="text-rose-400" />;
+  return <Minus size={13} className="text-secondary" />;
+}
+
 export default function MyProgressPage() {
+  const [downloading, setDownloading] = useState(false);
   const { data: progress, isLoading: loadingProgress } = useQuery<StudentProgress>({
     queryKey: ['gamification-my-progress'],
     queryFn: () => gamificationApi.myProgress().then(r => r.data),
@@ -27,6 +37,23 @@ export default function MyProgressPage() {
     queryKey: ['gamification-badges'],
     queryFn: () => gamificationApi.badges().then(r => r.data),
   });
+  const { data: quizProgress } = useQuery<StudentQuizProgress>({
+    queryKey: ['quiz-my-progress'],
+    queryFn: () => quizzesApi.myProgress().then(r => r.data),
+  });
+
+  const handleDownloadReport = async () => {
+    if (!quizProgress?.student_id) return;
+    setDownloading(true);
+    try {
+      const res = await quizzesApi.progressReportPdf(quizProgress.student_id);
+      downloadBlob(res.data as Blob, 'quiz_progress_report.pdf');
+    } catch {
+      toast.error('Could not download report');
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   if (loadingProgress || loadingCatalog) return <LoadingPage />;
   if (!progress) return null;
@@ -61,6 +88,46 @@ export default function MyProgressPage() {
           <span className={`badge ${streak.last_result_passed ? 'badge-green' : 'badge-amber'}`}>
             {streak.last_result_passed ? 'Passed' : 'Below Pass Mark'}
           </span>
+        </div>
+      )}
+
+      {quizProgress && quizProgress.summary.quizzes_taken > 0 && (
+        <div className="flex flex-col gap-4">
+          <div className="flex items-center justify-between">
+            <h2 className="section-title flex items-center gap-2"><ClipboardList size={16} className="text-azure-400" /> Daily Quiz Progress</h2>
+            <Button variant="secondary" size="sm" onClick={handleDownloadReport} loading={downloading}>
+              <Download size={13} /> Download Report
+            </Button>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <StatCard label="Quiz Streak" value={`${quizProgress.streak.current_streak} 🔥`} color="amber"
+              sub="quiz days in a row" icon={<Flame size={18} />} />
+            <StatCard label="Quizzes Taken" value={String(quizProgress.summary.quizzes_taken)} color="blue"
+              sub="all time" icon={<ClipboardList size={18} />} />
+            <StatCard label="Average" value={quizProgress.summary.average != null ? `${quizProgress.summary.average}%` : '—'} color="green"
+              sub="across all quizzes" icon={<Trophy size={18} />} />
+            <StatCard label="Best Topic" value={quizProgress.summary.best_topic ?? '—'} color="violet"
+              sub={quizProgress.summary.weakest_topic ? `Focus: ${quizProgress.summary.weakest_topic}` : ''} icon={<Star size={18} />} />
+          </div>
+
+          {quizProgress.topic_data.length > 0 && (
+            <div className="card p-4">
+              <p className="text-xs text-secondary uppercase tracking-widest font-display font-semibold mb-3">Topic Mastery</p>
+              <div className="flex flex-col gap-2">
+                {quizProgress.topic_data.map(t => (
+                  <div key={t.topic_name} className="flex items-center justify-between gap-2 py-1.5">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <TrendIcon trend={t.trend} />
+                      <span className="text-sm text-primary truncate">{t.topic_name}</span>
+                      <span className="text-xs text-secondary flex-shrink-0">({t.attempts})</span>
+                    </div>
+                    <span className={`font-mono text-sm font-bold flex-shrink-0 ${gradeColor(t.average)}`}>{t.average}%</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

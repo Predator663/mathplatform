@@ -1,19 +1,47 @@
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState, useRef, useEffect } from 'react';
-import { BarChart3, Edit2, Save, X, Trash2, ToggleLeft, ToggleRight, Flame, Award } from 'lucide-react';
-import { studentsApi, gamificationApi } from '../../api';
+import { BarChart3, Edit2, Save, X, Trash2, ToggleLeft, ToggleRight, Flame, Award, ClipboardList, Download } from 'lucide-react';
+import { studentsApi, gamificationApi, quizzesApi } from '../../api';
 import { useCanManage } from '../../hooks/useCanManage';
 import { LoadingPage, Button, Input, Select } from '../../components/ui';
-import { formatDate } from '../../utils';
-import type { StudentProfile, Classroom, Stream, PaginatedResponse, StudentProgress } from '../../types';
+import { formatDate, downloadBlob } from '../../utils';
+import type { StudentProfile, Classroom, Stream, PaginatedResponse, StudentProgress, StudentQuizProgress } from '../../types';
 import toast from 'react-hot-toast';
 import { useForm } from 'react-hook-form';
+
+function QuizReportDownloadLink({ studentId }: { studentId: number }) {
+  const [downloading, setDownloading] = useState(false);
+  const handleDownload = async () => {
+    setDownloading(true);
+    try {
+      const res = await quizzesApi.progressReportPdf(studentId);
+      downloadBlob(res.data as Blob, 'quiz_progress_report.pdf');
+    } catch {
+      toast.error('Could not download report');
+    } finally {
+      setDownloading(false);
+    }
+  };
+  return (
+    <button onClick={handleDownload} disabled={downloading} className="card-hover p-4 text-left disabled:opacity-60">
+      <p className="font-display font-semibold text-sm text-primary flex items-center gap-1.5">
+        <Download size={14} className="text-emerald-400" /> {downloading ? 'Preparing…' : 'Download Quiz Report'}
+      </p>
+      <p className="text-muted text-xs mt-0.5">PDF with badges, streak & topic mastery</p>
+    </button>
+  );
+}
 
 function StudentProgressWidget({ studentId }: { studentId: number }) {
   const { data: progress, isLoading } = useQuery<StudentProgress>({
     queryKey: ['gamification-student-progress', studentId],
     queryFn: () => gamificationApi.studentProgress(studentId).then(r => r.data),
+    retry: false,
+  });
+  const { data: quizProgress } = useQuery<StudentQuizProgress>({
+    queryKey: ['quiz-student-progress', studentId],
+    queryFn: () => quizzesApi.studentProgress(studentId).then(r => r.data),
     retry: false,
   });
 
@@ -27,10 +55,21 @@ function StudentProgressWidget({ studentId }: { studentId: number }) {
           <Flame size={16} className="text-amber-400" />
         </div>
         <div>
-          <p className="text-xs text-secondary">Current Streak</p>
+          <p className="text-xs text-secondary">Exam Streak</p>
           <p className="font-display font-bold text-primary">{streak.current_streak} exam{streak.current_streak !== 1 ? 's' : ''}</p>
         </div>
       </div>
+      {quizProgress && quizProgress.summary.quizzes_taken > 0 && (
+        <div className="flex items-center gap-2">
+          <div className="w-9 h-9 rounded-xl bg-sky-500/15 flex items-center justify-center flex-shrink-0">
+            <ClipboardList size={16} className="text-sky-400" />
+          </div>
+          <div>
+            <p className="text-xs text-secondary">Quiz Streak</p>
+            <p className="font-display font-bold text-primary">{quizProgress.streak.current_streak} day{quizProgress.streak.current_streak !== 1 ? 's' : ''}</p>
+          </div>
+        </div>
+      )}
       <div className="flex items-center gap-2">
         <div className="w-9 h-9 rounded-xl bg-violet-500/15 flex items-center justify-center flex-shrink-0">
           <Award size={16} className="text-violet-400" />
@@ -370,6 +409,11 @@ export default function StudentDetailPage() {
               <p className="text-muted text-xs mt-0.5">{desc}</p>
             </button>
           ))}
+          <button onClick={() => navigate(`/quizzes/analytics/${student.classroom}`)} className="card-hover p-4 text-left">
+            <p className="font-display font-semibold text-sm text-primary flex items-center gap-1.5"><ClipboardList size={14} className="text-sky-400" /> Class Quiz Analytics</p>
+            <p className="text-muted text-xs mt-0.5">Daily quiz trends for this classroom</p>
+          </button>
+          <QuizReportDownloadLink studentId={student.id} />
         </div>
       )}
     </div>

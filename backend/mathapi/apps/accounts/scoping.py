@@ -83,3 +83,36 @@ def scope_exams(user, base_qs=None):
         except Exception:
             return qs.none()
     return qs.none()
+
+
+def scope_quizzes(user, base_qs=None):
+    """Return a scoped DailyQuiz queryset for the given user.
+
+    Mirrors scope_exams()'s isolation rules exactly (own-created-only for
+    teachers, full access for admin, own-classroom-only for
+    student/parent) — daily quizzes have no draft/published gate the way
+    Exam does, so a student/parent sees every quiz recorded for their
+    classroom as soon as it exists.
+    """
+    from mathapi.apps.quizzes.models import DailyQuiz
+    qs = base_qs if base_qs is not None else DailyQuiz.objects.all()
+    qs = qs.filter(is_deleted=False)
+    if user.role == 'super_admin':
+        return qs
+    if user.role == 'teacher':
+        subjects = get_teacher_subjects(user)
+        classrooms = get_teacher_classrooms(user)
+        return qs.filter(created_by=user, subject__in=subjects, classroom__in=classrooms)
+    if user.role == 'student':
+        try:
+            profile = user.student_profile
+            return qs.filter(classroom=profile.classroom)
+        except Exception:
+            return qs.none()
+    if user.role == 'parent':
+        try:
+            student_classrooms = user.linked_students.values_list('student__classroom', flat=True)
+            return qs.filter(classroom__in=student_classrooms)
+        except Exception:
+            return qs.none()
+    return qs.none()

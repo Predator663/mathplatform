@@ -7,9 +7,11 @@ claims to require.
 
 criteria_type meanings:
   exams_taken   — total published, non-absent exams scored >= threshold
-  streak        — current pass-streak >= threshold
+  streak        — current exam pass-streak >= threshold
   perfect_score — scored 100% on any single exam
   comeback      — the very next exam after a fail was a pass
+  quiz_streak   — current daily-quiz participation streak >= threshold
+  quiz_perfect  — scored 100% on any single daily quiz
 """
 
 BADGE_CATALOG = [
@@ -42,5 +44,26 @@ BADGE_CATALOG = [
         'code': 'comeback', 'name': 'Comeback',
         'description': 'Bounced back from a fail to a pass on the next exam.',
         'icon': 'trending-up', 'criteria_type': 'comeback', 'threshold': 0,
+    },
+]
+
+# Daily-quiz badges — seeded separately (see migrations/0003_seed_quiz_badges.py)
+# so an already-deployed database gets them via a new migration rather than
+# requiring 0002 to be edited after the fact.
+QUIZ_BADGE_CATALOG = [
+    {
+        'code': 'quiz_streak_5', 'name': 'Daily Grinder',
+        'description': 'Attempted 5 daily quizzes in a row.',
+        'icon': 'flame', 'criteria_type': 'quiz_streak', 'threshold': 5,
+    },
+    {
+        'code': 'quiz_streak_20', 'name': 'Quiz Marathon',
+        'description': 'Attempted 20 daily quizzes in a row.',
+        'icon': 'flame', 'criteria_type': 'quiz_streak', 'threshold': 20,
+    },
+    {
+        'code': 'quiz_perfect', 'name': 'Quiz Ace',
+        'description': 'Scored 100% on a daily quiz.',
+        'icon': 'star', 'criteria_type': 'quiz_perfect', 'threshold': 100,
     },
 ]

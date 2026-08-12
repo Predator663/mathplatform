@@ -35,6 +35,7 @@ LOCAL_APPS = [
     'mathapi.apps.groups',
     'mathapi.apps.notifications',
     'mathapi.apps.gamification',
+    'mathapi.apps.quizzes',
 ]
 
 # admin MUST come after local apps so Django sees the custom

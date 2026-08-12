@@ -7,7 +7,7 @@ export interface PageConfig {
   label?: string;
 }
 
-export type TeacherResource = 'students' | 'exams' | 'classrooms' | 'subjects';
+export type TeacherResource = 'students' | 'exams' | 'classrooms' | 'subjects' | 'quizzes';
 export type TeacherAction = 'add' | 'edit' | 'delete';
 export type TeacherPermissionsMap = Record<TeacherResource, Record<TeacherAction, boolean>>;
 
@@ -43,6 +43,7 @@ export const DEFAULT_TEACHER_PERMISSIONS: TeacherPermissionsMap = {
   exams:      { add: true,  edit: true,  delete: true },
   classrooms: { add: true,  edit: true,  delete: true },
   subjects:   { add: false, edit: false, delete: false },
+  quizzes:    { add: true,  edit: true,  delete: true },
 };
 
 const DEFAULTS: SiteSettings = {
@@ -77,6 +78,7 @@ export const PAGE_REGISTRY: { key: string; label: string; description: string }[
   { key: 'reports',    label: 'Reports',           description: 'Report generation' },
   { key: 'dashboard',  label: 'Dashboard',         description: 'Main dashboard' },
   { key: 'marks',      label: 'Mark Entry',        description: 'Exam mark entry' },
+  { key: 'quizzes',    label: 'Daily Quizzes',     description: 'Daily quiz list & mark entry' },
   { key: 'import',     label: 'Bulk Import',       description: 'Bulk data import' },
 ];
 

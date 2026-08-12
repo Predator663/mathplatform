@@ -2,7 +2,7 @@ import { NavLink, useNavigate, Link } from 'react-router-dom';
 import {
   LayoutDashboard, Users, Users2, BookOpen, BarChart3, GraduationCap,
   AlertTriangle, LogOut, Settings, FileText, Upload, School, X,
-  BookMarked, ClipboardList, ClipboardCheck, Layers, Trash2, Bell, Trophy,
+  BookMarked, ClipboardList, ClipboardCheck, Layers, Trash2, Bell, Trophy, CalendarCheck,
 } from 'lucide-react';
 import { useAuthStore } from '../../store/auth';
 import { useSiteSettingsStore } from '../../store/siteSettings';
@@ -18,6 +18,7 @@ const navItems = [
   { to: '/classrooms', icon: School,           label: 'Classrooms',  pageKey: 'classrooms' },
   { to: '/students',   icon: GraduationCap,    label: 'Students',    pageKey: 'students' },
   { to: '/exams',      icon: BookOpen,          label: 'Exams',       pageKey: 'exams' },
+  { to: '/quizzes',    icon: CalendarCheck,     label: 'Daily Quizzes', pageKey: 'quizzes' },
   { to: '/import',     icon: Upload,            label: 'Bulk Import', pageKey: 'import' },
   { to: '/groups',     icon: Users2,            label: 'Peer Groups', pageKey: null },
   { to: '/analytics',  icon: BarChart3,         label: 'Analytics',   pageKey: 'analytics' },

@@ -1026,6 +1026,147 @@ def generate_student_report_pdf(student, scores, topic_data,
     return buf.getvalue()
 
 
+def generate_quiz_progress_pdf(student, progress, streak, badges,
+                                school_name='School of Excellence') -> bytes:
+    """
+    Daily-quiz progress report (A4) for one student: summary metrics,
+    quiz streak, earned badges, score trend, and topic-mastery breakdown.
+    Reuses the same chart/section helpers as generate_student_report_pdf
+    so the two report types read as one consistent family of documents.
+
+    `progress` is the dict returned by
+    quizzes.analytics_services.get_student_quiz_topic_progress()
+    (keys: summary, timeline, moving_average, topic_data).
+    `streak` is a gamification.models.QuizStreak instance.
+    `badges` is a list of gamification.models.StudentBadge instances
+    (already filtered to quiz-related badges by the caller).
+    """
+    buf = io.BytesIO()
+    styles = _make_styles()
+    summary = progress.get('summary') or {}
+    timeline = progress.get('timeline') or []
+    topic_data = progress.get('topic_data') or []
+
+    quizzes_taken = summary.get('quizzes_taken') or 0
+    avg = summary.get('average')
+    trend_label = (summary.get('trend') or 'no_data').replace('_', ' ').capitalize()
+
+    meta = {
+        'school_name': school_name,
+        'academic_year': timeline[-1]['exam_date'][:4] if timeline else '—',
+        'doc_title': f'Daily Quiz Progress Report — {student.full_name}',
+        'doc_subtitle': (
+            f'Student ID: {student.student_id}  ·  '
+            f'Class: {student.classroom or "—"}'
+        ),
+        'footer_centre': f'Student ID: {student.student_id}',
+    }
+
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=MARGIN, rightMargin=MARGIN,
+        topMargin=4.2*cm, bottomMargin=2.2*cm,
+    )
+    story = []
+
+    # ── Summary metrics ──────────────────────────────────────────────────
+    story.append(_meta_grid([
+        ('STUDENT', student.full_name),
+        ('STUDENT ID', student.student_id),
+        ('CLASSROOM', str(student.classroom) if student.classroom else '—'),
+        ('QUIZZES TAKEN', quizzes_taken),
+        ('OVERALL AVG', f'{avg}%' if avg is not None else '—'),
+        ('PASS RATE', f'{summary.get("pass_rate")}%' if summary.get('pass_rate') is not None else '—'),
+    ], styles))
+    story.append(Spacer(1, 0.25*cm))
+    story.append(_meta_grid([
+        ('HIGHEST SCORE', f'{summary.get("highest")}%' if summary.get('highest') is not None else '—'),
+        ('LOWEST SCORE', f'{summary.get("lowest")}%' if summary.get('lowest') is not None else '—'),
+        ('PERFORMANCE TREND', trend_label),
+        ('CURRENT QUIZ STREAK', f'{streak.current_streak} 🔥' if streak else '—'),
+        ('LONGEST QUIZ STREAK', str(streak.longest_streak) if streak else '—'),
+        ('BADGES EARNED', str(len(badges))),
+    ], styles))
+    story.append(Spacer(1, 0.45*cm))
+
+    # ── Badges ────────────────────────────────────────────────────────────
+    if badges:
+        rows = [['Badge', 'Description', 'Earned']]
+        for b in badges:
+            rows.append([b.badge.name, b.badge.description, b.awarded_at.strftime('%d %b %Y')])
+        btbl = Table(rows, colWidths=[4.2*cm, PAGE_W - 2*MARGIN - 4.2*cm - 3.2*cm, 3.2*cm])
+        btbl.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), BRAND_DARK),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 8.5),
+            ('GRID', (0, 0), (-1, -1), 0.3, colors.HexColor('#e5e7eb')),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, BRAND_LIGHT]),
+            ('TOPPADDING', (0, 0), (-1, -1), 5),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+            ('LEFTPADDING', (0, 0), (-1, -1), 6),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ]))
+        story.extend(_section_card('Badges Earned', btbl, styles,
+                     caption='Awarded automatically for quiz consistency and standout scores.'))
+    else:
+        story.extend(_section_card(
+            'Badges Earned', Paragraph('No badges earned yet — keep up the daily quizzes!', styles['body']), styles,
+        ))
+    story.append(Spacer(1, 0.4*cm))
+
+    # ── Score trend chart ────────────────────────────────────────────────
+    if timeline:
+        story.extend(_section_card(
+            'Quiz Score Trend Over Time',
+            _trend_chart(timeline, progress.get('moving_average')), styles,
+            caption=(
+                'Each point is one quiz\'s score. The dashed violet line is a 3-quiz '
+                'moving average, smoothing out one-off high/low results.'
+            ),
+        ))
+        story.append(Spacer(1, 0.4*cm))
+
+    # ── Topic mastery ─────────────────────────────────────────────────────
+    if topic_data:
+        story.extend(_section_card(
+            'Topic Mastery', _topic_bar_chart(topic_data, width=PAGE_W - 2*MARGIN), styles,
+            caption='Average score per topic across every daily quiz recorded on that topic.',
+        ))
+        story.append(Spacer(1, 0.3*cm))
+
+        rows = [['Topic', 'Quizzes', 'Average', 'Highest', 'Lowest', 'Trend']]
+        for t in topic_data:
+            rows.append([
+                t['topic_name'], str(t['attempts']), f"{t['average']}%",
+                f"{t['highest']}%", f"{t['lowest']}%", t['trend'].capitalize(),
+            ])
+        ttbl = Table(rows, colWidths=[
+            PAGE_W - 2*MARGIN - 2.2*cm*4 - 2.6*cm, 2.2*cm, 2.2*cm, 2.2*cm, 2.2*cm, 2.6*cm,
+        ])
+        ttbl.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), BRAND_DARK),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 8.5),
+            ('GRID', (0, 0), (-1, -1), 0.3, colors.HexColor('#e5e7eb')),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, BRAND_LIGHT]),
+            ('TOPPADDING', (0, 0), (-1, -1), 4),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+            ('LEFTPADDING', (0, 0), (-1, -1), 5),
+            ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
+        ]))
+        story.append(ttbl)
+    else:
+        story.extend(_section_card(
+            'Topic Mastery', Paragraph('No topic-tagged quizzes recorded yet.', styles['body']), styles,
+        ))
+
+    doc.build(story, onFirstPage=lambda c, d: _header_footer(c, d, meta),
+              onLaterPages=lambda c, d: _header_footer(c, d, meta))
+    return buf.getvalue()
+
+
 def _std_dev_pdf(values):
     if len(values) < 2:
         return 0

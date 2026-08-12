@@ -145,6 +145,7 @@ DEFAULT_TEACHER_PERMISSIONS = {
     'exams':      {'add': True,  'edit': True,  'delete': True},
     'classrooms': {'add': True,  'edit': True,  'delete': True},
     'subjects':   {'add': False, 'edit': False, 'delete': False},
+    'quizzes':    {'add': True,  'edit': True,  'delete': True},
 }
 
 

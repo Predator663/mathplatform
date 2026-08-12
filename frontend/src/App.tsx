@@ -18,6 +18,10 @@ import CreateClassroomPage from './pages/classrooms/CreateClassroomPage';
 import ClassroomDetailPage from './pages/classrooms/ClassroomDetailPage';
 import GradeLevelsPage from './pages/classrooms/GradeLevelsPage';
 import ExamsPage from './pages/exams/ExamsPage';
+import QuizzesPage from './pages/quizzes/QuizzesPage';
+import CreateQuizPage from './pages/quizzes/CreateQuizPage';
+import QuizMarkEntryPage from './pages/quizzes/QuizMarkEntryPage';
+import ClassroomQuizAnalyticsPage from './pages/quizzes/ClassroomQuizAnalyticsPage';
 import ExamDetailPage from './pages/exams/ExamDetailPage';
 import CreateExamPage from './pages/exams/CreateExamPage';
 import EditExamPage from './pages/exams/EditExamPage';
@@ -95,6 +99,11 @@ export default function App() {
             <Route path="classrooms/new"     element={<CreateClassroomPage />} />
             <Route path="classrooms/:id"     element={<ClassroomDetailPage />} />
             <Route path="exams"               element={<ExamsPage />} />
+            <Route path="quizzes"             element={<QuizzesPage />} />
+            <Route path="quizzes/new"         element={<CreateQuizPage />} />
+            <Route path="quizzes/:id/marks"   element={<QuizMarkEntryPage />} />
+            <Route path="quizzes/analytics"   element={<ClassroomQuizAnalyticsPage />} />
+            <Route path="quizzes/analytics/:classroomId" element={<ClassroomQuizAnalyticsPage />} />
             <Route path="exams/pending-review" element={<PendingReviewPage />} />
             <Route path="progress" element={<MyProgressPage />} />
             <Route path="exams/trash"          element={<RequireAdmin><TrashPage /></RequireAdmin>} />

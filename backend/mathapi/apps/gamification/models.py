@@ -30,6 +30,8 @@ class StudentBadge(models.Model):
     badge      = models.ForeignKey(Badge, on_delete=models.CASCADE, related_name='awards')
     exam       = models.ForeignKey('exams.Exam', on_delete=models.SET_NULL, null=True, blank=True,
                                     help_text='The exam whose score triggered this award, if any.')
+    quiz       = models.ForeignKey('quizzes.DailyQuiz', on_delete=models.SET_NULL, null=True, blank=True,
+                                    help_text='The daily quiz whose score triggered this award, if any.')
     awarded_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -58,3 +60,25 @@ class StudentStreak(models.Model):
 
     def __str__(self):
         return f'{self.student.full_name}: {self.current_streak} (best {self.longest_streak})'
+
+
+class QuizStreak(models.Model):
+    """Daily-quiz participation streak — distinct from StudentStreak
+    (which tracks *exam pass* streaks). This counts consecutive quiz
+    *occurrences* the student attended (present, not absent), walking the
+    actual sequence of dates quizzes were given rather than raw calendar
+    days — so weekends/holidays with no quiz scheduled never break a
+    streak. Recomputed from scratch by
+    gamification.services.recalculate_quiz_streak whenever a quiz score
+    is entered, edited, or deleted."""
+    student         = models.OneToOneField('students.StudentProfile', on_delete=models.CASCADE, related_name='quiz_streak')
+    current_streak  = models.PositiveIntegerField(default=0)
+    longest_streak  = models.PositiveIntegerField(default=0)
+    last_quiz_date  = models.DateField(null=True, blank=True)
+    updated_at      = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'gamification_quiz_streaks'
+
+    def __str__(self):
+        return f'{self.student.full_name}: {self.current_streak} quiz days (best {self.longest_streak})'

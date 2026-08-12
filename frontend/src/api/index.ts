@@ -241,6 +241,27 @@ export const gamificationApi = {
   studentProgress: (studentId: number) => api.get(`/gamification/students/${studentId}/progress/`),
 };
 
+export const quizzesApi = {
+  quizzes: (params?: object) => api.get('/quizzes/quizzes/', { params }),
+  quiz: (id: number) => api.get(`/quizzes/quizzes/${id}/`),
+  createQuiz: (data: object) => api.post('/quizzes/quizzes/', data),
+  updateQuiz: (id: number, data: object) => api.patch(`/quizzes/quizzes/${id}/`, data),
+  deleteQuiz: (id: number) => api.delete(`/quizzes/quizzes/${id}/`),
+  bulkScores: (quizId: number, scores: object[]) =>
+    api.post(`/quizzes/quizzes/${quizId}/bulk_scores/`, { scores }),
+  scores: (params?: object) => api.get('/quizzes/scores/', { params }),
+  academicYears: () => api.get('/quizzes/quizzes/academic-years/'),
+  exportCsv: (params?: object) =>
+    api.get('/quizzes/quizzes/export-csv/', { params, responseType: 'blob' }),
+  classroomAnalytics: (classroomId: number, params?: object) =>
+    api.get(`/quizzes/classroom/${classroomId}/analytics/`, { params }),
+  myProgress: (params?: object) => api.get('/quizzes/my-progress/', { params }),
+  studentProgress: (studentId: number, params?: object) =>
+    api.get(`/quizzes/students/${studentId}/progress/`, { params }),
+  progressReportPdf: (studentId: number, params?: object) =>
+    api.get(`/quizzes/students/${studentId}/progress-report.pdf/`, { params, responseType: 'blob' }),
+};
+
 export const settingsApi = {
   get: () => api.get('/auth/settings/'),
   patch: (data: object) => api.patch('/auth/settings/', data),
