@@ -257,6 +257,45 @@ export interface ExamScore {
   entered_by: number; entered_at: string; updated_at: string;
 }
 
+// ── Student Comparison ───────────────────────────────────────────────────
+export interface ComparisonTimelinePoint {
+  exam_id: number; exam_title: string; exam_type: ExamType; term: TermType;
+  academic_year: string; exam_date: string; score: number; max_score: number;
+  percentage: number; letter_grade: string; passed: boolean;
+}
+
+export interface ComparisonTopic {
+  topic_id: number; topic_name: string; color: string;
+  average: number; highest: number; lowest: number; attempts: number;
+  trend: 'improving' | 'declining' | 'stable';
+  history: { percentage: number; exam_date: string; exam_title: string }[];
+}
+
+export interface ComparisonGrowth {
+  first_pct: number | null; last_pct: number | null; delta: number | null;
+}
+
+export interface StudentComparisonProfile {
+  student_id: number; name: string; student_code: string; classroom: string | null;
+  summary: {
+    total_exams: number; average_percentage: number | null;
+    highest_percentage: number; lowest_percentage: number;
+    pass_rate: number; trend: string; predicted_necta_grade: string | null;
+  };
+  timeline: ComparisonTimelinePoint[];
+  trend: 'improving' | 'declining' | 'stable';
+  moving_average: number[];
+  topics: ComparisonTopic[];
+  growth: ComparisonGrowth;
+  quiz_streak: number | null;
+  badge_count: number | null;
+}
+
+export interface StudentComparisonResult {
+  students: StudentComparisonProfile[];
+  missing_ids: number[];
+}
+
 // ── Daily Quizzes ─────────────────────────────────────────────────────────
 export interface DailyQuiz {
   id: number; date: string; classroom: number; classroom_name: string;

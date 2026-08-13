@@ -625,3 +625,97 @@ class DashboardSummaryView(APIView):
             ],
             'recent_exam_stats': recent_exam_stats,
         })
+
+
+def _parse_student_ids(request):
+    """Returns (student_ids, error_response_or_none). student_ids is a
+    de-duplicated list preserving the order given, which callers rely on
+    for consistent chart colors and legend ordering."""
+    raw = request.query_params.get('student_ids', '')
+    try:
+        ids = [int(x) for x in raw.split(',') if x.strip()]
+    except ValueError:
+        return None, Response({'detail': 'student_ids must be a comma-separated list of integers.'}, status=status.HTTP_400_BAD_REQUEST)
+    ids = list(dict.fromkeys(ids))
+    if len(ids) < 2:
+        return None, Response({'detail': 'Provide at least 2 student_ids to compare.'}, status=status.HTTP_400_BAD_REQUEST)
+    if len(ids) > 6:
+        return None, Response({'detail': 'You can compare up to 6 students at a time.'}, status=status.HTTP_400_BAD_REQUEST)
+    return ids, None
+
+
+class StudentComparisonView(APIView):
+    """
+    GET /api/analytics/students/compare/?student_ids=1,2,3&subject_id=&include_quizzes=true
+
+    Side-by-side comparison of 2-6 students: exam summary, trend, topic
+    breakdown, and a simple growth figure for each — built for a teacher
+    to pull up during a 1:1 conversation, or a parent comparing their own
+    children. Every id is checked individually with the same
+    _check_student_access rule every other per-student analytics endpoint
+    uses, so a teacher/parent can only compare students they already have
+    access to — this never grants visibility into a student the caller
+    couldn't already view on their own.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        student_ids, error = _parse_student_ids(request)
+        if error:
+            return error
+        for sid in student_ids:
+            _check_student_access(request.user, sid)
+
+        from . import comparison_services
+        created_by_id = request.user.id if request.user.role == 'teacher' else None
+        data = comparison_services.get_students_comparison(
+            student_ids,
+            subject_id=_get_subject_id(request),
+            created_by_id=created_by_id,
+            include_quizzes=request.query_params.get('include_quizzes') == 'true',
+        )
+        if data['missing_ids']:
+            return Response({'detail': f"Student(s) not found: {data['missing_ids']}"}, status=status.HTTP_404_NOT_FOUND)
+        return Response(data)
+
+
+class StudentComparisonPDFView(APIView):
+    """GET /api/analytics/students/compare/pdf/?student_ids=1,2&subject_id=&include_quizzes=true
+    Same access rule as StudentComparisonView, rendered as a printable PDF."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        student_ids, error = _parse_student_ids(request)
+        if error:
+            return error
+        for sid in student_ids:
+            _check_student_access(request.user, sid)
+
+        from django.http import HttpResponse
+        from . import comparison_services
+        from mathapi.apps.reports.views import _resolve_site_name
+        from mathapi.apps.reports.pdf_engine import generate_student_comparison_pdf
+        from mathapi.apps.accounts.models import Subject
+
+        subject_id = _get_subject_id(request)
+        created_by_id = request.user.id if request.user.role == 'teacher' else None
+        data = comparison_services.get_students_comparison(
+            student_ids,
+            subject_id=subject_id,
+            created_by_id=created_by_id,
+            include_quizzes=request.query_params.get('include_quizzes') == 'true',
+        )
+        if data['missing_ids']:
+            return Response({'detail': f"Student(s) not found: {data['missing_ids']}"}, status=status.HTTP_404_NOT_FOUND)
+
+        subject_name = None
+        if subject_id:
+            subject = Subject.objects.filter(id=subject_id).first()
+            subject_name = subject.name if subject else None
+
+        pdf_bytes = generate_student_comparison_pdf(
+            data['students'], school_name=_resolve_site_name(request), subject_name=subject_name,
+        )
+        response = HttpResponse(pdf_bytes, content_type='application/pdf')
+        response['Content-Disposition'] = 'attachment; filename="student_comparison.pdf"'
+        return response

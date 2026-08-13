@@ -1,7 +1,7 @@
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState, useRef, useEffect } from 'react';
-import { BarChart3, Edit2, Save, X, Trash2, ToggleLeft, ToggleRight, Flame, Award, ClipboardList, Download } from 'lucide-react';
+import { BarChart3, Edit2, Save, X, Trash2, ToggleLeft, ToggleRight, Flame, Award, ClipboardList, Download, GitCompare } from 'lucide-react';
 import { studentsApi, gamificationApi, quizzesApi } from '../../api';
 import { useCanManage } from '../../hooks/useCanManage';
 import { LoadingPage, Button, Input, Select } from '../../components/ui';
@@ -412,6 +412,10 @@ export default function StudentDetailPage() {
           <button onClick={() => navigate(`/quizzes/analytics/${student.classroom}`)} className="card-hover p-4 text-left">
             <p className="font-display font-semibold text-sm text-primary flex items-center gap-1.5"><ClipboardList size={14} className="text-sky-400" /> Class Quiz Analytics</p>
             <p className="text-muted text-xs mt-0.5">Daily quiz trends for this classroom</p>
+          </button>
+          <button onClick={() => navigate(`/analytics/compare-students?student_id=${student.id}`)} className="card-hover p-4 text-left">
+            <p className="font-display font-semibold text-sm text-primary flex items-center gap-1.5"><GitCompare size={14} className="text-violet-400" /> Compare With Another Student</p>
+            <p className="text-muted text-xs mt-0.5">Side-by-side trends — great for a motivating 1:1</p>
           </button>
           <QuizReportDownloadLink studentId={student.id} />
         </div>

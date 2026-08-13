@@ -36,6 +36,7 @@ import AnalyticsPage from './pages/analytics/AnalyticsPage';
 import StudentAnalyticsPage from './pages/analytics/StudentAnalyticsPage';
 import ClassAnalyticsPage from './pages/analytics/ClassAnalyticsPage';
 import CompareAnalyticsPage from './pages/analytics/CompareAnalyticsPage';
+import StudentComparisonPage from './pages/analytics/StudentComparisonPage';
 import AtRiskPage from './pages/analytics/AtRiskPage';
 import RiskScoresPage from './pages/analytics/RiskScoresPage';
 import TopicDependenciesPage from './pages/analytics/TopicDependenciesPage';
@@ -118,6 +119,7 @@ export default function App() {
             <Route path="analytics/student/:id" element={<StudentAnalyticsPage />} />
             <Route path="analytics/class"    element={<ClassAnalyticsPage />} />
             <Route path="analytics/compare"  element={<CompareAnalyticsPage />} />
+            <Route path="analytics/compare-students" element={<StudentComparisonPage />} />
             <Route path="analytics/risk"     element={<RiskScoresPage />} />
             <Route path="analytics/dependencies" element={<TopicDependenciesPage />} />
             <Route path="analytics/integrity" element={<IntegrityPage />} />

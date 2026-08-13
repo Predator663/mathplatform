@@ -326,7 +326,270 @@ def _topic_bar_chart(topics, width=CHART_W, height=CHART_H) -> Drawing:
     return d
 
 
-def _comparison_bar_chart(labels, student_vals, class_vals, width=CHART_W, height=CHART_H) -> Drawing:
+STUDENT_COMPARE_COLORS = [BRAND_BLUE, BRAND_GREEN, BRAND_AMBER, BRAND_VIOLET, BRAND_ROSE, colors.HexColor('#06b6d4')]
+
+
+def _multi_trend_chart(students, width=CHART_W, height=CHART_H) -> Drawing:
+    """
+    Overlays each student's exam-percentage trend on one chart, one
+    color-coded line per student. Plotted by exam *sequence* (1st exam,
+    2nd exam, ...) rather than calendar date, since two students being
+    compared may have taken a different number of exams on different
+    dates — sequence keeps the chart readable and still tells the
+    "trajectory" story the comparison is for.
+
+    `students` is [{'name': str, 'timeline': [{'percentage': ...}, ...],
+    'color': a reportlab Color}, ...].
+    """
+    d = Drawing(width, height)
+    max_len = max((len(s['timeline']) for s in students), default=0)
+    if max_len < 2:
+        d.add(String(width/2, height/2, 'Not enough exam data yet for a trend chart',
+                      fontSize=9, fillColor=BRAND_GRAY, textAnchor='middle'))
+        return d
+
+    plot = LinePlot()
+    plot.x = 1.6*cm
+    plot.y = 1.3*cm
+    plot.width = width - 2.6*cm
+    plot.height = height - 2.0*cm
+    plot.data = [list(enumerate(t['percentage'] for t in s['timeline'])) for s in students]
+
+    for i, s in enumerate(students):
+        plot.lines[i].strokeColor = s['color']
+        plot.lines[i].strokeWidth = 1.8
+        plot.lines[i].symbol = makeMarker('FilledCircle')
+        plot.lines[i].symbol.fillColor = s['color']
+        plot.lines[i].symbol.strokeColor = s['color']
+        plot.lines[i].symbol.size = 3
+
+    plot.xValueAxis.valueMin = 0
+    plot.xValueAxis.valueMax = max_len - 1
+    plot.xValueAxis.valueSteps = list(range(max_len))
+    plot.xValueAxis.labelTextFormat = lambda v: f'#{int(v)+1}' if 0 <= int(v) < max_len else ''
+    plot.xValueAxis.labels.fontSize = 7
+
+    plot.yValueAxis.valueMin = 0
+    plot.yValueAxis.valueMax = 100
+    plot.yValueAxis.valueSteps = [0, 25, 50, 75, 100]
+    plot.yValueAxis.labelTextFormat = '%d%%'
+    plot.yValueAxis.labels.fontSize = 7
+
+    d.add(plot)
+
+    legend = Legend()
+    legend.x = plot.x + 4
+    legend.y = height - 0.15*cm
+    legend.alignment = 'right'
+    legend.fontSize = 7
+    legend.dx = 7
+    legend.dy = 7
+    legend.deltax = 75
+    legend.columnMaximum = 1
+    legend.colorNamePairs = [(s['color'], s['name']) for s in students]
+    d.add(legend)
+
+    pass_y = plot.y + (50/100) * plot.height
+    d.add(String(plot.x + plot.width - 0.1*cm, pass_y + 2, '50% pass mark',
+                  fontSize=6, fillColor=BRAND_GRAY, textAnchor='end'))
+    from reportlab.graphics.shapes import Line
+    d.add(Line(plot.x, pass_y, plot.x + plot.width, pass_y,
+               strokeColor=BRAND_AMBER, strokeWidth=0.5, strokeDashArray=[2, 2]))
+    return d
+
+
+def _multi_bar_chart(labels, series, width=CHART_W, height=CHART_H) -> Drawing:
+    """
+    Grouped bar chart comparing several students on the same set of
+    categories (e.g. topics) — one color-coded bar cluster per category.
+    `series` is [{'name': str, 'values': list[float], 'color': a
+    reportlab Color}, ...], each `values` list aligned to `labels` (use
+    0 for a student with no data on that category — reportlab bar charts
+    can't skip slots, so a gap has to be an explicit zero, not a null).
+    """
+    d = Drawing(width, height)
+    if not labels or not series:
+        d.add(String(width/2, height/2, 'No comparable topic data available',
+                      fontSize=9, fillColor=BRAND_GRAY, textAnchor='middle'))
+        return d
+
+    chart = VerticalBarChart()
+    chart.x = 1.6*cm
+    chart.y = 1.6*cm
+    chart.width = width - 2.4*cm
+    chart.height = height - 2.9*cm
+    chart.data = [s['values'] for s in series]
+    chart.categoryAxis.categoryNames = [
+        (lbl[:12] + '…') if len(lbl) > 13 else lbl for lbl in labels
+    ]
+    chart.categoryAxis.labels.fontSize = 6.5
+    chart.categoryAxis.labels.angle = 25
+    chart.categoryAxis.labels.dy = -10
+    chart.valueAxis.valueMin = 0
+    chart.valueAxis.valueMax = 100
+    chart.valueAxis.valueSteps = [0, 25, 50, 75, 100]
+    chart.valueAxis.labelTextFormat = '%d%%'
+    chart.valueAxis.labels.fontSize = 7
+    for i, s in enumerate(series):
+        chart.bars[i].fillColor = s['color']
+    chart.barWidth = 6
+    chart.groupSpacing = 10
+    chart.barSpacing = 1
+    d.add(chart)
+
+    legend = Legend()
+    legend.x = chart.x
+    legend.y = height - 0.25*cm
+    legend.alignment = 'right'
+    legend.fontSize = 6.5
+    legend.dx = 6
+    legend.dy = 6
+    legend.deltax = 68
+    legend.columnMaximum = 1
+    legend.colorNamePairs = [(s['color'], s['name']) for s in series]
+    d.add(legend)
+    return d
+
+
+def generate_student_comparison_pdf(students_data, school_name='School of Excellence',
+                                     subject_name=None) -> bytes:
+    """
+    Side-by-side comparison report for 2+ students — built for a teacher
+    to print and hand to a student during a 1:1 conversation, so the tone
+    stays constructive: it leads with each student's own growth (first
+    exam -> most recent exam), not a blunt ranking.
+
+    `students_data` is a list of dicts, one per student, each shaped like:
+    {
+      'name': str, 'student_code': str, 'classroom': str,
+      'summary': {...} (from analytics.services.get_student_summary),
+      'timeline': [...] (from analytics.services.get_student_trend),
+      'topics': [...] (from analytics.services.get_student_topic_analysis),
+      'growth': {'first_pct': float|None, 'last_pct': float|None, 'delta': float|None},
+      'quiz_streak': int|None, 'badge_count': int|None,
+    }
+    Ordering of this list is preserved everywhere (colors, legend, table
+    columns) — callers should already have it in the order they want
+    displayed.
+    """
+    buf = io.BytesIO()
+    styles = _make_styles()
+    n = len(students_data)
+    colored = [
+        {**s, 'color': STUDENT_COMPARE_COLORS[i % len(STUDENT_COMPARE_COLORS)]}
+        for i, s in enumerate(students_data)
+    ]
+
+    names_line = ' vs '.join(s['name'] for s in students_data)
+    meta = {
+        'school_name': school_name,
+        'academic_year': '',
+        'doc_title': 'Student Progress Comparison',
+        'doc_subtitle': names_line + (f'  ·  {subject_name}' if subject_name else ''),
+        'footer_centre': 'Confidential — for the named students and their teachers/guardians',
+    }
+
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=MARGIN, rightMargin=MARGIN,
+        topMargin=4.2*cm, bottomMargin=2.2*cm,
+    )
+    story = []
+
+    # ── Headline: each student's own growth story ───────────────────────
+    intro = (
+        "This report compares each student's own trajectory over time, side "
+        "by side — the goal is to see how each of them is growing, and what "
+        "each can learn from the other's approach."
+    )
+    story.append(Paragraph(intro, styles['body']))
+    story.append(Spacer(1, 0.3*cm))
+
+    grid_rows = [['', *[s['name'] for s in students_data]]]
+    grid_rows.append(['Classroom', *[s.get('classroom') or '—' for s in students_data]])
+    grid_rows.append(['Exams recorded', *[str(s['summary'].get('total_exams') or 0) for s in students_data]])
+    grid_rows.append(['Overall average', *[
+        f"{s['summary'].get('average_percentage')}%" if s['summary'].get('average_percentage') is not None else '—'
+        for s in students_data
+    ]])
+    grid_rows.append(['Pass rate', *[
+        f"{s['summary'].get('pass_rate')}%" if s['summary'].get('pass_rate') is not None else '—'
+        for s in students_data
+    ]])
+    grid_rows.append(['Growth (first → latest exam)', *[
+        (
+            f"{s['growth']['first_pct']}% → {s['growth']['last_pct']}%  "
+            f"({'+' if s['growth']['delta'] >= 0 else ''}{s['growth']['delta']} pts)"
+        ) if s.get('growth') and s['growth'].get('delta') is not None else 'Not enough data yet'
+        for s in students_data
+    ]])
+    if any(s.get('quiz_streak') is not None for s in students_data):
+        grid_rows.append(['Current quiz streak', *[
+            f"{s['quiz_streak']} days" if s.get('quiz_streak') is not None else '—' for s in students_data
+        ]])
+    if any(s.get('badge_count') is not None for s in students_data):
+        grid_rows.append(['Badges earned', *[
+            str(s.get('badge_count')) if s.get('badge_count') is not None else '—' for s in students_data
+        ]])
+
+    col_width = (PAGE_W - 2*MARGIN - 4.2*cm) / max(n, 1)
+    gtbl = Table(grid_rows, colWidths=[4.2*cm] + [col_width] * n)
+    gtbl.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), BRAND_DARK),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTNAME', (0, 1), (0, -1), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 8),
+        ('GRID', (0, 0), (-1, -1), 0.3, colors.HexColor('#e5e7eb')),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, BRAND_LIGHT]),
+        ('TOPPADDING', (0, 0), (-1, -1), 5),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+        ('LEFTPADDING', (0, 0), (-1, -1), 6),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+    ]))
+    story.extend(_section_card('At a Glance', gtbl, styles))
+    story.append(Spacer(1, 0.4*cm))
+
+    # ── Trend overlay ────────────────────────────────────────────────────
+    story.extend(_section_card(
+        'Score Trend — Side by Side', _multi_trend_chart(colored), styles,
+        caption='Each point is one exam, in the order that student took it (exam #1, #2, ...).',
+    ))
+    story.append(Spacer(1, 0.4*cm))
+
+    # ── Topic comparison ─────────────────────────────────────────────────
+    all_topic_names = []
+    seen = set()
+    for s in students_data:
+        for t in s.get('topics', []):
+            if t['topic_name'] not in seen:
+                seen.add(t['topic_name'])
+                all_topic_names.append(t['topic_name'])
+
+    if all_topic_names:
+        bar_series = []
+        for s in colored:
+            by_name = {t['topic_name']: t['average'] for t in s.get('topics', [])}
+            bar_series.append({
+                'name': s['name'], 'color': s['color'],
+                'values': [by_name.get(name, 0) for name in all_topic_names],
+            })
+        story.extend(_section_card(
+            'Topic Mastery — Side by Side', _multi_bar_chart(all_topic_names, bar_series), styles,
+            caption='0% bars mean that student has no recorded data for that topic yet, not a zero score.',
+        ))
+    else:
+        story.extend(_section_card(
+            'Topic Mastery — Side by Side',
+            Paragraph('No topic-tagged exam data recorded for these students yet.', styles['body']), styles,
+        ))
+
+    doc.build(story, onFirstPage=lambda c, d: _header_footer(c, d, meta),
+              onLaterPages=lambda c, d: _header_footer(c, d, meta))
+    return buf.getvalue()
+
+
+
     """Grouped bar chart: student's score vs classroom average, per exam.
     New chart — makes it possible to see at a glance whether the student is
     ahead of, in line with, or behind their classmates on each exam, not

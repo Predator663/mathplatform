@@ -175,6 +175,9 @@ export const analyticsApi = {
   atRisk: (params?: object) => api.get('/analytics/at-risk/', { params }),
   compare: (params?: object) => api.get('/analytics/compare/', { params }),
   streamComparison: (id: number, params?: object) => api.get(`/analytics/classrooms/${id}/stream-comparison/`, { params }),
+  compareStudents: (params?: object) => api.get('/analytics/students/compare/', { params }),
+  compareStudentsPdf: (params?: object) =>
+    api.get('/analytics/students/compare/pdf/', { params, responseType: 'blob' }),
 
   // ── Intelligence layer ──────────────────────────────────────────────────
   integrityFlags: (params?: object) => api.get('/analytics/integrity/', { params }),

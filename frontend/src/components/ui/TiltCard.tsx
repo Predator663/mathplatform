@@ -13,6 +13,9 @@ interface TiltCardProps {
   maxTilt?: number;
   /** Disable on touch/coarse-pointer devices automatically; set false to force on. */
   glare?: boolean;
+  /** Accessible name — recommended whenever onClick is set, since the card
+   *  renders as a div with role="button" rather than a native <button>. */
+  'aria-label'?: string;
 }
 
 /**
@@ -20,7 +23,7 @@ interface TiltCardProps {
  * with an optional soft light "glare" that follows the pointer. Respects
  * prefers-reduced-motion by skipping the tilt transform entirely.
  */
-export function TiltCard({ children, className, style, onClick, maxTilt = 8, glare = true }: TiltCardProps) {
+export function TiltCard({ children, className, style, onClick, maxTilt = 8, glare = true, 'aria-label': ariaLabel }: TiltCardProps) {
   const ref = useRef<HTMLDivElement>(null);
   const prefersReducedMotion = typeof window !== 'undefined'
     && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
@@ -48,10 +51,22 @@ export function TiltCard({ children, className, style, onClick, maxTilt = 8, gla
     y.set(0.5);
   }
 
+  function handleKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (!onClick) return;
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      onClick();
+    }
+  }
+
   return (
     <motion.div
       ref={ref}
       onClick={onClick}
+      onKeyDown={onClick ? handleKeyDown : undefined}
+      role={onClick ? 'button' : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      aria-label={ariaLabel}
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
       style={{
@@ -64,7 +79,11 @@ export function TiltCard({ children, className, style, onClick, maxTilt = 8, gla
       whileHover={prefersReducedMotion ? undefined : { scale: 1.02, y: -3 }}
       whileTap={{ scale: 0.98 }}
       transition={{ type: 'spring', stiffness: 300, damping: 22 }}
-      className={cn('card relative overflow-hidden', className)}
+      className={cn(
+        'card relative overflow-hidden',
+        onClick && 'cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-azure-500/60',
+        className,
+      )}
     >
       {glare && !prefersReducedMotion && (
         <motion.div
