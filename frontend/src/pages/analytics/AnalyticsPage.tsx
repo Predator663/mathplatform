@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence, LayoutGroup } from 'framer-motion';
 import {
   BarChart3, User, AlertTriangle, GitCompare, ShieldAlert, GitBranch,
-  ShieldCheck, Scale, Rows3, Users2, Search, ArrowUpDown, X, Sparkles,
+  ShieldCheck, Scale, Rows3, Users2, Search, ArrowUpDown, X, Sparkles, Brain,
 } from 'lucide-react';
 import { useAuthStore } from '../../store/auth';
 import { TiltCard, Reveal, EmptyState, Select } from '../../components/ui';
@@ -74,6 +74,15 @@ const cards: AnalyticsCard[] = [
     to: '/analytics/compare-students',
     color: 'azure',
     category: 'Comparison',
+  },
+  {
+    icon: Brain,
+    title: 'Topic Intelligence',
+    description: 'School-wide topic mastery — a difficulty ranking, a classroom × topic heatmap, and the topics trending up or down, combining exam and daily quiz data.',
+    action: 'Explore Topics',
+    to: '/analytics/topics',
+    color: 'violet',
+    category: 'Curriculum',
   },
   {
     icon: ShieldAlert,

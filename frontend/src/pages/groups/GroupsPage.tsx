@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
 import {
   Users, Sparkles, Plus, Camera, Trash2, Edit2, ArrowRightLeft, X,
@@ -224,7 +225,12 @@ export default function GroupsPage() {
     if (!selectedClass) return;
     try {
       const fn = kind === 'summary' ? groupsApi.exportSummary : groupsApi.exportRoster;
-      const res = await fn(selectedClass, format, { sort_by: sortBy, term: termFilter || undefined, stream_id: streamFilter || undefined });
+      const res = await fn(selectedClass, format, {
+        sort_by: sortBy,
+        term: termFilter || undefined,
+        stream_id: streamFilter || undefined,
+        subject_id: subjectFilter || undefined,
+      });
       const ext = format === 'pdf' ? 'pdf' : 'xlsx';
       downloadBlob(res.data, `groups_${kind}.${ext}`);
       toast.success('Export downloaded');
@@ -378,23 +384,56 @@ export default function GroupsPage() {
             <EmptyState icon={<Sparkles size={40} />} title="No groups yet"
               message="Use Auto-Generate to balance students into groups, or create one manually." />
           ) : (
-            <div className="grid md:grid-cols-2 gap-4">
-              {sortedGroups.map(group => (
-                <div key={group.id} className="card p-0 overflow-hidden flex flex-col">
+            <motion.div layout className="grid md:grid-cols-2 gap-4">
+              <AnimatePresence initial={false}>
+              {sortedGroups.map((group, idx) => (
+                <motion.div
+                  key={group.id}
+                  layout
+                  initial={{ opacity: 0, y: 24, scale: 0.94 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.18 } }}
+                  transition={{ duration: 0.45, delay: idx * 0.05, ease: [0.16, 1, 0.3, 1] }}
+                  whileHover={{ y: -5, scale: 1.012 }}
+                  className="card p-0 overflow-hidden flex flex-col relative group/card"
+                  style={{
+                    boxShadow: `0 10px 30px -12px ${group.badge_color}55`,
+                  }}
+                >
                   {/* Banner */}
-                  <div className="flex items-center gap-3 px-4 py-3" style={{ backgroundColor: group.badge_color }}>
-                    <button
+                  <motion.div
+                    className="flex items-center gap-3 px-4 py-3 relative overflow-hidden"
+                    style={{ backgroundColor: group.badge_color }}
+                    initial={false}
+                  >
+                    {/* subtle animated sheen sweeping across the banner */}
+                    <motion.div
+                      className="absolute inset-0 pointer-events-none"
+                      style={{ background: 'linear-gradient(115deg, transparent 20%, rgba(255,255,255,0.28) 35%, transparent 50%)' }}
+                      initial={{ x: '-120%' }}
+                      animate={{ x: '220%' }}
+                      transition={{ duration: 2.6, repeat: Infinity, repeatDelay: 3.2, ease: 'easeInOut' }}
+                    />
+                    <motion.button
                       onClick={() => { setBadgeTargetId(group.id); badgeInputRef.current?.click(); }}
-                      className="relative w-11 h-11 rounded-full flex-shrink-0 flex items-center justify-center bg-black/20 hover:bg-black/30 transition-colors overflow-hidden"
+                      className="relative w-11 h-11 rounded-full flex-shrink-0 flex items-center justify-center bg-black/20 hover:bg-black/30 transition-colors overflow-hidden z-10"
                       title="Upload group badge"
+                      whileHover={{ scale: 1.12, rotate: 6 }}
+                      whileTap={{ scale: 0.92 }}
                     >
+                      {/* pulsing ring behind the badge */}
+                      <motion.span
+                        className="absolute inset-0 rounded-full border-2 border-white/40"
+                        animate={{ scale: [1, 1.35, 1], opacity: [0.6, 0, 0.6] }}
+                        transition={{ duration: 2.2, repeat: Infinity, ease: 'easeInOut' }}
+                      />
                       {group.badge_image_url ? (
                         <img src={group.badge_image_url} alt="" className="w-full h-full object-cover" />
                       ) : (
                         <Camera size={16} className="text-white/80" />
                       )}
-                    </button>
-                    <div className="flex-1 min-w-0">
+                    </motion.button>
+                    <div className="flex-1 min-w-0 z-10">
                       <p className="font-display font-bold text-white truncate">{group.name}</p>
                       <p className="text-xs text-white/80">
                         {group.member_count} member{group.member_count !== 1 ? 's' : ''}
@@ -403,27 +442,43 @@ export default function GroupsPage() {
                         {group.stream_name ? ` · Stream ${group.stream_name}` : ''}
                       </p>
                     </div>
-                    <button onClick={() => setRenameGroup(group)} className="text-white/80 hover:text-white p-1.5 rounded-lg hover:bg-black/20" title="Edit group">
+                    <motion.button whileHover={{ scale: 1.15 }} whileTap={{ scale: 0.9 }} onClick={() => setRenameGroup(group)} className="text-white/80 hover:text-white p-1.5 rounded-lg hover:bg-black/20 z-10" title="Edit group">
                       <Edit2 size={14} />
-                    </button>
-                    <button
+                    </motion.button>
+                    <motion.button
+                      whileHover={{ scale: 1.15 }} whileTap={{ scale: 0.9 }}
                       onClick={() => { if (confirm(`Delete "${group.name}"? Members will become ungrouped.`)) deleteMutation.mutate(group.id); }}
-                      className="text-white/80 hover:text-white p-1.5 rounded-lg hover:bg-black/20" title="Delete group"
+                      className="text-white/80 hover:text-white p-1.5 rounded-lg hover:bg-black/20 z-10" title="Delete group"
                     >
                       <Trash2 size={14} />
-                    </button>
-                  </div>
+                    </motion.button>
+                  </motion.div>
 
                   {/* Members */}
                   <div className="flex-1 divide-y divide-surface">
                     {group.members.length === 0 && (
                       <p className="text-xs text-muted px-4 py-3">No members yet — add students below.</p>
                     )}
-                    {group.members.map(m => (
-                      <div key={m.id} className="flex items-center gap-2 px-4 py-2.5">
+                    <AnimatePresence initial={false}>
+                    {group.members.map((m, mi) => (
+                      <motion.div
+                        key={m.id}
+                        layout
+                        initial={{ opacity: 0, x: -16 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: 24, height: 0, transition: { duration: 0.2 } }}
+                        transition={{ duration: 0.3, delay: mi * 0.025 }}
+                        whileHover={{ backgroundColor: 'var(--bg-700)', x: 2 }}
+                        className="flex items-center gap-2 px-4 py-2.5"
+                      >
                         <div className="flex-1 min-w-0">
                           <p className="text-sm text-primary truncate">
-                            {m.student_name} {m.is_anchor && <span title="Anchor student">⭐</span>}
+                            {m.student_name} {m.is_anchor && <motion.span
+                              title="Anchor student"
+                              animate={{ rotate: [0, 12, -12, 0] }}
+                              transition={{ duration: 1.8, repeat: Infinity, repeatDelay: 2, ease: 'easeInOut' }}
+                              style={{ display: 'inline-block' }}
+                            >⭐</motion.span>}
                           </p>
                           <p className="text-xs text-secondary">
                             {m.student_code}{m.student_stream_name ? ` · Stream ${m.student_stream_name}` : ''}
@@ -433,22 +488,25 @@ export default function GroupsPage() {
                         <span className="text-xs font-mono text-secondary w-12 text-right">
                           {m.average_at_placement != null ? `${m.average_at_placement}%` : '—'}
                         </span>
-                        <button
+                        <motion.button
+                          whileHover={{ scale: 1.2 }} whileTap={{ scale: 0.85 }}
                           onClick={() => setMovingStudent({ studentId: m.student_id, name: m.student_name, streamId: m.student_stream_id })}
                           className="p-1.5 text-secondary hover:text-azure-400 hover:bg-surface-700 rounded-lg"
                           title="Move to another group"
                         >
                           <ArrowRightLeft size={13} />
-                        </button>
-                        <button
+                        </motion.button>
+                        <motion.button
+                          whileHover={{ scale: 1.2 }} whileTap={{ scale: 0.85 }}
                           onClick={() => removeMemberMutation.mutate({ groupId: group.id, studentId: m.student_id })}
                           className="p-1.5 text-secondary hover:text-rose-400 hover:bg-surface-700 rounded-lg"
                           title="Remove from group"
                         >
                           <X size={13} />
-                        </button>
-                      </div>
+                        </motion.button>
+                      </motion.div>
                     ))}
+                    </AnimatePresence>
                   </div>
 
                   {/* Add member (from ungrouped pool) — narrowed to this
@@ -477,9 +535,10 @@ export default function GroupsPage() {
                       </div>
                     );
                   })()}
-                </div>
+                </motion.div>
               ))}
-            </div>
+              </AnimatePresence>
+            </motion.div>
           )}
 
           {/* Ungrouped students panel */}

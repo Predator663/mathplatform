@@ -719,3 +719,93 @@ class StudentComparisonPDFView(APIView):
         response = HttpResponse(pdf_bytes, content_type='application/pdf')
         response['Content-Disposition'] = 'attachment; filename="student_comparison.pdf"'
         return response
+
+
+def _resolve_topic_scope(request):
+    """
+    Resolves (classroom_ids, error_response_or_none) for the topic
+    intelligence endpoints: a teacher is always restricted to their own
+    assigned classrooms (optionally narrowed further to one of them via
+    ?classroom_id=); an admin sees every classroom unless they explicitly
+    narrow to one. classroom_ids=None means "no classroom filter" (i.e.
+    every classroom in scope), matching topic_intelligence_services'
+    convention.
+    """
+    from mathapi.apps.accounts.scoping import get_teacher_classrooms, assert_classroom_owned
+
+    classroom_id = request.query_params.get('classroom_id')
+    classroom_id = int(classroom_id) if classroom_id else None
+
+    if request.user.role == 'teacher':
+        if classroom_id:
+            assert_classroom_owned(request.user, classroom_id)  # raises PermissionDenied if not theirs
+            return [classroom_id], None
+        return list(get_teacher_classrooms(request.user).values_list('id', flat=True)), None
+
+    # admin (or any other role permitted through by the view's own check)
+    if classroom_id:
+        return [classroom_id], None
+    return None, None
+
+
+class TopicIntelligenceOverviewView(APIView):
+    """
+    GET /api/analytics/topics/overview/
+    ?subject_id=&classroom_id=&term=&academic_year=&include_quizzes=true
+
+    School/subject-wide topic performance: per-topic averages ranked
+    hardest-first, a classroom x topic average matrix, and the topics
+    trending most positively/negatively. Combines exam and (by default)
+    daily-quiz topic data into one picture.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        from mathapi.apps.accounts.permissions import IsTeacherOrAdmin
+        if not IsTeacherOrAdmin().has_permission(request, self):
+            return Response({'detail': 'Only teachers and administrators can view topic intelligence.'}, status=status.HTTP_403_FORBIDDEN)
+
+        classroom_ids, error = _resolve_topic_scope(request)
+        if error:
+            return error
+
+        from . import topic_intelligence_services as tis
+        created_by_id = request.user.id if request.user.role == 'teacher' else None
+        data = tis.get_topic_intelligence_overview(
+            subject_id=_get_subject_id(request),
+            classroom_ids=classroom_ids,
+            term=request.query_params.get('term') or None,
+            academic_year=request.query_params.get('academic_year') or None,
+            created_by_id=created_by_id,
+            include_quizzes=request.query_params.get('include_quizzes', 'true') == 'true',
+        )
+        return Response(data)
+
+
+class TopicIntelligenceDistributionView(APIView):
+    """GET /api/analytics/topics/<topic_id>/distribution/
+    ?subject_id=&classroom_id=&term=&academic_year=&include_quizzes=true
+    Drill-down for one topic: mastery histogram + trend timeline."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, topic_id):
+        from mathapi.apps.accounts.permissions import IsTeacherOrAdmin
+        if not IsTeacherOrAdmin().has_permission(request, self):
+            return Response({'detail': 'Only teachers and administrators can view topic intelligence.'}, status=status.HTTP_403_FORBIDDEN)
+
+        classroom_ids, error = _resolve_topic_scope(request)
+        if error:
+            return error
+
+        from . import topic_intelligence_services as tis
+        created_by_id = request.user.id if request.user.role == 'teacher' else None
+        data = tis.get_topic_distribution(
+            topic_id,
+            subject_id=_get_subject_id(request),
+            classroom_ids=classroom_ids,
+            term=request.query_params.get('term') or None,
+            academic_year=request.query_params.get('academic_year') or None,
+            created_by_id=created_by_id,
+            include_quizzes=request.query_params.get('include_quizzes', 'true') == 'true',
+        )
+        return Response(data)

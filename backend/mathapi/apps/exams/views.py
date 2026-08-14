@@ -28,7 +28,14 @@ class MathTopicViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        qs = MathTopic.objects.select_related('subject').filter(is_active=True)
+        qs = MathTopic.objects.select_related('subject')
+        # Every existing dropdown/consumer of this endpoint expects
+        # active-only topics by default (exam creation, quiz creation,
+        # analytics filters, etc). include_inactive=true is opt-in, for the
+        # topic management page, which also needs to see (and restore)
+        # deactivated topics — never the default, so nothing else breaks.
+        if self.request.query_params.get('include_inactive') != 'true':
+            qs = qs.filter(is_active=True)
         if user.role == 'super_admin':
             return qs
         # Teachers see only topics for their assigned subjects
@@ -36,9 +43,54 @@ class MathTopicViewSet(viewsets.ModelViewSet):
 
     def get_permissions(self):
         from mathapi.apps.accounts.permissions import IsAdminRole
-        if self.action in ['create', 'update', 'partial_update', 'destroy']:
+        if self.action in ['create', 'update', 'partial_update', 'destroy', 'restore', 'reorder']:
             return [IsAdminRole()]
         return [permissions.IsAuthenticated()]
+
+    def destroy(self, request, *args, **kwargs):
+        """
+        Soft delete only — MathTopic is referenced by TopicScore
+        (on_delete=CASCADE) and ExamTopicWeight (on_delete=CASCADE), so a
+        hard delete here would silently wipe every student's historical
+        per-topic exam breakdown for that topic, and strip topic weighting
+        off any exam that used it. is_active=False keeps every dependent
+        record intact while removing the topic from active use (exam/quiz
+        creation dropdowns, new topic-tagging) — restore() below reverses it.
+        """
+        topic = self.get_object()
+        topic.is_active = False
+        topic.save(update_fields=['is_active'])
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=['post'])
+    def restore(self, request, pk=None):
+        topic = MathTopic.objects.filter(pk=pk).first()
+        if not topic:
+            return Response({'detail': 'Topic not found.'}, status=status.HTTP_404_NOT_FOUND)
+        topic.is_active = True
+        topic.save(update_fields=['is_active'])
+        return Response(MathTopicSerializer(topic).data)
+
+    @action(detail=False, methods=['post'])
+    def reorder(self, request):
+        """Body: {"order": [{"id": 5, "order": 0}, {"id": 3, "order": 1}, ...]}
+        Bulk-persists a new display order, e.g. after drag-reordering a
+        subject's topic list. Only touches ids actually present in the
+        payload — a partial list leaves the rest of the ordering untouched."""
+        entries = request.data.get('order')
+        if not isinstance(entries, list) or not entries:
+            return Response({'detail': 'order must be a non-empty list of {id, order}.'}, status=status.HTTP_400_BAD_REQUEST)
+        ids = [e.get('id') for e in entries]
+        topics = {t.id: t for t in MathTopic.objects.filter(id__in=ids)}
+        missing = [i for i in ids if i not in topics]
+        if missing:
+            return Response({'detail': f'Unknown topic id(s): {missing}'}, status=status.HTTP_400_BAD_REQUEST)
+        with transaction.atomic():
+            for entry in entries:
+                topic = topics[entry['id']]
+                topic.order = entry['order']
+                topic.save(update_fields=['order'])
+        return Response({'updated': len(entries)})
 
 
 class ExamViewSet(viewsets.ModelViewSet):

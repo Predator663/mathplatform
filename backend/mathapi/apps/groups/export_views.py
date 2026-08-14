@@ -45,6 +45,15 @@ def _gather(request, classroom_id):
     stream_id = request.query_params.get('stream_id')
     if stream_id:
         groups = [g for g in groups if g.stream_id is None or str(g.stream_id) == str(stream_id)]
+    # Same "subject" filter the groups list / auto-generate use — without
+    # this, choosing a subject in the UI filtered what you saw on screen
+    # but the exported file still contained every group in the classroom.
+    subject_id = request.query_params.get('subject_id')
+    if subject_id:
+        groups = [g for g in groups if g.subject_id is None or str(g.subject_id) == str(subject_id)]
+    term_id = request.query_params.get('term')
+    if term_id:
+        groups = [g for g in groups if not g.term or g.term == term_id]
     groups.sort(key=SORT_CHOICES[sort_by])
 
     subject_name = None

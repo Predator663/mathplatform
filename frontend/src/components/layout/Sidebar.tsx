@@ -2,7 +2,7 @@ import { NavLink, useNavigate, Link } from 'react-router-dom';
 import {
   LayoutDashboard, Users, Users2, BookOpen, BarChart3, GraduationCap,
   AlertTriangle, LogOut, Settings, FileText, Upload, School, X,
-  BookMarked, ClipboardList, ClipboardCheck, Layers, Trash2, Bell, Trophy, CalendarCheck,
+  BookMarked, ClipboardList, ClipboardCheck, Layers, Trash2, Bell, Trophy, CalendarCheck, Brain,
 } from 'lucide-react';
 import { useAuthStore } from '../../store/auth';
 import { useSiteSettingsStore } from '../../store/siteSettings';
@@ -29,6 +29,7 @@ const navItems = [
 const adminItems = [
   { to: '/users',     icon: Users,         label: 'Users',      pageKey: 'users' },
   { to: '/subjects',  icon: BookMarked,    label: 'Subjects',   pageKey: null },
+  { to: '/topics',    icon: Brain,         label: 'Topics',     pageKey: null },
   { to: '/grade-levels', icon: Layers,     label: 'Grade Levels', pageKey: null },
   { to: '/audit-log', icon: ClipboardList, label: 'Audit Log',  pageKey: null },
   { to: '/settings',  icon: Settings,      label: 'Settings',   pageKey: null },

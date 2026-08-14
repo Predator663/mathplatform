@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   Users, BookOpen, AlertTriangle, TrendingUp, ArrowRight,
-  Award, School, Target, Zap, Activity, BarChart2, Shield,
+  Award, School, Target, Zap, Activity, BarChart2, Shield, PieChart as PieChartIcon,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { analyticsApi } from '../../api';
@@ -15,7 +15,7 @@ import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis,
   CartesianGrid, Tooltip, BarChart, Bar, Cell, LabelList,
   RadarChart, PolarGrid, PolarAngleAxis, Radar,
-  LineChart, Line, ReferenceLine,
+  LineChart, Line, ReferenceLine, PieChart, Pie,
 } from 'recharts';
 import type { TooltipProps } from 'recharts';
 import type { DashboardSummary } from '../../types';
@@ -187,6 +187,15 @@ export default function DashboardPage() {
     : [];
   const totalGraded = gradeData.reduce((s, g) => s + g.count, 0);
 
+  // Passed = grades A-D, Failed = grade F — same threshold the rest of the
+  // dashboard uses (30% pass line / grade F cutoff).
+  const passedCount = gradeData.filter(g => g.grade !== 'F').reduce((s, g) => s + g.count, 0);
+  const failedCount = gradeData.find(g => g.grade === 'F')?.count ?? 0;
+  const passFailData = [
+    { name: 'Passed', value: passedCount, color: '#10b981' },
+    { name: 'Failed', value: failedCount, color: '#f43f5e' },
+  ];
+
   const classroomData = (data?.classroom_averages ?? []).map(c => ({
     classroom: c.classroom.length > 9 ? c.classroom.slice(0, 9) + '…' : c.classroom,
     average: c.average,
@@ -334,7 +343,50 @@ export default function DashboardPage() {
       </div>
 
       {/* ── Grade distribution + radar ─────────────────────────────── */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        <div className="card p-5 flex flex-col">
+          <h2 className="section-title mb-3 flex items-center gap-2"><PieChartIcon size={14} className="text-emerald-400" /> Overall Pass Rate</h2>
+          {totalGraded > 0 ? (
+            <ResponsiveContainer width="100%" height={150}>
+              <PieChart>
+                <Pie
+                  data={passFailData}
+                  dataKey="value"
+                  nameKey="name"
+                  innerRadius={44}
+                  outerRadius={68}
+                  paddingAngle={2}
+                  isAnimationActive
+                  animationDuration={1000}
+                >
+                  {passFailData.map(d => <Cell key={d.name} fill={d.color} />)}
+                </Pie>
+                <Tooltip
+                  contentStyle={{ background: cssVar('--chart-tooltip-bg') || '#1a1a26', border: `1px solid ${grid}`, borderRadius: 12, fontSize: 11 }}
+                  labelStyle={{ color: cssVar('--text-primary') || '#fff' }}
+                  formatter={(v: any, n: any) => [`${v} student${v !== 1 ? 's' : ''}`, n] as [string, string]}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="h-44 flex items-center justify-center text-muted text-sm">No scored exams yet</div>
+          )}
+          {totalGraded > 0 && (
+            <div className="flex items-center justify-center gap-4 -mt-2">
+              <p className="font-display font-black text-2xl text-emerald-400 text-center">
+                {Math.round((passedCount / totalGraded) * 100)}%
+                <span className="block text-[10px] text-secondary font-normal tracking-wider uppercase mt-0.5">Passed</span>
+              </p>
+            </div>
+          )}
+          {totalGraded > 0 && (
+            <div className="flex items-center justify-center gap-4 mt-2">
+              <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-emerald-500" /><span className="text-[10px] text-secondary">Passed ({passedCount})</span></div>
+              <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-rose-500" /><span className="text-[10px] text-secondary">Failed ({failedCount})</span></div>
+            </div>
+          )}
+        </div>
+
         <div className="card p-5">
           <h2 className="section-title mb-4 flex items-center gap-2"><Award size={14} className="text-azure-400" /> Grade Distribution</h2>
           {totalGraded > 0 ? (

@@ -12,6 +12,33 @@ class MathTopicSerializer(serializers.ModelSerializer):
         model = MathTopic
         fields = ['id', 'name', 'description', 'color', 'order', 'is_active',
                   'subject', 'subject_name', 'subject_code', 'subject_color']
+        # DRF auto-generates a UniqueTogetherValidator from the model's
+        # unique_together = [('subject', 'name')] and runs it *before*
+        # validate() below — meaning it would raise its own generic "must
+        # make a unique set" error on a soft-deleted-topic-name clash
+        # before our friendlier "restore it instead" message ever got a
+        # chance to run. Disabling it and doing the check entirely in
+        # validate() (which can see is_active and give it) is intentional.
+        validators = []
+
+    def validate(self, attrs):
+        subject = attrs.get('subject', getattr(self.instance, 'subject', None))
+        name = attrs.get('name', getattr(self.instance, 'name', None))
+        if subject and name:
+            existing = MathTopic.objects.filter(subject=subject, name__iexact=name)
+            if self.instance:
+                existing = existing.exclude(pk=self.instance.pk)
+            clash = existing.first()
+            if clash:
+                if clash.is_active:
+                    raise serializers.ValidationError({'name': 'A topic with this name already exists for this subject.'})
+                raise serializers.ValidationError({
+                    'name': (
+                        f'A deactivated topic named "{clash.name}" already exists for this subject. '
+                        'Restore it instead of creating a duplicate.'
+                    ),
+                })
+        return attrs
 
 
 class ExamTopicWeightSerializer(serializers.ModelSerializer):

@@ -536,6 +536,40 @@ export interface PaginatedResponse<T> {
   count: number; next: string | null; previous: string | null; results: T[];
 }
 
+// ── Topic Intelligence ───────────────────────────────────────────────────
+export interface TopicIntelligenceEntry {
+  topic_id: number; topic_name: string; subject_id: number | null; subject_name: string | null;
+  color: string; attempts: number; student_count: number;
+  average: number; highest: number; lowest: number;
+  trend: 'improving' | 'declining' | 'stable'; trend_slope: number; difficulty_rank: number;
+}
+
+export interface TopicClassroomMatrix {
+  classrooms: { id: number; name: string }[];
+  topics: { id: number; name: string }[];
+  matrix: (number | null)[][];
+}
+
+export interface TopicIntelligenceOverview {
+  topics: TopicIntelligenceEntry[];
+  classroom_matrix: TopicClassroomMatrix;
+  most_improved: TopicIntelligenceEntry[];
+  most_declined: TopicIntelligenceEntry[];
+}
+
+export interface TopicDistributionBucket { range: string; count: number }
+
+export interface TopicDistribution {
+  topic_id: number;
+  histogram: TopicDistributionBucket[];
+  timeline: { date: string; percentage: number }[];
+  summary: {
+    attempts: number; student_count: number;
+    average: number; highest: number; lowest: number;
+    trend: 'improving' | 'declining' | 'stable';
+  } | null;
+}
+
 // ── Gamification ─────────────────────────────────────────────────────────
 export interface Badge {
   id: number; code: string; name: string; description: string;

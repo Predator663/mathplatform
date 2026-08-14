@@ -124,6 +124,12 @@ export const studentsApi = {
 // ── Exams ─────────────────────────────────────────────────────────────────
 export const examsApi = {
   topics: (params?: object) => api.get('/exams/topics/', { params }),
+  topic: (id: number) => api.get(`/exams/topics/${id}/`),
+  createTopic: (data: object) => api.post('/exams/topics/', data),
+  updateTopic: (id: number, data: object) => api.patch(`/exams/topics/${id}/`, data),
+  deleteTopic: (id: number) => api.delete(`/exams/topics/${id}/`),
+  restoreTopic: (id: number) => api.post(`/exams/topics/${id}/restore/`),
+  reorderTopics: (order: { id: number; order: number }[]) => api.post('/exams/topics/reorder/', { order }),
   exams: (params?: object) => api.get('/exams/exams/', { params }),
   exam: (id: number) => api.get(`/exams/exams/${id}/`),
   academicYears: () => api.get('/exams/exams/academic-years/'),
@@ -178,6 +184,9 @@ export const analyticsApi = {
   compareStudents: (params?: object) => api.get('/analytics/students/compare/', { params }),
   compareStudentsPdf: (params?: object) =>
     api.get('/analytics/students/compare/pdf/', { params, responseType: 'blob' }),
+  topicIntelligenceOverview: (params?: object) => api.get('/analytics/topics/overview/', { params }),
+  topicDistribution: (topicId: number, params?: object) =>
+    api.get(`/analytics/topics/${topicId}/distribution/`, { params }),
 
   // ── Intelligence layer ──────────────────────────────────────────────────
   integrityFlags: (params?: object) => api.get('/analytics/integrity/', { params }),
