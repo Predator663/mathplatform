@@ -7,14 +7,23 @@ User = get_user_model()
 
 class UserSerializer(serializers.ModelSerializer):
     full_name = serializers.ReadOnlyField(source='get_full_name')
+    # Only meaningful when role == 'student'; lets the frontend call the
+    # id-based analytics endpoints (studentSummary(id), etc.) for "my own"
+    # data without a separate lookup. None for staff/teacher/parent users.
+    student_profile_id = serializers.SerializerMethodField()
 
     class Meta:
         model = User
         fields = [
             'id', 'email', 'first_name', 'last_name', 'full_name',
             'role', 'is_active', 'date_joined', 'phone', 'avatar',
+            'student_profile_id',
         ]
         read_only_fields = ['date_joined']
+
+    def get_student_profile_id(self, obj):
+        profile = getattr(obj, 'student_profile', None)
+        return profile.id if profile is not None else None
 
 
 class MeSerializer(UserSerializer):

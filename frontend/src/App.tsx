@@ -9,7 +9,7 @@ import CommandPalette from './components/command-palette/CommandPalette';
 
 // Pages
 import LoginPage from './pages/auth/LoginPage';
-import DashboardPage from './pages/dashboard/DashboardPage';
+import DashboardRouter from './pages/dashboard/DashboardRouter';
 import StudentsPage from './pages/students/StudentsPage';
 import StudentDetailPage from './pages/students/StudentDetailPage';
 import CreateStudentPage from './pages/students/CreateStudentPage';
@@ -94,7 +94,7 @@ export default function App() {
             }
           >
             <Route index element={<Navigate to="/dashboard" replace />} />
-            <Route path="dashboard"          element={<DashboardPage />} />
+            <Route path="dashboard"          element={<DashboardRouter />} />
             <Route path="students"           element={<StudentsPage />} />
             <Route path="students/new"       element={<CreateStudentPage />} />
             <Route path="students/:id"       element={<StudentDetailPage />} />

@@ -306,6 +306,34 @@ class StudentProfileViewSet(viewsets.ModelViewSet):
             return StudentCreateSerializer
         return StudentProfileSerializer
 
+    @action(detail=False, methods=['patch'], url_path='me/target',
+            permission_classes=[permissions.IsAuthenticated])
+    def set_my_target(self, request):
+        """PATCH /students/profiles/me/target/ — a student sets their own
+        dashboard goal. Deliberately separate from update/partial_update:
+        those are teacher/admin-only (see get_permissions above, and the
+        security-fix note on why student write-access there is locked
+        down). This action only ever touches request.user's own profile
+        and only the single target_percentage field, so it can't be used
+        to edit classroom, is_active, or anyone else's record.
+        """
+        profile = getattr(request.user, 'student_profile', None)
+        if request.user.role != 'student' or profile is None:
+            return Response({'detail': 'Only students can set their own target.'}, status=status.HTTP_403_FORBIDDEN)
+        value = request.data.get('target_percentage', None)
+        if value is None:
+            profile.target_percentage = None
+        else:
+            try:
+                value = int(value)
+            except (TypeError, ValueError):
+                return Response({'target_percentage': 'Must be a whole number.'}, status=status.HTTP_400_BAD_REQUEST)
+            if not (0 <= value <= 100):
+                return Response({'target_percentage': 'Must be between 0 and 100.'}, status=status.HTTP_400_BAD_REQUEST)
+            profile.target_percentage = value
+        profile.save(update_fields=['target_percentage'])
+        return Response({'target_percentage': profile.target_percentage}, status=status.HTTP_200_OK)
+
     # Fields a "possible duplicate" can be matched on. `name` is a virtual
     # key (first + last name combined) since full_name isn't a real DB
     # column; the rest are matched on the column directly. Kept as a class

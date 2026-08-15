@@ -20,6 +20,9 @@ export interface User {
   id: number; email: string; first_name: string; last_name: string;
   full_name: string; role: UserRole; is_active: boolean;
   date_joined: string; phone: string; avatar: string | null;
+  // Only set when role === 'student' — the linked StudentProfile's id,
+  // needed to call the id-based analytics endpoints for "my own" data.
+  student_profile_id?: number | null;
 }
 
 export interface AuthTokens { access: string; refresh: string; }
@@ -204,6 +207,7 @@ export interface StudentProfile {
   date_of_birth: string | null; enrollment_date: string; is_active: boolean;
   notes: string; index_number: string; parent_name: string;
   parent_phone: string; district: string; region: string;
+  target_percentage: number | null;
 }
 
 export type DuplicateMatchField = 'name' | 'email' | 'index_number' | 'parent_phone' | 'date_of_birth';
@@ -369,6 +373,12 @@ export interface StudentQuizProgress {
   badges: StudentBadgeAward[];
 }
 
+
+export interface ParentStudentLink {
+  id: number; parent: number; parent_name: string;
+  student: number; student_name: string;
+  relationship: string; is_primary: boolean; created_at: string;
+}
 
 export interface StudentSummary {
   student_id: number; student_name: string; student_code: string;

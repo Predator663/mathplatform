@@ -44,6 +44,7 @@ function toStudentProfile(c: CachedStudent): StudentProfile {
     parent_phone: '',
     district: '',
     region: c.region,
+    target_percentage: null,
   };
 }
 

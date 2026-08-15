@@ -1,5 +1,6 @@
 from django.db import models
 from django.contrib.auth import get_user_model
+from django.core.validators import MinValueValidator, MaxValueValidator
 
 User = get_user_model()
 
@@ -132,6 +133,17 @@ class StudentProfile(models.Model):
     parent_phone    = models.CharField(max_length=20, blank=True)
     district        = models.CharField(max_length=100, blank=True)
     region          = models.CharField(max_length=100, blank=True)
+
+    # A student's own personal goal, self-set (never staff-editable through
+    # the general edit endpoint — see StudentProfileViewSet.get_permissions
+    # for why student write-access to this record is otherwise locked down).
+    # Drives the "Gap to Target" tile on the student dashboard; falls back
+    # to a NECTA-good-pass default of 75% client-side when unset.
+    target_percentage = models.PositiveSmallIntegerField(
+        null=True, blank=True,
+        validators=[MinValueValidator(0), MaxValueValidator(100)],
+        help_text="Student's self-set target average percentage (1-100).",
+    )
 
     class Meta:
         db_table = 'student_profiles'

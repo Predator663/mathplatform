@@ -119,6 +119,15 @@ export const studentsApi = {
   bulkDeleteStudents: (student_ids: number[]) => api.post('/students/profiles/bulk_delete/', { student_ids }),
   duplicateStudents: (params?: object) => api.get('/students/profiles/duplicates/', { params }),
   studentPerformance: (id: number) => api.get(`/students/profiles/${id}/performance_summary/`),
+  // Parent-role: the children linked to *me*, scoped server-side (see
+  // ParentStudentLinkViewSet.get_queryset) — a parent only ever sees their
+  // own links, never the full table.
+  myLinkedChildren: () => api.get('/students/parent-links/'),
+  // Student-role only: set MY OWN target_percentage. Deliberately separate
+  // from updateStudent() above, which is teacher/admin-only server-side —
+  // see StudentProfileViewSet.set_my_target for why.
+  setMyTarget: (target_percentage: number | null) =>
+    api.patch('/students/profiles/me/target/', { target_percentage }),
 };
 
 // ── Exams ─────────────────────────────────────────────────────────────────

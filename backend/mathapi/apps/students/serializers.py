@@ -113,6 +113,7 @@ class StudentProfileSerializer(serializers.ModelSerializer):
             'classroom', 'classroom_name', 'stream', 'stream_name', 'grade_level', 'education_level',
             'date_of_birth', 'enrollment_date', 'is_active', 'notes',
             'index_number', 'parent_name', 'parent_phone', 'district', 'region',
+            'target_percentage',
         ]
 
     def get_grade_level(self, obj):
