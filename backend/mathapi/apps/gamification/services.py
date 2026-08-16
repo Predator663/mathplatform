@@ -98,7 +98,15 @@ def recalculate_quiz_streak(student) -> QuizStreak:
 def evaluate_badges(student, streak: StudentStreak = None, quiz_streak: QuizStreak = None, *,
                      triggering_exam=None, triggering_quiz=None,
                      is_perfect: bool = False, is_comeback: bool = False,
-                     is_quiz_perfect: bool = False) -> list:
+                     is_quiz_perfect: bool = False,
+                     tournament_participations: int = None,
+                     tournament_match_wins: int = None,
+                     tournament_titles: int = None,
+                     is_tournament_undefeated: bool = False,
+                     is_giant_slayer: bool = False,
+                     is_tournament_rising_star: bool = False,
+                     is_flawless_duel: bool = False,
+                     is_underdog: bool = False) -> list:
     """
     Awards any badges the student newly qualifies for, across both the
     exam-based and quiz-based criteria types. Returns the newly created
@@ -136,6 +144,22 @@ def evaluate_badges(student, streak: StudentStreak = None, quiz_streak: QuizStre
             qualifies = quiz_streak is not None and quiz_streak.current_streak >= badge.threshold
         elif badge.criteria_type == 'quiz_perfect':
             qualifies = is_quiz_perfect
+        elif badge.criteria_type == 'tournament_participations':
+            qualifies = tournament_participations is not None and tournament_participations >= badge.threshold
+        elif badge.criteria_type == 'tournament_match_wins':
+            qualifies = tournament_match_wins is not None and tournament_match_wins >= badge.threshold
+        elif badge.criteria_type == 'tournament_titles':
+            qualifies = tournament_titles is not None and tournament_titles >= badge.threshold
+        elif badge.criteria_type == 'tournament_undefeated':
+            qualifies = is_tournament_undefeated
+        elif badge.criteria_type == 'tournament_giant_slayer':
+            qualifies = is_giant_slayer
+        elif badge.criteria_type == 'tournament_rising_star':
+            qualifies = is_tournament_rising_star
+        elif badge.criteria_type == 'tournament_flawless_duel':
+            qualifies = is_flawless_duel
+        elif badge.criteria_type == 'tournament_underdog':
+            qualifies = is_underdog
 
         if not qualifies:
             continue

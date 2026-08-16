@@ -284,6 +284,28 @@ export const quizzesApi = {
     api.get(`/quizzes/students/${studentId}/progress-report.pdf/`, { params, responseType: 'blob' }),
 };
 
+export const tournamentsApi = {
+  list: (params?: object) => api.get('/tournaments/tournaments/', { params }),
+  get: (id: number) => api.get(`/tournaments/tournaments/${id}/`),
+  create: (data: object) => api.post('/tournaments/tournaments/', data),
+  update: (id: number, data: object) => api.patch(`/tournaments/tournaments/${id}/`, data),
+  delete: (id: number) => api.delete(`/tournaments/tournaments/${id}/`),
+  openRegistration: (id: number) => api.post(`/tournaments/tournaments/${id}/open-registration/`),
+  closeRegistration: (id: number) => api.post(`/tournaments/tournaments/${id}/close-registration/`),
+  cancel: (id: number) => api.post(`/tournaments/tournaments/${id}/cancel/`),
+  finalize: (id: number) => api.post(`/tournaments/tournaments/${id}/finalize/`),
+  register: (id: number, data: { student_id?: number; stream_id?: number }) =>
+    api.post(`/tournaments/tournaments/${id}/register/`, data),
+  withdraw: (id: number, entry_id: number) =>
+    api.post(`/tournaments/tournaments/${id}/withdraw/`, { entry_id }),
+  challenges: (id: number) => api.get(`/tournaments/tournaments/${id}/challenges/`),
+  createChallenge: (id: number, data: { label?: string; entry_ids: number[] }) =>
+    api.post(`/tournaments/tournaments/${id}/challenges/`, data),
+  dossier: (id: number) => api.get(`/tournaments/tournaments/${id}/dossier/`),
+  myEntries: () => api.get('/tournaments/my-entries/'),
+  intel: (params?: object) => api.get('/tournaments/intel/', { params }),
+};
+
 export const settingsApi = {
   get: () => api.get('/auth/settings/'),
   patch: (data: object) => api.patch('/auth/settings/', data),

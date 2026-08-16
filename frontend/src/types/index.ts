@@ -622,3 +622,58 @@ export interface SeatingChart {
   unseated: { id: number; name: string; student_id: string }[];
   warnings: string[];
 }
+
+// ── Tournaments ──────────────────────────────────────────────────────────
+export type TournamentMode = 'individual' | 'stream';
+export type TournamentStatus = 'draft' | 'registration_open' | 'registration_closed' | 'live' | 'completed' | 'cancelled';
+
+export interface Tournament {
+  id: number; title: string; codename: string; description: string;
+  mode: TournamentMode; exam: number; exam_title: string; exam_date: string; exam_is_published: boolean;
+  classroom: number; classroom_name: string; status: TournamentStatus;
+  registration_opens_at: string | null; registration_deadline: string;
+  max_entrants: number | null; is_public: boolean; created_by_name: string | null;
+  finalized_at: string | null; entry_count: number; challenge_count: number;
+  created_at: string; updated_at: string;
+}
+
+export interface TournamentEntry {
+  id: number; display_name: string; entrant_type: 'student' | 'stream';
+  student_id: number | null; stream_id: number | null;
+  classroom_name: string | null; seed_average: number | null;
+  withdrawn: boolean; live_score: number | null;
+}
+
+export interface Challenge {
+  id: number; tournament: number; label: string; entries: TournamentEntry[];
+  status: 'pending' | 'resolved' | 'void'; winner: TournamentEntry | null; is_tie: boolean;
+  initiated_by_name: string | null; created_at: string; resolved_at: string | null;
+}
+
+export interface EntryResult {
+  id: number; entry: TournamentEntry; score_percentage: number | null; rank: number | null;
+  prior_average: number | null; delta: number | null;
+  is_rising_star: boolean; is_champion: boolean; is_absent: boolean; computed_at: string;
+}
+
+export interface TournamentDetail extends Tournament {
+  entries: TournamentEntry[]; challenges: Challenge[]; leaderboard: EntryResult[];
+}
+
+export interface TournamentDossier {
+  tournament: Tournament; leaderboard: EntryResult[];
+  champion: EntryResult | null; rising_stars: EntryResult[]; challenges: Challenge[];
+}
+
+export interface TournamentIntel {
+  tournaments_completed: number; total_entrants: number; total_challenges_fought: number;
+  most_decorated: { name: string; count: number }[];
+  most_duel_wins: { name: string; wins: number }[];
+  rising_stars: { name: string; tournament: string; delta: number | null }[];
+  stream_leaderboard: { name: string; titles: number; entries: number; average_score: number | null }[];
+}
+
+export interface MyTournamentEntryRow {
+  tournament: Tournament; entry_id: number; seed_average: number | null;
+  live_score: number | null; result: EntryResult | null;
+}

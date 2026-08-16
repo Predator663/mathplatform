@@ -116,3 +116,33 @@ def scope_quizzes(user, base_qs=None):
         except Exception:
             return qs.none()
     return qs.none()
+
+
+def scope_tournaments(user, base_qs=None):
+    """Return a scoped Tournament queryset for the given user.
+
+    Mirrors scope_quizzes()'s isolation rules: teachers see tournaments they
+    created within their assigned classrooms, students/parents see
+    tournaments run in their own classroom (draft ones stay hidden from
+    them — nothing to see until a teacher opens registration).
+    """
+    from mathapi.apps.tournaments.models import Tournament
+    qs = base_qs if base_qs is not None else Tournament.objects.all()
+    if user.role == 'super_admin':
+        return qs
+    if user.role == 'teacher':
+        classrooms = get_teacher_classrooms(user)
+        return qs.filter(created_by=user, classroom__in=classrooms)
+    if user.role == 'student':
+        try:
+            profile = user.student_profile
+            return qs.filter(classroom=profile.classroom).exclude(status=Tournament.Status.DRAFT)
+        except Exception:
+            return qs.none()
+    if user.role == 'parent':
+        try:
+            student_classrooms = user.linked_students.values_list('student__classroom', flat=True)
+            return qs.filter(classroom__in=student_classrooms).exclude(status=Tournament.Status.DRAFT)
+        except Exception:
+            return qs.none()
+    return qs.none()

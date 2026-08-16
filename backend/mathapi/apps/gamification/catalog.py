@@ -67,3 +67,76 @@ QUIZ_BADGE_CATALOG = [
         'icon': 'star', 'criteria_type': 'quiz_perfect', 'threshold': 100,
     },
 ]
+
+# Tournament badges — seeded by migrations/0006_seed_tournament_badges.py.
+# criteria_type meanings (evaluated in services.evaluate_badges):
+#   tournament_participations — total tournaments registered for (any mode)
+#   tournament_match_wins     — total resolved head-to-head challenges won
+#   tournament_titles         — total #1-overall tournament finishes
+#   tournament_undefeated     — event flag: won every challenge in one tournament (2+)
+#   tournament_giant_slayer   — event flag: beat an opponent with a much higher seed average
+#   tournament_rising_star    — event flag: scored far above own prior average in a tournament
+#   tournament_flawless_duel  — event flag: won a head-to-head challenge with a 100% score
+#   tournament_underdog       — event flag: won a duel while seeded below the opponent
+TOURNAMENT_BADGE_CATALOG = [
+    {
+        'code': 'tournament_recruit', 'name': 'Recruit',
+        'description': 'Registered for your first tournament.',
+        'icon': 'shield', 'criteria_type': 'tournament_participations', 'threshold': 1,
+    },
+    {
+        'code': 'tournament_veteran', 'name': 'Veteran Competitor',
+        'description': 'Registered for 5 tournaments.',
+        'icon': 'shield-check', 'criteria_type': 'tournament_participations', 'threshold': 5,
+    },
+    {
+        'code': 'tournament_duelist', 'name': 'Duelist',
+        'description': 'Won your first head-to-head challenge.',
+        'icon': 'swords', 'criteria_type': 'tournament_match_wins', 'threshold': 1,
+    },
+    {
+        'code': 'tournament_gladiator', 'name': 'Gladiator',
+        'description': 'Won 3 head-to-head challenges.',
+        'icon': 'swords', 'criteria_type': 'tournament_match_wins', 'threshold': 3,
+    },
+    {
+        'code': 'tournament_warlord', 'name': 'Warlord',
+        'description': 'Won 10 head-to-head challenges.',
+        'icon': 'crown', 'criteria_type': 'tournament_match_wins', 'threshold': 10,
+    },
+    {
+        'code': 'tournament_champion', 'name': 'Tournament Champion',
+        'description': 'Finished #1 overall in a tournament.',
+        'icon': 'trophy', 'criteria_type': 'tournament_titles', 'threshold': 1,
+    },
+    {
+        'code': 'tournament_dynasty', 'name': 'Dynasty',
+        'description': 'Finished #1 overall in 3 tournaments.',
+        'icon': 'trophy', 'criteria_type': 'tournament_titles', 'threshold': 3,
+    },
+    {
+        'code': 'tournament_undefeated', 'name': 'Undefeated',
+        'description': 'Won every challenge you fought in a single tournament.',
+        'icon': 'shield-check', 'criteria_type': 'tournament_undefeated', 'threshold': 0,
+    },
+    {
+        'code': 'tournament_giant_slayer', 'name': 'Giant Slayer',
+        'description': 'Defeated an opponent with a far higher seed average.',
+        'icon': 'zap', 'criteria_type': 'tournament_giant_slayer', 'threshold': 0,
+    },
+    {
+        'code': 'tournament_rising_star', 'name': 'Rising Star',
+        'description': 'Scored far above your own prior average in a tournament.',
+        'icon': 'sparkles', 'criteria_type': 'tournament_rising_star', 'threshold': 0,
+    },
+    {
+        'code': 'tournament_flawless_duel', 'name': 'Flawless Victory',
+        'description': 'Won a head-to-head challenge with a perfect 100% score.',
+        'icon': 'star', 'criteria_type': 'tournament_flawless_duel', 'threshold': 0,
+    },
+    {
+        'code': 'tournament_underdog', 'name': 'Underdog Story',
+        'description': 'Won a challenge as the lower-seeded competitor.',
+        'icon': 'trending-up', 'criteria_type': 'tournament_underdog', 'threshold': 0,
+    },
+]

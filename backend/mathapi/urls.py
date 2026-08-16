@@ -14,4 +14,5 @@ urlpatterns = [
     path('api/notifications/', include('mathapi.apps.notifications.urls')),
     path('api/gamification/', include('mathapi.apps.gamification.urls')),
     path('api/quizzes/', include('mathapi.apps.quizzes.urls')),
+    path('api/tournaments/', include('mathapi.apps.tournaments.urls')),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
