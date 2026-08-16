@@ -27,7 +27,7 @@ with an account/preferences to manage.
                   {% if logo_url %}
                     <img src="{{ logo_url }}" alt="{{ platform_name }}" height="28" style="display:block;">
                   {% else %}
-                    <span style="display:inline-block;width:28px;height:28px;line-height:28px;text-align:center;background-color:#22c55e;border-radius:8px;color:#031a03;font-weight:700;font-size:15px;vertical-align:middle;">{{ logo_letter|default:"Σ" }}</span>
+                    <span style="display:inline-block;width:28px;height:28px;line-height:28px;text-align:center;background-color:#22c55e;border-radius:8px;color:#031a03;font-weight:700;font-size:15px;vertical-align:middle;">{{ logo_letter|default:"M" }}</span>
                     <span style="color:#ffffff;font-size:16px;font-weight:700;vertical-align:middle;margin-left:8px;">{{ platform_name }}</span>
                   {% endif %}
                 </td>

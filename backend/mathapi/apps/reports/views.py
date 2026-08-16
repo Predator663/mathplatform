@@ -1,4 +1,5 @@
 from django.http import HttpResponse
+from django.db.models import Count
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import permissions, status
@@ -8,6 +9,7 @@ from mathapi.apps.accounts.scoping import assert_classroom_owned, scope_exams, g
 from mathapi.apps.accounts.models import SiteSettings
 from mathapi.apps.students.models import StudentProfile, Classroom
 from mathapi.apps.exams.models import Exam, ExamScore
+from mathapi.apps.gamification.models import StudentBadge
 from .pdf_engine import (
     generate_exam_scores_pdf,
     generate_class_report_pdf,
@@ -25,6 +27,46 @@ import io
 
 SORT_CHOICES = ['name', 'score_desc', 'score_asc', 'grade', 'student_id',
                 'average_desc', 'average_asc']
+
+
+def _classroom_top_achievers(students, limit=10):
+    """Ranks the given students by total badges earned (all sources), for
+    the class report's 'Top Achievers' section. Returns
+    [{'student', 'badge_count', 'latest_badge'}, ...] sorted descending,
+    students with zero badges excluded."""
+    student_ids = [s.id for s in students]
+    counts = (
+        StudentBadge.objects.filter(student_id__in=student_ids)
+        .values('student_id').annotate(count=Count('id')).order_by('-count')
+    )
+    count_map = {row['student_id']: row['count'] for row in counts}
+    latest_map = {}
+    for sb in (
+        StudentBadge.objects.filter(student_id__in=student_ids)
+        .select_related('badge').order_by('student_id', '-awarded_at')
+    ):
+        latest_map.setdefault(sb.student_id, sb.badge)
+
+    students_by_id = {s.id: s for s in students}
+    ranked = sorted(count_map.items(), key=lambda kv: -kv[1])[:limit]
+    return [
+        {'student': students_by_id[sid], 'badge_count': cnt, 'latest_badge': latest_map.get(sid)}
+        for sid, cnt in ranked if sid in students_by_id
+    ]
+
+
+def _student_prizes(student_id):
+    """Shared by both the PDF and Excel student-report views: every badge
+    earned (exam, quiz, and tournament alike) plus a tournament record
+    summary, so 'all prizes a student has won' is one call away for either
+    report engine."""
+    badges = list(
+        StudentBadge.objects.filter(student_id=student_id)
+        .select_related('badge').order_by('-awarded_at')
+    )
+    from mathapi.apps.tournaments.services import get_student_tournament_stats
+    tournament_stats = get_student_tournament_stats(student_id)
+    return badges, tournament_stats
 
 
 def _resolve_site_name(request) -> str:
@@ -148,9 +190,11 @@ class ClassReportPDFView(APIView):
         for sc in all_scores:
             scores_map[sc.student_id][sc.exam_id] = sc.percentage
 
+        top_achievers = _classroom_top_achievers(list(students))
+
         pdf_bytes = generate_class_report_pdf(
             classroom, students, scores_map, exams,
-            sort_by=sort_by, school_name=school_name
+            sort_by=sort_by, school_name=school_name, top_achievers=top_achievers,
         )
 
         response = HttpResponse(pdf_bytes, content_type='application/pdf')
@@ -185,9 +229,11 @@ class StudentReportPDFView(APIView):
         topic_data = topic_result.get('topics', [])
         trend = services.get_student_trend(student_id, created_by_id=created_by_id)
         comparison = services.get_student_classroom_comparison(student_id, created_by_id=created_by_id)
+        badges, tournament_stats = _student_prizes(student_id)
 
         pdf_bytes = generate_student_report_pdf(
-            student, scores, topic_data, school_name=school_name, trend=trend, comparison=comparison
+            student, scores, topic_data, school_name=school_name, trend=trend, comparison=comparison,
+            badges=badges, tournament_stats=tournament_stats,
         )
 
         response = HttpResponse(pdf_bytes, content_type='application/pdf')
@@ -222,9 +268,11 @@ class StudentReportExcelView(APIView):
         topic_data = topic_result.get('topics', [])
         trend = services.get_student_trend(student_id, created_by_id=created_by_id)
         comparison = services.get_student_classroom_comparison(student_id, created_by_id=created_by_id)
+        badges, tournament_stats = _student_prizes(student_id)
 
         xlsx_bytes = generate_student_report_excel(
-            student, scores, topic_data, school_name=school_name, trend=trend, comparison=comparison
+            student, scores, topic_data, school_name=school_name, trend=trend, comparison=comparison,
+            badges=badges, tournament_stats=tournament_stats,
         )
 
         response = HttpResponse(
@@ -295,9 +343,11 @@ class ClassReportExcelView(APIView):
         for sc in ExamScore.objects.filter(student__in=students, exam__in=exams, is_absent=False).select_related('student','exam'):
             scores_map[sc.student_id][sc.exam_id] = sc.percentage
 
+        top_achievers = _classroom_top_achievers(list(students))
+
         xlsx_bytes = generate_class_report_excel(
             classroom, students, scores_map, exams,
-            sort_by=sort_by, school_name=school_name
+            sort_by=sort_by, school_name=school_name, top_achievers=top_achievers,
         )
 
         response = HttpResponse(xlsx_bytes,

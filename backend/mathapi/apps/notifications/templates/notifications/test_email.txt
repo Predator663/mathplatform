@@ -1,4 +1,4 @@
-Test email ✓
+Test email
 
 If you're reading this, {{ platform_name }}'s email notifications are configured correctly.
 

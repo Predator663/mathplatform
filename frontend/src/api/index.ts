@@ -177,6 +177,7 @@ export const notificationsApi = {
     api.post('/notifications/send-whatsapp-result/', data),
   ping: () => api.get('/notifications/ping/'),
   systemStatus: () => api.get('/notifications/system-status/'),
+  failures: () => api.get('/notifications/failures/'),
 };
 
 export const analyticsApi = {

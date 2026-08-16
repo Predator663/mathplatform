@@ -20,6 +20,8 @@ from reportlab.graphics.charts.piecharts import Pie
 from reportlab.graphics.charts.legends import Legend
 from reportlab.graphics.widgets.markers import makeMarker
 
+from .badge_art import draw_badge_drawing, icon_color
+
 # ── Brand colours ─────────────────────────────────────────────────────────────
 BRAND_BLUE   = colors.HexColor('#2563eb')
 BRAND_DARK   = colors.HexColor('#0a0a0f')
@@ -695,6 +697,87 @@ def _section_card(title: str, drawing: Drawing, styles, width=None, caption: str
     return items
 
 
+def _honors_grid(badges, styles, width=None, per_row=3) -> Table:
+    """A grid of badge medallions (icon + name + description + date), 3 per
+    row by default. Used for both the exam-based student report and the
+    quiz-progress report so every 'prizes won' listing looks identical."""
+    width = width or (PAGE_W - 2*MARGIN)
+    cell_w = width / per_row
+    medal_style = ParagraphStyle('medal_name', fontSize=8.5, fontName='Helvetica-Bold',
+                                  textColor=BRAND_DARK, leading=10)
+    desc_style = ParagraphStyle('medal_desc', fontSize=7, fontName='Helvetica',
+                                 textColor=BRAND_GRAY, leading=8.5)
+    date_style = ParagraphStyle('medal_date', fontSize=6.5, fontName='Helvetica-Oblique',
+                                 textColor=BRAND_GRAY, leading=8)
+
+    rows, current = [], []
+    for sb in badges:
+        medallion = draw_badge_drawing(sb.badge.icon, size=30)
+        cell = Table([
+            [medallion, Paragraph(sb.badge.name, medal_style)],
+            ['', Paragraph(sb.badge.description, desc_style)],
+            ['', Paragraph(f'Earned {sb.awarded_at.strftime("%d %b %Y")}', date_style)],
+        ], colWidths=[36, cell_w - 36])
+        cell.setStyle(TableStyle([
+            ('VALIGN', (0, 0), (0, 0), 'TOP'),
+            ('SPAN', (0, 0), (0, 2)),
+            ('LEFTPADDING', (0, 0), (-1, -1), 3),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 3),
+            ('TOPPADDING', (0, 0), (-1, -1), 1),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 1),
+        ]))
+        current.append(cell)
+        if len(current) == per_row:
+            rows.append(current)
+            current = []
+    if current:
+        while len(current) < per_row:
+            current.append('')
+        rows.append(current)
+
+    grid = Table(rows, colWidths=[cell_w] * per_row)
+    grid.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('BOX', (0, 0), (-1, -1), 0.4, colors.HexColor('#e5e7eb')),
+        ('INNERGRID', (0, 0), (-1, -1), 0.4, colors.HexColor('#e5e7eb')),
+        ('TOPPADDING', (0, 0), (-1, -1), 8),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+        ('LEFTPADDING', (0, 0), (-1, -1), 8),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+        ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#fafafa')),
+    ]))
+    return grid
+
+
+def _honors_achievements_section(styles, badges, tournament_stats=None, width=None) -> list:
+    """'Honors & Achievements' block for the individual student report:
+    badge medallion grid plus (when supplied) a tournament record strip —
+    titles, duel wins, and rising-star call-outs. Never emitted empty:
+    falls back to an encouraging placeholder so the section is consistent
+    across every student's report."""
+    items = [Paragraph('Honors &amp; Achievements', styles['section']), Spacer(1, 0.08*cm)]
+
+    if tournament_stats and any(tournament_stats.get(k) for k in
+                                 ('titles', 'match_wins', 'participations', 'rising_star_count')):
+        ts = tournament_stats
+        items.append(_meta_grid([
+            ('TOURNAMENTS ENTERED', ts.get('participations') or 0),
+            ('TOURNAMENT TITLES', ts.get('titles') or 0),
+            ('DUEL WINS', ts.get('match_wins') or 0),
+            ('RISING STAR MOMENTS', ts.get('rising_star_count') or 0),
+        ], styles))
+        items.append(Spacer(1, 0.25*cm))
+
+    if badges:
+        items.append(_honors_grid(badges, styles, width=width))
+    else:
+        items.append(Paragraph(
+            'No badges earned yet — badges are awarded automatically for exam streaks, '
+            'perfect scores, comebacks, and tournament performance.', styles['body'],
+        ))
+    return items
+
+
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 def generate_exam_scores_pdf(exam, scores, sort_by='name', school_name='School of Excellence') -> bytes:
@@ -833,10 +916,14 @@ def generate_exam_scores_pdf(exam, scores, sort_by='name', school_name='School o
 
 
 def generate_class_report_pdf(classroom, students, scores_map, exams,
-                               sort_by='name', school_name='School of Excellence') -> bytes:
+                               sort_by='name', school_name='School of Excellence',
+                               top_achievers=None) -> bytes:
     """
     Class performance report: one row per student, one column per exam.
     sort_by: 'name' | 'average_desc' | 'average_asc' | 'student_id'
+
+    `top_achievers` — optional list of dicts (already ranked by the caller):
+    [{'student': StudentProfile, 'badge_count': int, 'latest_badge': Badge|None}, ...]
     """
     buf = io.BytesIO()
     styles = _make_styles()
@@ -921,6 +1008,36 @@ def generate_class_report_pdf(classroom, students, scores_map, exams,
         story.append(exam_tbl)
         story.append(Spacer(1, 0.4*cm))
 
+    # ── Top Achievers (badge leaderboard) ───────────────────────────────────
+    if top_achievers:
+        story.append(Paragraph('Top Achievers', styles['section']))
+        rows = [['Rank', 'Medal', 'Student', 'Badges Earned', 'Most Recent']]
+        for i, row in enumerate(top_achievers[:5], 1):
+            latest = row.get('latest_badge')
+            medallion = draw_badge_drawing(latest.icon, size=22) if latest else ''
+            rows.append([
+                f'#{i}', medallion, row['student'].full_name,
+                str(row['badge_count']), latest.name if latest else '—',
+            ])
+        ach_tbl = Table(rows, colWidths=[
+            (PAGE_W - 2*MARGIN)*p for p in [0.08, 0.10, 0.42, 0.20, 0.20]
+        ])
+        ach_tbl.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), BRAND_DARK),
+            ('TEXTCOLOR', (0, 0), (-1, 0), WHITE),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 8.5),
+            ('GRID', (0, 0), (-1, -1), 0.3, colors.HexColor('#e5e7eb')),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [WHITE, BRAND_LIGHT]),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('ALIGN', (0, 0), (1, -1), 'CENTER'),
+            ('ALIGN', (3, 0), (3, -1), 'CENTER'),
+            ('TOPPADDING', (0, 0), (-1, -1), 5),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+        ]))
+        story.append(ach_tbl)
+        story.append(Spacer(1, 0.4*cm))
+
     # ── Student scores matrix ─────────────────────────────────────────────────
     sort_label = {
         'name': 'Sorted by Name',
@@ -986,16 +1103,22 @@ def generate_class_report_pdf(classroom, students, scores_map, exams,
 
 def generate_student_report_pdf(student, scores, topic_data,
                                  school_name='School of Excellence',
-                                 trend=None, comparison=None) -> bytes:
+                                 trend=None, comparison=None,
+                                 badges=None, tournament_stats=None) -> bytes:
     """
     Full individual student analytics report (A4).
 
-    Includes: profile summary, score trend chart (with classroom-average
-    overlay), topic mastery bar chart (with a colour-band legend), grade
-    distribution pie chart, a student-vs-classroom comparison chart,
-    class rank/percentile, term-by-term breakdown, full examination
-    history (with classroom average per exam), topic mastery table, and an
-    auto-generated strengths/watch-areas narrative.
+    Includes: profile summary, honors & achievements (badges + tournament
+    record), score trend chart (with classroom-average overlay), topic
+    mastery bar chart (with a colour-band legend), grade distribution pie
+    chart, a student-vs-classroom comparison chart, class rank/percentile,
+    term-by-term breakdown, full examination history (with classroom
+    average per exam), topic mastery table, and an auto-generated
+    strengths/watch-areas narrative.
+
+    `badges` — optional list of gamification.models.StudentBadge (already
+    fetched/ordered by the caller). `tournament_stats` — optional dict with
+    keys participations/titles/match_wins/rising_star_count.
     """
     buf = io.BytesIO()
     styles = _make_styles()
@@ -1067,6 +1190,10 @@ def generate_student_report_pdf(student, scores, topic_data,
     ], styles))
     story.append(Spacer(1, 0.45*cm))
 
+    # ── Honors & Achievements (badges + tournament record) ────────────────
+    story.extend(_honors_achievements_section(styles, badges or [], tournament_stats))
+    story.append(Spacer(1, 0.4*cm))
+
     # ── Score trend chart ────────────────────────────────────────────────────
     timeline = trend.get('timeline') or [
         {'exam_date': s.exam.exam_date.strftime('%Y-%m-%d'), 'percentage': s.percentage}
@@ -1118,7 +1245,10 @@ def generate_student_report_pdf(student, scores, topic_data,
             class_vals = [class_by_exam[t['exam_id']] for t in cmp_timeline]
             story.extend(_section_card(
                 'Student vs. Classroom Average — Per Exam',
-                _comparison_bar_chart(labels, student_vals, class_vals), styles,
+                _multi_bar_chart(labels, [
+                    {'name': student.full_name, 'values': student_vals, 'color': BRAND_BLUE},
+                    {'name': 'Classroom Average', 'values': class_vals, 'color': BRAND_GRAY},
+                ]), styles,
                 caption=(
                     'Blue bars are this student\'s score; grey bars are the classroom average '
                     'on the same exam. Blue taller than grey means the student outperformed '
@@ -1354,24 +1484,11 @@ def generate_quiz_progress_pdf(student, progress, streak, badges,
 
     # ── Badges ────────────────────────────────────────────────────────────
     if badges:
-        rows = [['Badge', 'Description', 'Earned']]
-        for b in badges:
-            rows.append([b.badge.name, b.badge.description, b.awarded_at.strftime('%d %b %Y')])
-        btbl = Table(rows, colWidths=[4.2*cm, PAGE_W - 2*MARGIN - 4.2*cm - 3.2*cm, 3.2*cm])
-        btbl.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), BRAND_DARK),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, -1), 8.5),
-            ('GRID', (0, 0), (-1, -1), 0.3, colors.HexColor('#e5e7eb')),
-            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, BRAND_LIGHT]),
-            ('TOPPADDING', (0, 0), (-1, -1), 5),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
-            ('LEFTPADDING', (0, 0), (-1, -1), 6),
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ]))
-        story.extend(_section_card('Badges Earned', btbl, styles,
-                     caption='Awarded automatically for quiz consistency and standout scores.'))
+        story.extend(_section_card(
+            'Badges Earned', _honors_grid(badges, styles, width=PAGE_W - 2*MARGIN), styles,
+            caption='Awarded automatically for quiz consistency and standout scores.',
+            width=PAGE_W - 2*MARGIN,
+        ))
     else:
         story.extend(_section_card(
             'Badges Earned', Paragraph('No badges earned yet — keep up the daily quizzes!', styles['body']), styles,

@@ -294,9 +294,19 @@ class SystemStatusView(APIView):
         })
 
         recent_failures = NotificationLog.objects.filter(status=NotificationLog.Status.FAILED).count()
+        failure_detail = f'{recent_failures} failed send(s) logged'
+        if recent_failures:
+            from django.db.models import Count as _Count
+            top_reason = (
+                NotificationLog.objects.filter(status=NotificationLog.Status.FAILED)
+                .values('error_message').annotate(n=_Count('id')).order_by('-n').first()
+            )
+            if top_reason:
+                reason_text = (top_reason['error_message'] or 'unknown error')[:80]
+                failure_detail += f' — most common: "{reason_text}" ({top_reason["n"]}x). Run `notifications failures` for details.'
         checks.append({
             'name': 'notification_failures', 'ok': recent_failures == 0,
-            'detail': f'{recent_failures} failed send(s) logged',
+            'detail': failure_detail,
         })
 
         User = get_user_model()
@@ -305,3 +315,54 @@ class SystemStatusView(APIView):
         checks.append({'name': 'debug_mode', 'ok': not dj_settings.DEBUG, 'detail': 'ON — should be OFF in production' if dj_settings.DEBUG else 'off'})
 
         return Response({'checks': checks, 'server_time': timezone.now().isoformat()})
+
+
+class NotificationFailuresView(APIView):
+    """
+    Admin-only diagnostic for the `system status` red flag: what actually
+    went wrong. Groups every FAILED NotificationLog row by its error
+    message (most SMTP/DNS/auth failures repeat identically across
+    recipients) and also returns the most recent raw failures so a
+    one-off issue isn't hidden behind a bigger recurring one.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        if request.user.role != 'super_admin':
+            return Response({'detail': 'Administrators only.'}, status=status.HTTP_403_FORBIDDEN)
+
+        from django.db.models import Count, Max
+
+        failed = NotificationLog.objects.filter(status=NotificationLog.Status.FAILED)
+        total = failed.count()
+
+        grouped = (
+            failed.values('error_message')
+            .annotate(count=Count('id'), last_seen=Max('sent_at'))
+            .order_by('-count')[:10]
+        )
+        groups = [
+            {
+                'error_message': g['error_message'] or '(no error message captured)',
+                'count': g['count'],
+                'last_seen': g['last_seen'].isoformat() if g['last_seen'] else None,
+            }
+            for g in grouped
+        ]
+
+        recent = list(
+            failed.select_related('recipient').order_by('-sent_at')[:15]
+        )
+        recent_data = [
+            {
+                'recipient_email': n.recipient.email if n.recipient_id else None,
+                'category': n.category,
+                'channel': n.channel,
+                'subject': n.subject,
+                'error_message': n.error_message,
+                'sent_at': n.sent_at.isoformat(),
+            }
+            for n in recent
+        ]
+
+        return Response({'total': total, 'grouped': groups, 'recent': recent_data})

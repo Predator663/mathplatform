@@ -236,12 +236,40 @@ export const COMMANDS: CommandDef[] = [
   },
   {
     name: 'notifications',
-    usage: 'notifications test',
-    description: 'Send a test email to confirm SMTP delivery (admin only)',
+    usage: 'notifications test | notifications failures',
+    description: 'Send a test email, or inspect recent failed sends (admin only)',
     adminOnly: true,
     handler: async (ctx, parsed) => {
-      if (ctx.user?.role !== 'super_admin') return [{ text: 'Only administrators can send a test email.', tone: 'error' }];
-      if (parsed.subcommand !== 'test') return [{ text: 'Usage: notifications test', tone: 'warn' }];
+      if (ctx.user?.role !== 'super_admin') return [{ text: 'Only administrators can access this.', tone: 'error' }];
+
+      if (parsed.subcommand === 'failures') {
+        try {
+          const res = await notificationsApi.failures();
+          const { total, grouped, recent } = res.data ?? { total: 0, grouped: [], recent: [] };
+          if (!total) return [{ text: 'No failed sends logged. All clear.', tone: 'success' }];
+
+          const lines: OutputLine[] = [
+            { text: `NOTIFICATION FAILURES — ${total} total`, tone: 'accent' },
+            { text: '', tone: 'dim' },
+            { text: 'By reason:', tone: 'accent' },
+          ];
+          grouped.forEach((g: { error_message: string; count: number; last_seen: string | null }) => {
+            lines.push({ text: `  [${g.count}x] ${g.error_message}`, tone: 'error' });
+            if (g.last_seen) lines.push({ text: `        last seen: ${new Date(g.last_seen).toLocaleString()}`, tone: 'dim' });
+          });
+          lines.push({ text: '', tone: 'dim' });
+          lines.push({ text: 'Most recent 15:', tone: 'accent' });
+          recent.forEach((n: { recipient_email: string | null; category: string; subject: string; sent_at: string }) => {
+            lines.push({ text: `  ${new Date(n.sent_at).toLocaleString()}  ${n.recipient_email ?? '(no recipient)'}  [${n.category}]  ${n.subject}`, tone: 'dim' });
+          });
+          return lines;
+        } catch (err) {
+          const e = err as { response?: { data?: { detail?: string } } };
+          return [{ text: e?.response?.data?.detail ?? 'Failed to fetch failure log.', tone: 'error' }];
+        }
+      }
+
+      if (parsed.subcommand !== 'test') return [{ text: 'Usage: notifications test | notifications failures', tone: 'warn' }];
       try {
         const res = await notificationsApi.testEmail();
         return [{ text: res.data?.detail ?? 'Test email sent.', tone: 'success' }];

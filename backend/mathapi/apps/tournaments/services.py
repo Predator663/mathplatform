@@ -243,6 +243,28 @@ def _award_for_student(student_id):
     )
 
 
+def get_student_tournament_stats(student_id) -> dict:
+    """Lightweight read-only summary of a student's tournament record —
+    used by the report engines (PDF/Excel) to show tournament prizes
+    alongside badges. Same counts as _award_for_student() computes, but
+    without any badge side-effects."""
+    participations = (
+        TournamentEntry.objects.filter(student_id=student_id, withdrawn=False)
+        .values('tournament').distinct().count()
+    )
+    titles = EntryResult.objects.filter(entry__student_id=student_id, is_champion=True).count()
+    match_wins = Challenge.objects.filter(
+        winner__student_id=student_id, status=Challenge.Status.RESOLVED,
+    ).count()
+    rising_star_count = EntryResult.objects.filter(entry__student_id=student_id, is_rising_star=True).count()
+    return {
+        'participations': participations,
+        'titles': titles,
+        'match_wins': match_wins,
+        'rising_star_count': rising_star_count,
+    }
+
+
 def get_tournament_dossier(tournament: Tournament) -> dict:
     """Everything the intel/analytics view needs in one shot: ranked
     leaderboard, resolved/pending challenges, and headline callouts

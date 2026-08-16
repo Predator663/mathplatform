@@ -13,6 +13,9 @@ from openpyxl.styles.numbers import FORMAT_PERCENTAGE_00
 from openpyxl.chart import LineChart, BarChart, PieChart, Reference, Series
 from openpyxl.chart.marker import DataPoint
 from openpyxl.chart.shapes import GraphicalProperties
+from openpyxl.drawing.image import Image as XLImage
+
+from .badge_art import badge_png_bytes
 
 # ── Brand colours (openpyxl uses ARGB hex) ────────────────────────────────────
 BLUE   = '002563eb'
@@ -139,6 +142,96 @@ def _freeze_and_autofit(ws, freeze_row, freeze_col, min_widths=None, fixed_cols=
         ws.column_dimensions[col_letter].width = adjusted
 
 
+def _write_badges_sheet(wb, student, school_name, academic_year, badges, tournament_stats=None):
+    """'Badges & Prizes' sheet: one row per earned badge with an embedded
+    PNG medallion image (real badge art, not just text), plus a KPI strip
+    up top for tournament titles/duel wins when available. Mirrors the PDF
+    honors section so the Excel and PDF student reports show the same
+    prizes."""
+    ws = wb.create_sheet('Badges & Prizes')
+    ws.sheet_view.showGridLines = False
+    ncols = 4
+    row = _write_platform_header(
+        ws, school_name, f'{student.full_name} — Badges & Prizes',
+        'Every badge earned for exam performance, quiz consistency, and tournament results.',
+        academic_year, ncols,
+    )
+    row += 1
+
+    ts = tournament_stats or {}
+    if any(ts.get(k) for k in ('titles', 'match_wins', 'participations', 'rising_star_count')):
+        kpis = [
+            ('Tournaments Entered', ts.get('participations') or 0),
+            ('Tournament Titles', ts.get('titles') or 0),
+            ('Duel Wins', ts.get('match_wins') or 0),
+            ('Rising Star Moments', ts.get('rising_star_count') or 0),
+        ]
+        for j, (label, val) in enumerate(kpis, 1):
+            lc = ws.cell(row, j, label)
+            lc.font = _font(bold=True, color=GRAY[2:], size=8)
+            lc.alignment = _align('center')
+            vc = ws.cell(row + 1, j, val)
+            vc.font = _font(bold=True, size=13)
+            vc.fill = PatternFill('solid', fgColor='FFE8EFF9')
+            vc.alignment = _align('center')
+            vc.border = _border()
+        row += 3
+
+    headers = ['Badge', 'Icon', 'Description', 'Earned']
+    for j, h in enumerate(headers, 1):
+        c = ws.cell(row, j, h)
+        c.font = _font(bold=True, color=WHITE, size=9)
+        c.fill = PatternFill('solid', fgColor=HEADER[2:])
+        c.alignment = _align('center')
+        c.border = _border()
+    ws.row_dimensions[row].height = 18
+    header_row = row
+    row += 1
+
+    if not badges:
+        ws.cell(row, 1, 'No badges earned yet.')
+        ws.cell(row, 1).font = _font(italic=True, color=GRAY[2:], size=9)
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=ncols)
+    else:
+        for sb in badges:
+            ws.row_dimensions[row].height = 42
+            name_c = ws.cell(row, 1, sb.badge.name)
+            name_c.font = _font(bold=True, size=9)
+            name_c.alignment = _align('left', wrap=True)
+            name_c.border = _border()
+
+            # Icon column B: embed the same medallion art used in the PDF.
+            img_cell = f'B{row}'
+            png_bytes = badge_png_bytes(sb.badge.icon, size=48)
+            xl_img = XLImage(io.BytesIO(png_bytes))
+            xl_img.width = 34
+            xl_img.height = 34
+            ws.add_image(xl_img, img_cell)
+            ws.cell(row, 2).border = _border()
+
+            desc_c = ws.cell(row, 3, sb.badge.description)
+            desc_c.font = _font(size=8.5)
+            desc_c.alignment = _align('left', wrap=True)
+            desc_c.border = _border()
+
+            date_c = ws.cell(row, 4, sb.awarded_at.strftime('%d %b %Y'))
+            date_c.font = _font(size=8.5)
+            date_c.alignment = _align('center')
+            date_c.border = _border()
+
+            fill = PatternFill('solid', fgColor='FFF8FAFC') if row % 2 == 0 else PatternFill('solid', fgColor=WHITE)
+            for col in (1, 3, 4):
+                ws.cell(row, col).fill = fill
+            row += 1
+
+    ws.column_dimensions['A'].width = 26
+    ws.column_dimensions['B'].width = 7
+    ws.column_dimensions['C'].width = 48
+    ws.column_dimensions['D'].width = 14
+    ws.freeze_panes = ws.cell(header_row + 1, 1)
+    return ws
+
+
 def generate_exam_scores_excel(exam, scores, sort_by='name',
                                 school_name='School of Excellence') -> bytes:
     scores_list = list(scores)
@@ -257,7 +350,8 @@ def generate_exam_scores_excel(exam, scores, sort_by='name',
 
 
 def generate_class_report_excel(classroom, students, scores_map, exams,
-                                  sort_by='name', school_name='School of Excellence') -> bytes:
+                                  sort_by='name', school_name='School of Excellence',
+                                  top_achievers=None) -> bytes:
     students = list(students)
     exams = list(exams)
 
@@ -374,6 +468,69 @@ def generate_class_report_excel(classroom, students, scores_map, exams,
     min_widths = [4, 12, 22, 10] + [9] * len(exams) + [10]
     _freeze_and_autofit(ws, 7, 5, min_widths=min_widths, fixed_cols=exam_col_nums)
 
+    # ── Top Achievers sheet (badge leaderboard) ─────────────────────────────
+    if top_achievers:
+        aws = wb.create_sheet('Top Achievers')
+        aws.sheet_view.showGridLines = False
+        arow = _write_platform_header(
+            aws, school_name, f'{classroom} — Top Achievers',
+            'Ranked by total badges earned — exam, quiz, and tournament combined.',
+            classroom.academic_year, 5,
+        )
+        arow += 1
+        headers = ['Rank', 'Medal', 'Student', 'Badges Earned', 'Most Recent Badge']
+        for j, h in enumerate(headers, 1):
+            c = aws.cell(arow, j, h)
+            c.font = _font(bold=True, color=WHITE, size=9)
+            c.fill = PatternFill('solid', fgColor=HEADER[2:])
+            c.alignment = _align('center')
+            c.border = _border()
+        aws.row_dimensions[arow].height = 18
+        header_row = arow
+        arow += 1
+
+        for i, row in enumerate(top_achievers[:10], 1):
+            aws.row_dimensions[arow].height = 40
+            rank_c = aws.cell(arow, 1, f'#{i}')
+            rank_c.font = _font(bold=True, size=10)
+            rank_c.alignment = _align('center')
+            rank_c.border = _border()
+
+            latest = row.get('latest_badge')
+            if latest:
+                png_bytes = badge_png_bytes(latest.icon, size=48)
+                xl_img = XLImage(io.BytesIO(png_bytes))
+                xl_img.width = 32
+                xl_img.height = 32
+                aws.add_image(xl_img, f'B{arow}')
+            aws.cell(arow, 2).border = _border()
+
+            name_c = aws.cell(arow, 3, row['student'].full_name)
+            name_c.font = _font(size=9)
+            name_c.border = _border()
+
+            count_c = aws.cell(arow, 4, row['badge_count'])
+            count_c.font = _font(bold=True, size=10)
+            count_c.alignment = _align('center')
+            count_c.fill = PatternFill('solid', fgColor='FFE8EFF9')
+            count_c.border = _border()
+
+            latest_c = aws.cell(arow, 5, latest.name if latest else '—')
+            latest_c.font = _font(size=8.5)
+            latest_c.border = _border()
+
+            fill = PatternFill('solid', fgColor='FFF8FAFC') if i % 2 == 0 else PatternFill('solid', fgColor=WHITE)
+            for col in (1, 3, 4, 5):
+                aws.cell(arow, col).fill = fill
+            arow += 1
+
+        aws.column_dimensions['A'].width = 8
+        aws.column_dimensions['B'].width = 7
+        aws.column_dimensions['C'].width = 26
+        aws.column_dimensions['D'].width = 14
+        aws.column_dimensions['E'].width = 28
+        aws.freeze_panes = aws.cell(header_row + 1, 1)
+
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
@@ -388,12 +545,14 @@ def _std_dev_xl(values):
 
 def generate_student_report_excel(student, scores, topic_data,
                                    school_name='School of Excellence',
-                                   trend=None, comparison=None) -> bytes:
+                                   trend=None, comparison=None,
+                                   badges=None, tournament_stats=None) -> bytes:
     """
     Individual student report, Excel version — mirrors generate_student_report_pdf.
 
     Sheets: Summary (KPIs + narrative + 4 native charts, each with a proper
-    legend), Exam History (with classroom-average comparison columns),
+    legend), Badges & Prizes (embedded badge medallion images + tournament
+    record), Exam History (with classroom-average comparison columns),
     Topic Mastery, Term Breakdown. Chart source data lives on a hidden
     '_ChartData' sheet so the Summary sheet itself stays readable.
     """
@@ -571,7 +730,7 @@ def generate_student_report_excel(student, scores, topic_data,
         bc.set_categories(cats)
         series = bc.series[0]
         series.data_points = [
-            DataPoint(idx=i, graphicalProperties=GraphicalProperties(
+            DataPoint(idx=i, spPr=GraphicalProperties(
                 solidFill=_grade_color_hex(t['average'])))
             for i, t in enumerate(topic_data)
         ]
@@ -602,7 +761,7 @@ def generate_student_report_excel(student, scores, topic_data,
         pc.set_categories(cats)
         grade_hex = {'A': GREEN[2:], 'B': '2563eb', 'C': AMBER[2:], 'D': 'fb923c', 'F': ROSE[2:]}
         pc.series[0].data_points = [
-            DataPoint(idx=i, graphicalProperties=GraphicalProperties(
+            DataPoint(idx=i, spPr=GraphicalProperties(
                 solidFill=grade_hex.get(g, GRAY[2:])))
             for i, g in enumerate(grade_labels)
         ]
@@ -630,6 +789,13 @@ def generate_student_report_excel(student, scores, topic_data,
     ws.column_dimensions['A'].width = 14
     for col in 'BCDEF':
         ws.column_dimensions[col].width = 12
+
+    # ── Badges & Prizes sheet ────────────────────────────────────────────────
+    _write_badges_sheet(
+        wb, student, school_name,
+        scores[0].exam.academic_year if scores else '—',
+        badges or [], tournament_stats,
+    )
 
     # ── Exam History sheet ───────────────────────────────────────────────────
     hws = wb.create_sheet('Exam History')
