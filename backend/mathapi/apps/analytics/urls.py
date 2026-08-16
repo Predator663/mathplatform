@@ -14,6 +14,7 @@ urlpatterns = [
     path('classrooms/<int:classroom_id>/', views.ClassAnalyticsView.as_view(), name='class_analytics'),
     path('classrooms/<int:classroom_id>/heatmap/', views.TopicHeatmapView.as_view(), name='topic_heatmap'),
     path('at-risk/', views.AtRiskStudentsView.as_view(), name='at_risk'),
+    path('most-improved/', views.MostImprovedStudentsView.as_view(), name='most_improved'),
     path('compare/', views.ComparativeAnalysisView.as_view(), name='compare'),
     path('classrooms/<int:classroom_id>/stream-comparison/', views.StreamComparisonView.as_view(), name='stream_comparison'),
 

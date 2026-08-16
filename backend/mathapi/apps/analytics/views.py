@@ -182,6 +182,39 @@ class AtRiskStudentsView(APIView):
         return Response({'at_risk': data, 'count': len(data)})
 
 
+class MostImprovedStudentsView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        classroom_id = request.query_params.get('classroom_id')
+        min_exams = int(request.query_params.get('min_exams', 2))
+        limit = request.query_params.get('limit')
+        subject_id = _get_subject_id(request)
+        stream_id = _get_stream_id(request)
+
+        if classroom_id and user.role == 'teacher':
+            from mathapi.apps.accounts.scoping import assert_classroom_owned
+            assert_classroom_owned(user, int(classroom_id))
+
+        if user.role == 'teacher' and not classroom_id:
+            from mathapi.apps.accounts.scoping import get_teacher_classrooms
+            classroom_ids = list(get_teacher_classrooms(user).values_list('id', flat=True))
+        else:
+            classroom_ids = [int(classroom_id)] if classroom_id else None
+
+        created_by_id = user.id if user.role == 'teacher' else None
+        data = services.get_most_improved_students(
+            classroom_ids=classroom_ids,
+            subject_id=subject_id,
+            created_by_id=created_by_id,
+            stream_id=stream_id,
+            min_exams=min_exams,
+            limit=int(limit) if limit else None,
+        )
+        return Response({'most_improved': data, 'count': len(data)})
+
+
 class ComparativeAnalysisView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 

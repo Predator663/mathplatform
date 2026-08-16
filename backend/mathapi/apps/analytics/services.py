@@ -520,6 +520,76 @@ def get_at_risk_students(
     return at_risk
 
 
+def get_most_improved_students(
+    classroom_ids=None,
+    subject_id: int = None,
+    created_by_id: int = None,
+    stream_id: int = None,
+    min_exams: int = 2,
+    limit: int = None,
+) -> list:
+    """Ranks students by growth (first exam % -> most recent exam %), not
+    raw average — so a student climbing from 38% to 62% outranks one who
+    was always at 85%. Mirrors get_at_risk_students' query shape so the two
+    stay easy to compare/maintain side by side.
+
+    Growth here spans *all* of a student's exams in scope (oldest to
+    newest), unlike comparison_services._growth which only looks at a
+    manually-picked pair of students — this is a whole-classroom ranking.
+    """
+    filters = Q(is_absent=False)
+    if classroom_ids:
+        if isinstance(classroom_ids, int):
+            filters &= Q(student__classroom_id=classroom_ids)
+        else:
+            filters &= Q(student__classroom_id__in=classroom_ids)
+    if subject_id:
+        filters &= Q(exam__subject_id=subject_id)
+    if stream_id:
+        filters &= Q(student__stream_id=stream_id)
+    if created_by_id:
+        filters &= Q(exam__created_by_id=created_by_id)
+
+    scores = ExamScore.objects.filter(filters).select_related(
+        'student__user', 'exam'
+    ).order_by('student_id', 'exam__exam_date')
+
+    student_pcts = defaultdict(list)
+    for s in scores:
+        student_pcts[s.student_id].append(s.percentage)
+
+    eligible_sids = [sid for sid, pcts in student_pcts.items() if len(pcts) >= min_exams]
+    profile_map = {
+        sp.id: sp
+        for sp in StudentProfile.objects.select_related('user', 'classroom').filter(
+            id__in=eligible_sids
+        )
+    }
+
+    improved = []
+    for sid in eligible_sids:
+        sp = profile_map.get(sid)
+        if not sp:
+            continue
+        pcts = student_pcts[sid]
+        first_pct, last_pct = pcts[0], pcts[-1]
+        improved.append({
+            'student_id': sid,
+            'student_name': sp.full_name,
+            'student_code': sp.student_id,
+            'classroom': str(sp.classroom) if sp.classroom else None,
+            'first_percentage': first_pct,
+            'latest_percentage': last_pct,
+            'delta': round(last_pct - first_pct, 1),
+            'exams_counted': len(pcts),
+        })
+
+    improved.sort(key=lambda x: x['delta'], reverse=True)
+    if limit:
+        improved = improved[:limit]
+    return improved
+
+
 def get_comparative_analysis(
     classroom_ids: list,
     academic_year: str = None,

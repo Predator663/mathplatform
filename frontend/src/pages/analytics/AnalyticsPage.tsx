@@ -4,6 +4,7 @@ import { motion, AnimatePresence, LayoutGroup } from 'framer-motion';
 import {
   BarChart3, User, AlertTriangle, GitCompare, ShieldAlert, GitBranch,
   ShieldCheck, Scale, Rows3, Users2, Search, ArrowUpDown, X, Sparkles, Brain,
+  TrendingUp,
 } from 'lucide-react';
 import { useAuthStore } from '../../store/auth';
 import { TiltCard, Reveal, EmptyState, Select } from '../../components/ui';
@@ -56,6 +57,15 @@ const cards: AnalyticsCard[] = [
     to: '/at-risk',
     color: 'rose',
     category: 'Risk & Integrity',
+  },
+  {
+    icon: TrendingUp,
+    title: 'Most Improved',
+    description: 'Ranks students by growth — first exam vs. most recent — so climbers get recognised, not just whoever\'s already on top.',
+    action: 'View Leaderboard',
+    to: '/analytics/most-improved',
+    color: 'green',
+    category: 'Classroom',
   },
   {
     icon: GitCompare,

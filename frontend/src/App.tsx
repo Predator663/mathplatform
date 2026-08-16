@@ -40,6 +40,7 @@ import StudentComparisonPage from './pages/analytics/StudentComparisonPage';
 import TopicIntelligencePage from './pages/analytics/TopicIntelligencePage';
 import TopicsPage from './pages/topics/TopicsPage';
 import AtRiskPage from './pages/analytics/AtRiskPage';
+import MostImprovedPage from './pages/analytics/MostImprovedPage';
 import RiskScoresPage from './pages/analytics/RiskScoresPage';
 import TopicDependenciesPage from './pages/analytics/TopicDependenciesPage';
 import IntegrityPage from './pages/analytics/IntegrityPage';
@@ -129,6 +130,7 @@ export default function App() {
             <Route path="analytics/integrity" element={<IntegrityPage />} />
             <Route path="analytics/teacher-consistency" element={<RequireAdmin><TeacherConsistencyPage /></RequireAdmin>} />
             <Route path="at-risk"            element={<AtRiskPage />} />
+            <Route path="analytics/most-improved" element={<MostImprovedPage />} />
             <Route path="notifications"      element={<NotificationsPage />} />
             <Route path="settings/notifications" element={<NotificationSettingsPage />} />
             <Route path="reports"            element={<ReportsPage />} />

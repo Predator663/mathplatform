@@ -75,6 +75,7 @@ export const PAGE_REGISTRY: { key: string; label: string; description: string }[
   { key: 'users',      label: 'Users',             description: 'User management (admin)' },
   { key: 'analytics',  label: 'Analytics',         description: 'Analytics overview' },
   { key: 'at_risk',    label: 'At-Risk Students',  description: 'At-risk student tracking' },
+  { key: 'most_improved', label: 'Most Improved',  description: 'Most-improved student leaderboard' },
   { key: 'reports',    label: 'Reports',           description: 'Report generation' },
   { key: 'dashboard',  label: 'Dashboard',         description: 'Main dashboard' },
   { key: 'marks',      label: 'Mark Entry',        description: 'Exam mark entry' },

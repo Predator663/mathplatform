@@ -188,6 +188,7 @@ export const analyticsApi = {
   studentTopics: (id: number, params?: object) => api.get(`/analytics/students/${id}/topics/`, { params }),
   studentClassroomComparison: (id: number, params?: object) => api.get(`/analytics/students/${id}/classroom-comparison/`, { params }),
   atRisk: (params?: object) => api.get('/analytics/at-risk/', { params }),
+  mostImproved: (params?: object) => api.get('/analytics/most-improved/', { params }),
   compare: (params?: object) => api.get('/analytics/compare/', { params }),
   streamComparison: (id: number, params?: object) => api.get(`/analytics/classrooms/${id}/stream-comparison/`, { params }),
   compareStudents: (params?: object) => api.get('/analytics/students/compare/', { params }),

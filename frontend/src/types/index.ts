@@ -469,6 +469,13 @@ export interface AtRiskStudent {
   flags: { below_threshold: boolean; declining: boolean };
 }
 
+export interface MostImprovedStudent {
+  student_id: number; student_name: string; student_code: string;
+  classroom: string | null;
+  first_percentage: number; latest_percentage: number;
+  delta: number; exams_counted: number;
+}
+
 // ── Intelligence layer ──────────────────────────────────────────────────────
 
 export interface IntegrityEditEntry {
