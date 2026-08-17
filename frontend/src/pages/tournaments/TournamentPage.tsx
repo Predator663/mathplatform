@@ -12,10 +12,11 @@ import {
   LoadingPage, EmptyState, Button, Input, Select, Modal, StatCard, SearchableSelect,
 } from '../../components/ui';
 import { useAuthStore } from '../../store/auth';
-import { cn, gradeColor } from '../../utils';
+import { cn, gradeColor, downloadBlob } from '../../utils';
 import type {
   Tournament, TournamentDetail, TournamentEntry, Challenge, EntryResult, TournamentIntel,
   MyTournamentEntryRow, Classroom, Stream, Exam, PaginatedResponse, Badge, StudentProgress,
+  TournamentAnalytics, HeadToHeadRecord,
 } from '../../types';
 
 // ── Badge icon map (mirrors MyProgressPage's) ──────────────────────────────
@@ -329,9 +330,13 @@ function RankBadge({ rank }: { rank: number | null }) {
 
 function LeaderboardTable({ rows }: { rows: EntryResult[] }) {
   if (rows.length === 0) return <EmptyState icon={<ScanLine size={28} />} title="No results yet" message="Finalize the tournament once the exam is published and scored." />;
+  const podium = rows.filter(r => r.rank != null && r.rank <= 3);
+  const rest = rows.filter(r => !(r.rank != null && r.rank <= 3));
   return (
-    <div className="flex flex-col gap-1.5">
-      {rows.map(r => (
+    <div className="flex flex-col gap-3">
+      {podium.length > 0 && <Podium rows={podium} />}
+      <div className="flex flex-col gap-1.5">
+        {rest.map(r => (
         <motion.div key={r.id} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }}
           className={cn('card p-3 flex items-center gap-3',
             r.is_champion && 'ring-1 ring-amber-500/50 bg-amber-500/5')}>
@@ -356,6 +361,45 @@ function LeaderboardTable({ rows }: { rows: EntryResult[] }) {
           </div>
         </motion.div>
       ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Podium (top 3) ───────────────────────────────────────────────────────────
+function Podium({ rows }: { rows: EntryResult[] }) {
+  const first = rows.find(r => r.rank === 1);
+  const second = rows.find(r => r.rank === 2);
+  const third = rows.find(r => r.rank === 3);
+
+  const slot = (r: EntryResult | undefined, place: 1 | 2 | 3) => {
+    if (!r) return <div className="flex-1" />;
+    const heights = { 1: 'h-24', 2: 'h-16', 3: 'h-12' };
+    const colors = {
+      1: 'bg-gradient-to-b from-amber-400/25 to-amber-500/5 ring-amber-500/40',
+      2: 'bg-gradient-to-b from-slate-300/20 to-slate-400/5 ring-slate-400/30',
+      3: 'bg-gradient-to-b from-orange-400/20 to-orange-500/5 ring-orange-500/30',
+    };
+    const iconColor = { 1: 'text-amber-400', 2: 'text-slate-300', 3: 'text-orange-400' };
+    return (
+      <div className="flex-1 flex flex-col items-center gap-1.5">
+        <Crown size={place === 1 ? 20 : 14} className={cn(iconColor[place], place !== 1 && 'opacity-70')} />
+        <p className="font-display font-bold text-xs text-primary text-center leading-tight px-1 truncate w-full">{r.entry.display_name}</p>
+        <p className={cn('font-mono font-bold text-sm', r.score_percentage != null ? gradeColor(r.score_percentage) : 'text-secondary')}>
+          {r.score_percentage != null ? `${r.score_percentage}%` : '—'}
+        </p>
+        <div className={cn('w-full rounded-t-xl ring-1 flex items-start justify-center pt-1.5', heights[place], colors[place])}>
+          <span className="font-display font-black text-lg text-primary/70">#{place}</span>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="flex items-end gap-2 px-2 pt-2 pb-1">
+      {slot(second, 2)}
+      {slot(first, 1)}
+      {slot(third, 3)}
     </div>
   );
 }
@@ -390,15 +434,158 @@ function ChallengeCard({ challenge }: { challenge: Challenge }) {
   );
 }
 
+// ── Tournament Analytics tab ─────────────────────────────────────────────────
+function ScoreDistributionChart({ distribution }: { distribution: { band: string; count: number }[] }) {
+  const max = Math.max(1, ...distribution.map(d => d.count));
+  const bandColors = ['bg-rose-500', 'bg-amber-500', 'bg-azure-500', 'bg-emerald-500', 'bg-violet-500'];
+  return (
+    <div className="flex items-end gap-2.5 h-32 px-1">
+      {distribution.map((d, i) => (
+        <div key={d.band} className="flex-1 flex flex-col items-center gap-1.5 h-full justify-end">
+          <span className="text-[11px] font-mono font-bold text-primary">{d.count}</span>
+          <motion.div
+            initial={{ height: 0 }} animate={{ height: `${Math.max(4, (d.count / max) * 100)}%` }}
+            className={cn('w-full rounded-t-md min-h-[4px]', bandColors[i % bandColors.length])} />
+          <span className="text-[9px] text-secondary font-mono">{d.band}%</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AnalyticsTab({ tournamentId }: { tournamentId: number }) {
+  const { data, isLoading } = useQuery<TournamentAnalytics>({
+    queryKey: ['tournament-analytics', tournamentId],
+    queryFn: () => tournamentsApi.analytics(tournamentId).then(r => r.data),
+  });
+
+  if (isLoading) return <LoadingPage />;
+  if (!data) return null;
+
+  if (data.entrant_count === 0) {
+    return <EmptyState icon={<Target size={28} />} title="No entrants yet" message="Analytics populate once combatants have registered and the tournament is finalized." />;
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+        <StatCard label="Entrants" value={data.entrant_count} color="blue" icon={<Users2 size={14} />} />
+        <StatCard label="Participation" value={data.participation_rate != null ? `${data.participation_rate}%` : '—'} color="violet" icon={<Target size={14} />} />
+        <StatCard label="Pass Rate" value={data.pass_rate != null ? `${data.pass_rate}%` : '—'} color="green" icon={<CheckCircle2 size={14} />} />
+        <StatCard label="Entrant Avg" value={data.entrant_average != null ? `${data.entrant_average}%` : '—'} color="amber" icon={<TrendingUp size={14} />} />
+        <StatCard label="Classroom Avg" value={data.classroom_average != null ? `${data.classroom_average}%` : '—'} color="blue" icon={<School size={14} />} />
+        <StatCard label="Absentees" value={data.absentee_count} color="rose" icon={<AlertTriangle size={14} />} />
+      </div>
+
+      <div className="card p-4">
+        <p className="text-xs font-display font-bold uppercase tracking-widest text-secondary mb-3">Score Distribution</p>
+        <ScoreDistributionChart distribution={data.score_distribution} />
+      </div>
+
+      {(data.closest_duel || data.biggest_upset || data.top_riser) && (
+        <div className="card p-4">
+          <p className="text-xs font-display font-bold uppercase tracking-widest text-secondary mb-3 flex items-center gap-1.5">
+            <Eye size={13} className="text-azure-400" /> Field Intelligence
+          </p>
+          <div className="flex flex-col gap-2.5">
+            {data.closest_duel && (
+              <div className="flex items-start gap-2.5 text-sm">
+                <Swords size={15} className="text-rose-400 flex-shrink-0 mt-0.5" />
+                <p className="text-primary"><span className="font-semibold">Closest duel:</span> {data.closest_duel.label || 'Unlabeled'} — decided by just <span className="font-mono font-bold text-rose-400">{data.closest_duel.gap}</span> points.</p>
+              </div>
+            )}
+            {data.biggest_upset && (
+              <div className="flex items-start gap-2.5 text-sm">
+                <Zap size={15} className="text-amber-400 flex-shrink-0 mt-0.5" />
+                <p className="text-primary"><span className="font-semibold">Biggest upset:</span> {data.biggest_upset.winner} won as the <span className="font-mono font-bold text-amber-400">{data.biggest_upset.seed_gap}-pt</span> underdog in "{data.biggest_upset.label || 'a duel'}".</p>
+              </div>
+            )}
+            {data.top_riser && (
+              <div className="flex items-start gap-2.5 text-sm">
+                <Sparkles size={15} className="text-violet-400 flex-shrink-0 mt-0.5" />
+                <p className="text-primary"><span className="font-semibold">Sharpest rise:</span> {data.top_riser.name}, up <span className="font-mono font-bold text-emerald-400">+{data.top_riser.delta}</span> points on their own average.</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Head-to-Head rivalry lookup ─────────────────────────────────────────────
+function HeadToHeadTab({ tournament }: { tournament: TournamentDetail }) {
+  const [studentA, setStudentA] = useState('');
+  const [studentB, setStudentB] = useState('');
+  const studentEntries = tournament.entries.filter(e => e.entrant_type === 'student');
+
+  const { data, isFetching, refetch } = useQuery<HeadToHeadRecord>({
+    queryKey: ['head-to-head', studentA, studentB],
+    queryFn: () => tournamentsApi.headToHead(Number(studentA), Number(studentB)).then(r => r.data),
+    enabled: false,
+  });
+
+  const canCompare = studentA && studentB && studentA !== studentB;
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="grid sm:grid-cols-2 gap-2.5">
+        <SearchableSelect label="Combatant A" placeholder="Search…" value={studentA} onChange={setStudentA}
+          options={studentEntries.filter(e => String(e.student_id) !== studentB).map(e => ({ value: String(e.student_id), label: e.display_name }))} />
+        <SearchableSelect label="Combatant B" placeholder="Search…" value={studentB} onChange={setStudentB}
+          options={studentEntries.filter(e => String(e.student_id) !== studentA).map(e => ({ value: String(e.student_id), label: e.display_name }))} />
+      </div>
+      <Button size="sm" onClick={() => refetch()} disabled={!canCompare} loading={isFetching} className="self-start">
+        <Swords size={13} /> Pull Rivalry Record
+      </Button>
+
+      {data && !isFetching && (
+        <div className="card p-4 flex flex-col gap-4">
+          <div className="flex items-center justify-center gap-4">
+            <div className="text-center flex-1">
+              <p className="font-display font-bold text-sm text-primary truncate">{data.student_a.name}</p>
+              <p className="font-mono font-black text-2xl text-azure-400">{data.a_wins}</p>
+            </div>
+            <div className="text-center px-2">
+              <p className="text-[10px] uppercase tracking-widest text-secondary">Duels</p>
+              <p className="font-mono font-bold text-sm text-primary">{data.total_duels}</p>
+              {data.ties > 0 && <p className="text-[10px] text-secondary">{data.ties} tied</p>}
+            </div>
+            <div className="text-center flex-1">
+              <p className="font-display font-bold text-sm text-primary truncate">{data.student_b.name}</p>
+              <p className="font-mono font-black text-2xl text-rose-400">{data.b_wins}</p>
+            </div>
+          </div>
+          {data.history.length === 0 ? (
+            <p className="text-sm text-secondary text-center">These two have never faced off directly.</p>
+          ) : (
+            <div className="flex flex-col gap-1.5 border-t pt-3" style={{ borderColor: 'var(--border)' }}>
+              {data.history.map(h => (
+                <div key={h.challenge_id} className="flex items-center justify-between text-xs">
+                  <span className="text-secondary">{h.tournament} — {h.label || 'Duel'}</span>
+                  <span className={cn('font-semibold', h.is_tie ? 'text-amber-400' : 'text-primary')}>
+                    {h.is_tie ? 'Tied' : h.winner}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Tournament Detail Panel ─────────────────────────────────────────────────
 function TournamentDetailPanel({ tournamentId, onClose }: { tournamentId: number; onClose: () => void }) {
   const queryClient = useQueryClient();
   const { user } = useAuthStore();
   const isStaff = user?.role === 'teacher' || user?.role === 'super_admin';
   const isStudent = user?.role === 'student';
-  const [tab, setTab] = useState<'roster' | 'challenges' | 'leaderboard'>('roster');
+  const [tab, setTab] = useState<'roster' | 'challenges' | 'leaderboard' | 'analytics' | 'rivalry'>('roster');
   const [registerOpen, setRegisterOpen] = useState(false);
   const [challengeOpen, setChallengeOpen] = useState(false);
+  const [exportingFormat, setExportingFormat] = useState<'pdf' | 'excel' | null>(null);
 
   const { data: tournament, isLoading } = useQuery<TournamentDetail>({
     queryKey: ['tournament', tournamentId],
@@ -435,6 +622,21 @@ function TournamentDetailPanel({ tournamentId, onClose }: { tournamentId: number
       queryClient.invalidateQueries({ queryKey: ['tournament', tournamentId] });
     },
   });
+
+  const handleExport = async (fmt: 'pdf' | 'excel') => {
+    setExportingFormat(fmt);
+    try {
+      const res = fmt === 'pdf' ? await tournamentsApi.exportPdf(tournamentId) : await tournamentsApi.exportExcel(tournamentId);
+      const safeName = (tournament?.title ?? 'tournament').replace(/\s+/g, '_').slice(0, 40);
+      const ext = fmt === 'pdf' ? 'pdf' : 'xlsx';
+      downloadBlob(res.data as Blob, `${safeName}_dossier.${ext}`);
+      toast.success(`${fmt.toUpperCase()} dossier downloaded`);
+    } catch {
+      toast.error('Export failed');
+    } finally {
+      setExportingFormat(null);
+    }
+  };
 
   if (isLoading || !tournament) return <div className="card p-6"><LoadingPage /></div>;
 
@@ -490,6 +692,18 @@ function TournamentDetailPanel({ tournamentId, onClose }: { tournamentId: number
               )}
             </div>
           )}
+          {tournament.entry_count > 0 && (
+            <div className="flex gap-2">
+              <Button size="sm" variant="secondary" onClick={() => handleExport('pdf')}
+                loading={exportingFormat === 'pdf'} disabled={exportingFormat !== null}>
+                <ScanLine size={13} /> PDF Dossier
+              </Button>
+              <Button size="sm" variant="secondary" onClick={() => handleExport('excel')}
+                loading={exportingFormat === 'excel'} disabled={exportingFormat !== null}>
+                <ListChecks size={13} /> Excel Dossier
+              </Button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -499,6 +713,8 @@ function TournamentDetailPanel({ tournamentId, onClose }: { tournamentId: number
           ['roster', `Roster (${tournament.entries.length})`, Users2],
           ['challenges', `Challenges (${tournament.challenges.length})`, Swords],
           ['leaderboard', 'Leaderboard', Trophy],
+          ['analytics', 'Analytics', Eye],
+          ['rivalry', 'Rivalry', ScanLine],
         ] as const).map(([key, label, Icon]) => (
           <button key={key} onClick={() => setTab(key)}
             className={cn('flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-display font-semibold transition-colors border-b-2',
@@ -560,6 +776,8 @@ function TournamentDetailPanel({ tournamentId, onClose }: { tournamentId: number
         )}
 
         {tab === 'leaderboard' && <LeaderboardTable rows={tournament.leaderboard} />}
+        {tab === 'analytics' && <AnalyticsTab tournamentId={tournamentId} />}
+        {tab === 'rivalry' && <HeadToHeadTab tournament={tournament} />}
       </div>
 
       {registerOpen && <RegisterEntryModal open={registerOpen} onClose={() => setRegisterOpen(false)} tournament={tournament} />}

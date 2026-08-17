@@ -265,6 +265,147 @@ def get_student_tournament_stats(student_id) -> dict:
     }
 
 
+SCORE_BANDS = [
+    ('0-39', 0, 39.999),
+    ('40-59', 40, 59.999),
+    ('60-74', 60, 74.999),
+    ('75-89', 75, 89.999),
+    ('90-100', 90, 100.0001),
+]
+
+
+def get_tournament_analytics(tournament: Tournament) -> dict:
+    """
+    The 'never miss a bit of info' analytics payload for a single
+    tournament: score distribution, participation rate against the whole
+    classroom, entrant average vs. classroom-wide average on the same
+    exam, pass rate, and headline callouts (closest duel, biggest upset,
+    top riser). Only meaningful once the tournament is finalized — returns
+    a mostly-empty shell before that so the frontend can show a clean
+    'not finalized yet' state instead of misleading zeros.
+    """
+    from mathapi.apps.students.models import StudentProfile
+
+    results = list(
+        EntryResult.objects.filter(entry__tournament=tournament)
+        .select_related('entry', 'entry__student', 'entry__stream')
+    )
+    classroom_size = StudentProfile.objects.filter(classroom=tournament.classroom, is_active=True).count()
+    entrant_count = tournament.entries.filter(withdrawn=False).count()
+    participation_rate = round((entrant_count / classroom_size) * 100, 1) if classroom_size else None
+
+    scored = [r for r in results if r.score_percentage is not None]
+    distribution = []
+    for label, lo, hi in SCORE_BANDS:
+        count = sum(1 for r in scored if lo <= r.score_percentage <= hi)
+        distribution.append({'band': label, 'count': count})
+
+    entrant_avg = round(sum(r.score_percentage for r in scored) / len(scored), 2) if scored else None
+    pass_mark = float(tournament.exam.passing_score / tournament.exam.max_score * 100) if tournament.exam.max_score else 40
+    pass_rate = round(sum(1 for r in scored if r.score_percentage >= pass_mark) / len(scored) * 100, 1) if scored else None
+    absentee_count = sum(1 for r in results if r.is_absent)
+
+    classroom_scores = list(
+        ExamScore.objects.filter(exam=tournament.exam, student__classroom=tournament.classroom, is_absent=False)
+        .values_list('score', flat=True)
+    )
+    classroom_avg = None
+    if classroom_scores and tournament.exam.max_score:
+        pct_scores = [float(s) / float(tournament.exam.max_score) * 100 for s in classroom_scores]
+        classroom_avg = round(sum(pct_scores) / len(pct_scores), 2)
+
+    resolved_challenges = list(
+        tournament.challenges.filter(status=Challenge.Status.RESOLVED)
+        .prefetch_related('entries__student', 'entries__stream')
+        .select_related('winner')
+    )
+    closest_duel, closest_gap = None, None
+    biggest_upset, biggest_upset_gap = None, None
+    for c in resolved_challenges:
+        entry_scores = [(e, get_entry_score(e)) for e in c.entries.all()]
+        entry_scores = [(e, s) for e, s in entry_scores if s is not None]
+        if len(entry_scores) < 2:
+            continue
+        entry_scores.sort(key=lambda pair: pair[1], reverse=True)
+        gap = round(entry_scores[0][1] - entry_scores[1][1], 2)
+        if closest_gap is None or gap < closest_gap:
+            closest_gap, closest_duel = gap, c
+        if c.winner and c.winner.seed_average is not None:
+            loser_seeds = [e.seed_average for e, _ in entry_scores if e.id != c.winner.id and e.seed_average is not None]
+            if loser_seeds:
+                seed_gap = max(loser_seeds) - c.winner.seed_average
+                if seed_gap > 0 and (biggest_upset_gap is None or seed_gap > biggest_upset_gap):
+                    biggest_upset_gap, biggest_upset = seed_gap, c
+
+    top_riser = max((r for r in results if r.delta is not None), key=lambda r: r.delta, default=None)
+
+    return {
+        'entrant_count': entrant_count,
+        'classroom_size': classroom_size,
+        'participation_rate': participation_rate,
+        'absentee_count': absentee_count,
+        'score_distribution': distribution,
+        'entrant_average': entrant_avg,
+        'classroom_average': classroom_avg,
+        'pass_rate': pass_rate,
+        'closest_duel': {
+            'challenge_id': closest_duel.id, 'label': closest_duel.label, 'gap': closest_gap,
+        } if closest_duel else None,
+        'biggest_upset': {
+            'challenge_id': biggest_upset.id, 'label': biggest_upset.label,
+            'winner': biggest_upset.winner.display_name, 'seed_gap': round(biggest_upset_gap, 2),
+        } if biggest_upset else None,
+        'top_riser': {
+            'name': top_riser.entry.display_name, 'delta': top_riser.delta,
+        } if top_riser and top_riser.delta and top_riser.delta > 0 else None,
+    }
+
+
+def get_head_to_head(student_a_id, student_b_id) -> dict:
+    """Every resolved challenge these two students have ever fought,
+    across every tournament — a lifetime rivalry record."""
+    from mathapi.apps.students.models import StudentProfile
+
+    challenges = (
+        Challenge.objects.filter(
+            status=Challenge.Status.RESOLVED,
+            entries__student_id=student_a_id,
+        )
+        .filter(entries__student_id=student_b_id)
+        .distinct()
+        .select_related('tournament', 'winner', 'winner__student')
+        .order_by('-resolved_at')
+    )
+    # Guard against pulling in 3+-way challenges that merely include both students
+    # incidentally — a head-to-head record should only count duels that were
+    # exactly these two.
+    exact = [c for c in challenges if set(c.entries.values_list('student_id', flat=True)) == {student_a_id, student_b_id}]
+
+    a_wins = sum(1 for c in exact if c.winner and c.winner.student_id == student_a_id)
+    b_wins = sum(1 for c in exact if c.winner and c.winner.student_id == student_b_id)
+    ties = sum(1 for c in exact if c.is_tie)
+
+    try:
+        student_a = StudentProfile.objects.get(id=student_a_id)
+        student_b = StudentProfile.objects.get(id=student_b_id)
+    except StudentProfile.DoesNotExist:
+        return {'error': 'One or both students not found.'}
+
+    return {
+        'student_a': {'id': student_a.id, 'name': student_a.full_name},
+        'student_b': {'id': student_b.id, 'name': student_b.full_name},
+        'a_wins': a_wins, 'b_wins': b_wins, 'ties': ties, 'total_duels': len(exact),
+        'history': [
+            {
+                'challenge_id': c.id, 'tournament': c.tournament.title,
+                'label': c.label, 'winner': c.winner.display_name if c.winner else None,
+                'is_tie': c.is_tie, 'resolved_at': c.resolved_at.isoformat() if c.resolved_at else None,
+            }
+            for c in exact
+        ],
+    }
+
+
 def get_tournament_dossier(tournament: Tournament) -> dict:
     """Everything the intel/analytics view needs in one shot: ranked
     leaderboard, resolved/pending challenges, and headline callouts

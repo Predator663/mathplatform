@@ -303,8 +303,13 @@ export const tournamentsApi = {
   createChallenge: (id: number, data: { label?: string; entry_ids: number[] }) =>
     api.post(`/tournaments/tournaments/${id}/challenges/`, data),
   dossier: (id: number) => api.get(`/tournaments/tournaments/${id}/dossier/`),
+  analytics: (id: number) => api.get(`/tournaments/tournaments/${id}/analytics/`),
+  headToHead: (studentA: number, studentB: number) =>
+    api.get('/tournaments/head-to-head/', { params: { student_a: studentA, student_b: studentB } }),
   myEntries: () => api.get('/tournaments/my-entries/'),
   intel: (params?: object) => api.get('/tournaments/intel/', { params }),
+  exportPdf: (id: number) => api.get(`/reports/export/tournament/${id}/pdf/`, { responseType: 'blob' }),
+  exportExcel: (id: number) => api.get(`/reports/export/tournament/${id}/excel/`, { responseType: 'blob' }),
 };
 
 export const settingsApi = {

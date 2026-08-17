@@ -677,3 +677,22 @@ export interface MyTournamentEntryRow {
   tournament: Tournament; entry_id: number; seed_average: number | null;
   live_score: number | null; result: EntryResult | null;
 }
+
+export interface TournamentAnalytics {
+  entrant_count: number; classroom_size: number; participation_rate: number | null;
+  absentee_count: number;
+  score_distribution: { band: string; count: number }[];
+  entrant_average: number | null; classroom_average: number | null; pass_rate: number | null;
+  closest_duel: { challenge_id: number; label: string; gap: number } | null;
+  biggest_upset: { challenge_id: number; label: string; winner: string; seed_gap: number } | null;
+  top_riser: { name: string; delta: number } | null;
+}
+
+export interface HeadToHeadRecord {
+  student_a: { id: number; name: string }; student_b: { id: number; name: string };
+  a_wins: number; b_wins: number; ties: number; total_duels: number;
+  history: {
+    challenge_id: number; tournament: string; label: string;
+    winner: string | null; is_tie: boolean; resolved_at: string | null;
+  }[];
+}

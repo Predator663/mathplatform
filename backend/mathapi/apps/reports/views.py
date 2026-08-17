@@ -15,11 +15,13 @@ from .pdf_engine import (
     generate_class_report_pdf,
     generate_student_report_pdf,
     generate_at_risk_pdf,
+    generate_tournament_dossier_pdf,
 )
 from .excel_engine import (
     generate_exam_scores_excel,
     generate_class_report_excel,
     generate_student_report_excel,
+    generate_tournament_dossier_excel,
 )
 import csv
 import io
@@ -582,4 +584,60 @@ class AtRiskPDFView(APIView):
 
         response = HttpResponse(pdf_bytes, content_type='application/pdf')
         response['Content-Disposition'] = 'attachment; filename="at_risk_students.pdf"'
+        return response
+
+
+class TournamentDossierPDFView(APIView):
+    """
+    GET /api/reports/export/tournament/<tournament_id>/pdf/?school_name=
+    FBI/CIA-style intel dossier: leaderboard, score distribution, headline
+    callouts, and the full challenge log. Scoped the same way the
+    tournaments app itself scopes access (teachers only see tournaments
+    they created; admins see everything).
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, tournament_id):
+        from mathapi.apps.accounts.scoping import scope_tournaments
+        from mathapi.apps.tournaments import services as tournament_services
+        from mathapi.apps.tournaments.models import Tournament
+        from django.shortcuts import get_object_or_404
+
+        tournament = get_object_or_404(
+            scope_tournaments(request.user).select_related('exam', 'classroom'),
+            id=tournament_id,
+        )
+        school_name = _resolve_site_name(request)
+        dossier = tournament_services.get_tournament_dossier(tournament)
+        analytics = tournament_services.get_tournament_analytics(tournament)
+
+        pdf_bytes = generate_tournament_dossier_pdf(tournament, dossier, analytics, school_name=school_name)
+        response = HttpResponse(pdf_bytes, content_type='application/pdf')
+        safe = tournament.title.replace(' ', '_')[:40]
+        response['Content-Disposition'] = f'attachment; filename="tournament_{safe}_dossier.pdf"'
+        return response
+
+
+class TournamentDossierExcelView(APIView):
+    """GET /api/reports/export/tournament/<tournament_id>/excel/?school_name="""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, tournament_id):
+        from mathapi.apps.accounts.scoping import scope_tournaments
+        from mathapi.apps.tournaments import services as tournament_services
+        from django.shortcuts import get_object_or_404
+
+        tournament = get_object_or_404(
+            scope_tournaments(request.user).select_related('exam', 'classroom'),
+            id=tournament_id,
+        )
+        school_name = _resolve_site_name(request)
+        dossier = tournament_services.get_tournament_dossier(tournament)
+        analytics = tournament_services.get_tournament_analytics(tournament)
+
+        xlsx_bytes = generate_tournament_dossier_excel(tournament, dossier, analytics, school_name=school_name)
+        response = HttpResponse(xlsx_bytes,
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        safe = tournament.title.replace(' ', '_')[:40]
+        response['Content-Disposition'] = f'attachment; filename="tournament_{safe}_dossier.xlsx"'
         return response

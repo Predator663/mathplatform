@@ -1672,9 +1672,207 @@ def generate_at_risk_pdf(students, meta: dict, sort_by='score_asc', school_name=
             row_styles.append(('TEXTCOLOR', (4, i), (4, i), _grade_color(s['recent_average'])))
             row_styles.append(('FONTNAME', (4, i), (4, i), 'Helvetica-Bold'))
 
-        tbl.setStyle(TableStyle(row_styles))
-        story.append(tbl)
+def _score_distribution_chart(distribution, width=CHART_W, height=CHART_H) -> Drawing:
+    """Histogram of entrant scores across the 5 standard bands — the
+    tournament dossier's 'shape of the field' visual."""
+    d = Drawing(width, height)
+    total = sum(b['count'] for b in distribution)
+    if not distribution or total == 0:
+        d.add(String(width/2, height/2, 'No scored entrants yet',
+                      fontSize=9, fillColor=BRAND_GRAY, textAnchor='middle'))
+        return d
 
-    doc.build(story, onFirstPage=lambda c, d: _header_footer(c, d, doc_meta),
-              onLaterPages=lambda c, d: _header_footer(c, d, doc_meta))
+    chart = VerticalBarChart()
+    chart.x = 1.6*cm
+    chart.y = 1.4*cm
+    chart.width = width - 2.4*cm
+    chart.height = height - 2.4*cm
+    chart.data = [[b['count'] for b in distribution]]
+    chart.categoryAxis.categoryNames = [f"{b['band']}%" for b in distribution]
+    chart.categoryAxis.labels.fontSize = 8
+    chart.valueAxis.valueMin = 0
+    chart.valueAxis.labels.fontSize = 7.5
+    band_colors = [BRAND_ROSE, BRAND_AMBER, BRAND_BLUE, BRAND_GREEN, BRAND_VIOLET]
+    for i in range(len(distribution)):
+        chart.bars[(0, i)].fillColor = band_colors[i % len(band_colors)]
+    chart.barWidth = 16
+    chart.groupSpacing = 10
+    d.add(chart)
+    return d
+
+
+def generate_tournament_dossier_pdf(tournament, dossier, analytics,
+                                     school_name='School of Excellence') -> bytes:
+    """
+    FBI/CIA-style intel dossier for one finalized tournament: leaderboard
+    with rank/score/delta, score distribution histogram, participation and
+    pass-rate metrics vs. the whole classroom, champion + rising-star
+    callouts (with real badge medallions), closest-duel/biggest-upset
+    highlights, and the full challenge (duel) log.
+
+    `dossier` — output of tournaments.services.get_tournament_dossier().
+    `analytics` — output of tournaments.services.get_tournament_analytics().
+    """
+    buf = io.BytesIO()
+    styles = _make_styles()
+    results = dossier['results']
+    champion = dossier['champion']
+    rising_stars = dossier['rising_stars']
+    challenges = tournament.challenges.prefetch_related('entries__student', 'entries__stream').select_related('winner').all()
+
+    meta = {
+        'school_name': school_name,
+        'academic_year': tournament.exam.academic_year,
+        'doc_title': f'Tournament Dossier — {tournament.title}',
+        'doc_subtitle': (
+            (f'Codename: {tournament.codename}  ·  ' if tournament.codename else '') +
+            f'{tournament.get_mode_display()}  ·  {tournament.classroom}  ·  Decisive exam: {tournament.exam.title}'
+        ),
+        'footer_centre': f'Classroom: {tournament.classroom}',
+    }
+
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=MARGIN, rightMargin=MARGIN,
+        topMargin=4.2*cm, bottomMargin=2.2*cm,
+    )
+    story = []
+
+    # ── Summary metrics ──────────────────────────────────────────────────
+    story.append(_meta_grid([
+        ('STATUS', tournament.get_status_display()),
+        ('ENTRANTS', analytics['entrant_count']),
+        ('PARTICIPATION', f"{analytics['participation_rate']}%" if analytics['participation_rate'] is not None else '—'),
+        ('PASS RATE', f"{analytics['pass_rate']}%" if analytics['pass_rate'] is not None else '—'),
+        ('DUELS FOUGHT', challenges.count()),
+    ], styles))
+    story.append(Spacer(1, 0.25*cm))
+    story.append(_meta_grid([
+        ('ENTRANT AVERAGE', f"{analytics['entrant_average']}%" if analytics['entrant_average'] is not None else '—'),
+        ('CLASSROOM AVERAGE', f"{analytics['classroom_average']}%" if analytics['classroom_average'] is not None else '—'),
+        ('ABSENTEES', analytics['absentee_count']),
+        ('DECISIVE EXAM', tournament.exam.title),
+        ('EXAM DATE', str(tournament.exam.exam_date)),
+    ], styles))
+    story.append(Spacer(1, 0.45*cm))
+
+    # ── Champion & Rising Stars callout ─────────────────────────────────
+    if champion or rising_stars:
+        callout_rows = []
+        if champion:
+            medallion = draw_badge_drawing('trophy', size=28)
+            callout_rows.append([
+                medallion,
+                Paragraph(f'<b>Champion — {champion.entry.display_name}</b><br/>'
+                          f'Finished #1 overall at {champion.score_percentage}%.', styles['body']),
+            ])
+        for r in rising_stars[:4]:
+            medallion = draw_badge_drawing('sparkles', size=24)
+            callout_rows.append([
+                medallion,
+                Paragraph(f'<b>Rising Star — {r.entry.display_name}</b><br/>'
+                          f'Scored {r.score_percentage}%, up {r.delta:+.1f} pts on their own prior average.',
+                          styles['body']),
+            ])
+        callout_tbl = Table(callout_rows, colWidths=[38, PAGE_W - 2*MARGIN - 38])
+        callout_tbl.setStyle(TableStyle([
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('BOX', (0, 0), (-1, -1), 0.4, colors.HexColor('#e5e7eb')),
+            ('INNERGRID', (0, 0), (-1, -1), 0.3, colors.HexColor('#f3f4f6')),
+            ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#fffbeb')),
+            ('TOPPADDING', (0, 0), (-1, -1), 8),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+            ('LEFTPADDING', (0, 0), (-1, -1), 10),
+        ]))
+        story.append(Paragraph('Champion &amp; Rising Stars', styles['section']))
+        story.append(callout_tbl)
+        story.append(Spacer(1, 0.4*cm))
+
+    # ── Headline callouts (closest duel, biggest upset) ─────────────────
+    headlines = []
+    if analytics.get('closest_duel'):
+        cd = analytics['closest_duel']
+        headlines.append(f"Closest duel: <b>{cd['label'] or 'Unlabeled'}</b> — decided by just {cd['gap']} points.")
+    if analytics.get('biggest_upset'):
+        bu = analytics['biggest_upset']
+        headlines.append(f"Biggest upset: <b>{bu['winner']}</b> won as the {bu['seed_gap']}-point underdog in \"{bu['label'] or 'a duel'}\".")
+    if analytics.get('top_riser'):
+        tr = analytics['top_riser']
+        headlines.append(f"Sharpest rise: <b>{tr['name']}</b>, up {tr['delta']:+.1f} points on their own average.")
+    if headlines:
+        story.append(Paragraph('Field Intelligence', styles['section']))
+        for h in headlines:
+            story.append(Paragraph(f'• {h}', styles['body']))
+        story.append(Spacer(1, 0.4*cm))
+
+    # ── Score distribution ────────────────────────────────────────────────
+    story.extend(_section_card(
+        'Score Distribution', _score_distribution_chart(analytics['score_distribution']), styles,
+        caption='How the field of entrants scored on the decisive exam, banded into 5 ranges.',
+    ))
+    story.append(Spacer(1, 0.4*cm))
+
+    # ── Leaderboard ───────────────────────────────────────────────────────
+    if results:
+        story.append(Paragraph('Final Leaderboard', styles['section']))
+        rows = [['Rank', 'Entrant', 'Score', 'Prior Avg', 'Change', 'Flags']]
+        for r in results:
+            flags = []
+            if r.is_champion: flags.append('Champion')
+            if r.is_rising_star: flags.append('Rising Star')
+            if r.is_absent: flags.append('Absent')
+            rows.append([
+                f'#{r.rank}' if r.rank else '—',
+                r.entry.display_name,
+                f'{r.score_percentage}%' if r.score_percentage is not None else '—',
+                f'{r.prior_average}%' if r.prior_average is not None else '—',
+                f'{r.delta:+.1f}' if r.delta is not None else '—',
+                ', '.join(flags) or '—',
+            ])
+        lb_tbl = Table(rows, colWidths=[(PAGE_W - 2*MARGIN)*p for p in [0.09, 0.32, 0.14, 0.14, 0.11, 0.20]])
+        lb_style = [
+            ('BACKGROUND', (0, 0), (-1, 0), BRAND_DARK),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
+            ('GRID', (0, 0), (-1, -1), 0.3, colors.HexColor('#e5e7eb')),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, BRAND_LIGHT]),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('ALIGN', (0, 0), (0, -1), 'CENTER'),
+            ('ALIGN', (2, 0), (4, -1), 'CENTER'),
+            ('TOPPADDING', (0, 0), (-1, -1), 5),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+        ]
+        for i, r in enumerate(results, 1):
+            if r.is_champion:
+                lb_style.append(('BACKGROUND', (0, i), (-1, i), colors.HexColor('#fef3c7')))
+        lb_tbl.setStyle(TableStyle(lb_style))
+        story.append(lb_tbl)
+        story.append(Spacer(1, 0.4*cm))
+
+    # ── Challenge log ─────────────────────────────────────────────────────
+    challenge_list = list(challenges)
+    if challenge_list:
+        story.append(Paragraph('Challenge Log', styles['section']))
+        rows = [['Duel', 'Combatants', 'Result', 'Status']]
+        for c in challenge_list:
+            names = ' vs '.join(e.display_name for e in c.entries.all())
+            result = c.winner.display_name if c.winner else ('Tied' if c.is_tie else '—')
+            rows.append([c.label or f'Duel #{c.id}', names, result, c.get_status_display()])
+        ch_tbl = Table(rows, colWidths=[(PAGE_W - 2*MARGIN)*p for p in [0.22, 0.42, 0.22, 0.14]])
+        ch_tbl.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), BRAND_DARK),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
+            ('GRID', (0, 0), (-1, -1), 0.3, colors.HexColor('#e5e7eb')),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, BRAND_LIGHT]),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('TOPPADDING', (0, 0), (-1, -1), 5),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+        ]))
+        story.append(ch_tbl)
+
+    doc.build(story, onFirstPage=lambda c, d: _header_footer(c, d, meta),
+              onLaterPages=lambda c, d: _header_footer(c, d, meta))
     return buf.getvalue()

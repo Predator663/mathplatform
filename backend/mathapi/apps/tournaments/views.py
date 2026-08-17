@@ -206,6 +206,13 @@ class TournamentViewSet(viewsets.ModelViewSet):
         return Response(ChallengeSerializer(challenge).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['get'])
+    def analytics(self, request, pk=None):
+        """Score distribution, participation rate, pass rate vs. classroom,
+        and headline callouts (closest duel, biggest upset, top riser)."""
+        tournament = self.get_object()
+        return Response(services.get_tournament_analytics(tournament))
+
+    @action(detail=True, methods=['get'])
     def dossier(self, request, pk=None):
         """The full 'never miss a bit of info' payload for the tournament's
         dedicated intel view: leaderboard, challenge log, champion + rising
@@ -252,6 +259,25 @@ class MyTournamentEntriesView(APIView):
                 'result': EntryResultSerializer(result).data if result else None,
             })
         return Response(rows)
+
+
+class HeadToHeadView(APIView):
+    """GET /api/tournaments/head-to-head/?student_a=<id>&student_b=<id>
+    Lifetime rivalry record between two students across every tournament
+    they've both entered."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        a = request.query_params.get('student_a')
+        b = request.query_params.get('student_b')
+        if not a or not b:
+            return Response({'detail': 'student_a and student_b are required.'}, status=status.HTTP_400_BAD_REQUEST)
+        if a == b:
+            return Response({'detail': 'Choose two different students.'}, status=status.HTTP_400_BAD_REQUEST)
+        data = services.get_head_to_head(int(a), int(b))
+        if 'error' in data:
+            return Response(data, status=status.HTTP_404_NOT_FOUND)
+        return Response(data)
 
 
 class TournamentIntelView(APIView):

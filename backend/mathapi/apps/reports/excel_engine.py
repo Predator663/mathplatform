@@ -923,3 +923,177 @@ def generate_student_report_excel(student, scores, topic_data,
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+def generate_tournament_dossier_excel(tournament, dossier, analytics,
+                                       school_name='School of Excellence') -> bytes:
+    """
+    Tournament dossier, Excel version — mirrors generate_tournament_dossier_pdf.
+
+    Sheets: Summary (KPIs + champion/rising-star callouts with embedded
+    badge medallions + native score-distribution chart), Leaderboard
+    (full ranked results), Challenge Log (every duel and its outcome).
+    """
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Summary'
+    ws.sheet_view.showGridLines = False
+    ncols = 5
+    row = _write_platform_header(
+        ws, school_name, f'Tournament Dossier — {tournament.title}',
+        f'{tournament.get_mode_display()}  ·  {tournament.classroom}  ·  Decisive exam: {tournament.exam.title}',
+        tournament.exam.academic_year, ncols,
+    )
+    row += 1
+
+    kpis = [
+        ('Status', tournament.get_status_display()),
+        ('Entrants', analytics['entrant_count']),
+        ('Participation', f"{analytics['participation_rate']}%" if analytics['participation_rate'] is not None else '—'),
+        ('Pass Rate', f"{analytics['pass_rate']}%" if analytics['pass_rate'] is not None else '—'),
+        ('Entrant Avg', f"{analytics['entrant_average']}%" if analytics['entrant_average'] is not None else '—'),
+    ]
+    for j, (label, val) in enumerate(kpis, 1):
+        lc = ws.cell(row, j, label)
+        lc.font = _font(bold=True, color=GRAY[2:], size=8)
+        lc.alignment = _align('center')
+        vc = ws.cell(row + 1, j, val)
+        vc.font = _font(bold=True, size=12)
+        vc.fill = PatternFill('solid', fgColor='FFE8EFF9')
+        vc.alignment = _align('center')
+        vc.border = _border()
+    row += 3
+
+    # Champion callout with embedded medallion
+    champion = dossier.get('champion')
+    if champion:
+        ws.cell(row, 1, 'CHAMPION').font = _font(bold=True, color=AMBER[2:], size=9)
+        row += 1
+        png_bytes = badge_png_bytes('trophy', size=56)
+        xl_img = XLImage(io.BytesIO(png_bytes))
+        xl_img.width = 36
+        xl_img.height = 36
+        ws.add_image(xl_img, f'A{row}')
+        c = ws.cell(row, 2, f'{champion.entry.display_name} — {champion.score_percentage}%')
+        c.font = _font(bold=True, size=11)
+        ws.row_dimensions[row].height = 30
+        row += 2
+
+    rising_stars = dossier.get('rising_stars') or []
+    if rising_stars:
+        ws.cell(row, 1, 'RISING STARS').font = _font(bold=True, color=VIOLET[2:], size=9)
+        row += 1
+        for r in rising_stars[:5]:
+            png_bytes = badge_png_bytes('sparkles', size=40)
+            xl_img = XLImage(io.BytesIO(png_bytes))
+            xl_img.width = 26
+            xl_img.height = 26
+            ws.add_image(xl_img, f'A{row}')
+            c = ws.cell(row, 2, f'{r.entry.display_name} — {r.score_percentage}% (+{r.delta:.1f} on prior avg)')
+            c.font = _font(size=9.5)
+            ws.row_dimensions[row].height = 20
+            row += 1
+        row += 1
+
+    # Score distribution native chart
+    dist = analytics.get('score_distribution') or []
+    if dist:
+        dws = wb.create_sheet('_ChartData')
+        dws.sheet_state = 'hidden'
+        dws.cell(1, 1, 'Band')
+        dws.cell(1, 2, 'Count')
+        for i, b in enumerate(dist, 2):
+            dws.cell(i, 1, b['band'])
+            dws.cell(i, 2, b['count'])
+
+        bc = BarChart()
+        bc.title = 'Score Distribution'
+        bc.y_axis.title = 'Entrants'
+        data = Reference(dws, min_col=2, min_row=1, max_row=1 + len(dist))
+        cats = Reference(dws, min_col=1, min_row=2, max_row=1 + len(dist))
+        bc.add_data(data, titles_from_data=True)
+        bc.set_categories(cats)
+        bc.legend = None
+        bc.width, bc.height = 14, 8
+        ws.add_chart(bc, f'A{row}')
+        row += 18
+
+    ws.column_dimensions['A'].width = 14
+    for col in 'BCDE':
+        ws.column_dimensions[col].width = 16
+
+    # ── Leaderboard sheet ────────────────────────────────────────────────────
+    lws = wb.create_sheet('Leaderboard')
+    lws.sheet_view.showGridLines = False
+    lrow = _write_platform_header(
+        lws, school_name, f'{tournament.title} — Final Leaderboard', 'Ranked by decisive-exam score.',
+        tournament.exam.academic_year, 6,
+    )
+    lrow += 1
+    headers = ['Rank', 'Entrant', 'Score', 'Prior Avg', 'Change', 'Flags']
+    for j, h in enumerate(headers, 1):
+        c = lws.cell(lrow, j, h)
+        c.font = _font(bold=True, color=WHITE, size=9)
+        c.fill = PatternFill('solid', fgColor=HEADER[2:])
+        c.alignment = _align('center')
+        c.border = _border()
+    header_row = lrow
+    lrow += 1
+    for i, r in enumerate(dossier['results']):
+        flags = []
+        if r.is_champion: flags.append('Champion')
+        if r.is_rising_star: flags.append('Rising Star')
+        if r.is_absent: flags.append('Absent')
+        row_vals = [
+            f'#{r.rank}' if r.rank else '—', r.entry.display_name,
+            f'{r.score_percentage}%' if r.score_percentage is not None else '—',
+            f'{r.prior_average}%' if r.prior_average is not None else '—',
+            f'{r.delta:+.1f}' if r.delta is not None else '—',
+            ', '.join(flags) or '—',
+        ]
+        fill = PatternFill('solid', fgColor='FFFEF3C7') if r.is_champion else (
+            PatternFill('solid', fgColor='FFF8FAFC') if i % 2 else PatternFill('solid', fgColor=WHITE))
+        for j, v in enumerate(row_vals, 1):
+            c = lws.cell(lrow, j, v)
+            c.font = _font(bold=(j == 1 or r.is_champion), size=9)
+            c.alignment = _align('center' if j in (1, 3, 4, 5) else 'left')
+            c.fill = fill
+            c.border = _border()
+        lrow += 1
+    _freeze_and_autofit(lws, header_row + 1, 1, min_widths=[8, 24, 10, 12, 8, 22])
+
+    # ── Challenge Log sheet ──────────────────────────────────────────────────
+    challenges = list(tournament.challenges.prefetch_related('entries__student', 'entries__stream').select_related('winner').all())
+    if challenges:
+        cws = wb.create_sheet('Challenge Log')
+        cws.sheet_view.showGridLines = False
+        crow = _write_platform_header(
+            cws, school_name, f'{tournament.title} — Challenge Log', 'Every declared duel and its outcome.',
+            tournament.exam.academic_year, 4,
+        )
+        crow += 1
+        headers = ['Duel', 'Combatants', 'Result', 'Status']
+        for j, h in enumerate(headers, 1):
+            c = cws.cell(crow, j, h)
+            c.font = _font(bold=True, color=WHITE, size=9)
+            c.fill = PatternFill('solid', fgColor=HEADER[2:])
+            c.alignment = _align('center')
+            c.border = _border()
+        chdr_row = crow
+        crow += 1
+        for i, ch in enumerate(challenges):
+            names = ' vs '.join(e.display_name for e in ch.entries.all())
+            result = ch.winner.display_name if ch.winner else ('Tied' if ch.is_tie else '—')
+            row_vals = [ch.label or f'Duel #{ch.id}', names, result, ch.get_status_display()]
+            fill = PatternFill('solid', fgColor='FFF8FAFC') if i % 2 else PatternFill('solid', fgColor=WHITE)
+            for j, v in enumerate(row_vals, 1):
+                c = cws.cell(crow, j, v)
+                c.font = _font(size=9)
+                c.fill = fill
+                c.border = _border()
+            crow += 1
+        _freeze_and_autofit(cws, chdr_row + 1, 1, min_widths=[22, 40, 20, 16])
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
