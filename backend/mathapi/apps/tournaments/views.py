@@ -106,8 +106,18 @@ class TournamentViewSet(viewsets.ModelViewSet):
         if not tournament.exam.is_published:
             return Response({'detail': 'The linked exam must be published (scored) before finalizing.'},
                              status=status.HTTP_400_BAD_REQUEST)
-        services.finalize_tournament(tournament)
+        dossier = services.finalize_tournament(tournament)
         tournament.refresh_from_db()
+
+        # Email notifications are best-effort — a bad SMTP config or a
+        # transient failure should never prevent the tournament from
+        # finalizing (mirrors exams' publish-notification handling).
+        try:
+            from mathapi.apps.notifications.services import notify_tournament_finalized
+            notify_tournament_finalized(tournament, dossier)
+        except Exception:
+            pass
+
         return Response(TournamentDetailSerializer(tournament).data)
 
     # ── Registration ─────────────────────────────────────────────────────

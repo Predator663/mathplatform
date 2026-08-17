@@ -18,6 +18,7 @@ const CATEGORY_DESCRIPTIONS: Record<string, string> = {
   risk_critical: 'A student\'s composite risk score (trend, volatility, topic gaps, pass margin combined) reaches critical.',
   exam_published: 'A new exam becomes visible to students and parents.',
   integrity_flag: 'The daily scan finds a suspicious score edit (admins only).',
+  tournament_result: 'A tournament you entered (or your child entered) has been finalized — rank, score, and any badges earned.',
 };
 
 export default function NotificationSettingsPage() {

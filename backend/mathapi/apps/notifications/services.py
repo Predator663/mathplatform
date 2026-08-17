@@ -38,6 +38,7 @@ RISK_CRITICAL_COOLDOWN_DAYS = 5
 INTEGRITY_COOLDOWN_DAYS = 1
 EXAM_PUBLISHED_COOLDOWN_DAYS = 1
 DIGEST_COOLDOWN_DAYS = 1
+TOURNAMENT_RESULT_COOLDOWN_DAYS = 1
 
 
 # ── Preferences ──────────────────────────────────────────────────────────
@@ -841,3 +842,86 @@ def send_whatsapp_exam_result(*, sender, student, exam) -> dict:
         'attempted_count': len(recipients),
         'errors': errors,
     }
+
+
+# ── Trigger: tournament finalized ─────────────────────────────────────────
+
+def notify_tournament_finalized(tournament, dossier: dict) -> int:
+    """
+    Called right after a tournament is finalized. Emails every entrant
+    (student, if they have an 'immediate' preference) and every linked
+    parent their own result — rank, score, movement vs. their own prior
+    average, and any badges freshly earned in this tournament. Stream
+    entries have no single student to notify and are skipped here; the
+    classroom's teachers already see the outcome in-app.
+    """
+    site = SiteSettings.get()
+    sent = 0
+    newly_awarded = dossier.get('newly_awarded_badges', {})
+
+    for result in dossier['results']:
+        entry = result.entry
+        if not entry.student_id:
+            continue
+        student = entry.student
+        badge_names = [b.name for b in newly_awarded.get(student.id, [])]
+        rank_display = f'#{result.rank} of {len(dossier["results"])}' if result.rank else 'Unranked'
+        score_display = f'{result.score_percentage}%' if result.score_percentage is not None else 'Absent'
+        score_color = '#16a34a' if (result.score_percentage or 0) >= 50 else '#e11d48'
+        delta_display = f'{result.delta:+.1f} pts' if result.delta is not None else ''
+        delta_color = '#16a34a' if (result.delta or 0) >= 0 else '#e11d48'
+        first_name = student.user.first_name or student.full_name.split(' ')[0]
+
+        base_context = {
+            'tournament_title': tournament.title,
+            'exam_title': tournament.exam.title,
+            'classroom_name': str(student.classroom) if student.classroom else '',
+            'is_champion': result.is_champion,
+            'rank_display': rank_display,
+            'score_display': score_display,
+            'score_color': score_color,
+            'delta_display': delta_display,
+            'delta_color': delta_color,
+            'badge_names': badge_names,
+            'student_first_name': first_name,
+            'action_label': 'View tournament',
+            'action_url': f'{settings.FRONTEND_URL}/tournaments',
+        }
+
+        # The student themself
+        if student.user.is_active and get_frequency(student.user, NotificationCategory.TOURNAMENT_RESULT) == 'immediate':
+            sent += int(send_notification(
+                recipient=student.user,
+                category=NotificationCategory.TOURNAMENT_RESULT,
+                subject=(f'You won {tournament.title}!' if result.is_champion
+                         else f'Your result for {tournament.title} — {site.platform_name}'),
+                template_base='tournament_result',
+                context={**base_context, 'greeting': f'Hi {first_name},', 'is_own_result': True},
+                related_object_type='tournament', related_object_id=tournament.id,
+                summary=f'{student.full_name}: {rank_display} in "{tournament.title}"',
+                cooldown_days=TOURNAMENT_RESULT_COOLDOWN_DAYS,
+            ))
+
+        # Linked parents
+        links = ParentStudentLink.objects.filter(student=student).select_related('parent')
+        for link in links:
+            parent = link.parent
+            if not parent.is_active or get_frequency(parent, NotificationCategory.TOURNAMENT_RESULT) != 'immediate':
+                continue
+            sent += int(send_notification(
+                recipient=parent,
+                category=NotificationCategory.TOURNAMENT_RESULT,
+                subject=(f'{student.full_name} won {tournament.title}!' if result.is_champion
+                         else f'{student.full_name}: tournament result — {site.platform_name}'),
+                template_base='tournament_result',
+                context={
+                    **base_context,
+                    'greeting': f'Hi {parent.first_name or parent.get_full_name()},',
+                    'is_own_result': False,
+                },
+                related_object_type='tournament', related_object_id=tournament.id,
+                summary=f'{student.full_name}: {rank_display} in "{tournament.title}"',
+                cooldown_days=TOURNAMENT_RESULT_COOLDOWN_DAYS,
+            ))
+
+    return sent

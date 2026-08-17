@@ -1,0 +1,33 @@
+{% extends "notifications/base_email.html" %}
+{% block content %}
+<p style="margin:0 0 4px 0;font-size:13px;color:#8a8a99;">{{ greeting }}</p>
+<h1 style="margin:0 0 16px 0;font-size:19px;font-weight:700;color:#1a1a26;line-height:1.4;">
+  {% if is_champion %}{{ student_first_name }} won {{ tournament_title }}!{% else %}{{ tournament_title }} has concluded{% endif %}
+</h1>
+<p style="margin:0 0 20px 0;font-size:14px;color:#4a4a5a;line-height:1.6;">
+  {% if is_own_result %}
+    Your tournament result is in.
+  {% else %}
+    {{ student_first_name }}'s tournament result is in for <strong>{{ classroom_name }}</strong>.
+  {% endif %}
+</p>
+
+<div style="background-color:#f8fafc;border:1px solid #e5e7eb;border-radius:12px;padding:16px 18px;margin-bottom:20px;">
+  {% include "notifications/_stat_row.html" with label="Tournament" value=tournament_title %}
+  {% include "notifications/_stat_row.html" with label="Decisive exam" value=exam_title %}
+  {% include "notifications/_stat_row.html" with label="Final rank" value=rank_display %}
+  {% include "notifications/_stat_row.html" with label="Score" value=score_display value_color=score_color %}
+  {% if delta_display %}{% include "notifications/_stat_row.html" with label="Vs. prior average" value=delta_display value_color=delta_color %}{% endif %}
+</div>
+
+{% if badge_names %}
+<p style="margin:0 0 10px 0;font-size:14px;color:#4a4a5a;line-height:1.6;">
+  New badge{{ badge_names|length|pluralize }} earned:
+</p>
+<p style="margin:0 0 20px 0;font-size:14px;color:#1a1a26;font-weight:600;line-height:1.8;">
+  {{ badge_names|join:" · " }}
+</p>
+{% endif %}
+
+{% include "notifications/_button.html" with url=action_url label=action_label color="#d97706" %}
+{% endblock %}

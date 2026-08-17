@@ -160,19 +160,19 @@ def finalize_tournament(tournament: Tournament):
     tournament.finalized_at = timezone.now()
     tournament.save(update_fields=['status', 'finalized_at'])
 
-    _award_tournament_badges(tournament)
+    newly_awarded = _award_tournament_badges(tournament)
 
-    return get_tournament_dossier(tournament)
+    return get_tournament_dossier(tournament, newly_awarded_badges=newly_awarded)
 
 
-def _award_tournament_badges(tournament: Tournament):
+def _award_tournament_badges(tournament: Tournament) -> dict:
     """Recomputes lifetime tournament stats for every student touched by this
     tournament and awards any newly-earned badges. Stream entries don't have
     a single student to award, so only individual-mode participation and any
-    students inside a stream-mode entry's own head-to-head duels count."""
-    from mathapi.apps.gamification.services import evaluate_badges
-    from mathapi.apps.gamification.models import StudentStreak, QuizStreak
-
+    students inside a stream-mode entry's own head-to-head duels count.
+    Returns {student_id: [Badge, ...]} of badges newly awarded THIS run, so
+    callers (e.g. the result-announcement email) can say "you just earned
+    X" rather than listing a student's entire lifetime collection."""
     student_ids = set(
         tournament.entries.filter(student__isnull=False).values_list('student_id', flat=True)
     )
@@ -182,8 +182,12 @@ def _award_tournament_badges(tournament: Tournament):
         for entry in challenge.entries.filter(student__isnull=False):
             student_ids.add(entry.student_id)
 
+    newly_awarded = {}
     for student_id in student_ids:
-        _award_for_student(student_id)
+        awarded = _award_for_student(student_id)
+        if awarded:
+            newly_awarded[student_id] = [sb.badge for sb in awarded]
+    return newly_awarded
 
 
 def _award_for_student(student_id):
@@ -406,10 +410,14 @@ def get_head_to_head(student_a_id, student_b_id) -> dict:
     }
 
 
-def get_tournament_dossier(tournament: Tournament) -> dict:
+def get_tournament_dossier(tournament: Tournament, newly_awarded_badges: dict = None) -> dict:
     """Everything the intel/analytics view needs in one shot: ranked
     leaderboard, resolved/pending challenges, and headline callouts
-    (champion + rising stars) — the 'never miss a bit of info' payload."""
+    (champion + rising stars) — the 'never miss a bit of info' payload.
+
+    `newly_awarded_badges` — optional {student_id: [Badge, ...]}, passed
+    straight through from finalize_tournament() so the result-announcement
+    email can list exactly what was just earned."""
     results = (
         EntryResult.objects.filter(entry__tournament=tournament)
         .select_related('entry', 'entry__student', 'entry__student__user', 'entry__stream', 'entry__stream__classroom')
@@ -422,4 +430,5 @@ def get_tournament_dossier(tournament: Tournament) -> dict:
         'results': list(results),
         'champion': champion,
         'rising_stars': rising_stars,
+        'newly_awarded_badges': newly_awarded_badges or {},
     }

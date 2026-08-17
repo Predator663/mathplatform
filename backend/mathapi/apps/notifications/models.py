@@ -8,6 +8,7 @@ class NotificationCategory(models.TextChoices):
     EXAM_PUBLISHED = 'exam_published', 'Exam Published'
     INTEGRITY_FLAG = 'integrity_flag', 'Grade Integrity Flag'
     DAILY_DIGEST   = 'daily_digest', 'Daily Digest'
+    TOURNAMENT_RESULT = 'tournament_result', 'Tournament Result'
     TEST           = 'test', 'Test Email'
 
 
@@ -27,18 +28,22 @@ DEFAULT_FREQUENCY_BY_ROLE = {
     'parent': {
         'at_risk': 'digest', 'risk_critical': 'immediate',
         'exam_published': 'digest', 'integrity_flag': 'off',
+        'tournament_result': 'immediate',
     },
     'teacher': {
         'at_risk': 'immediate', 'risk_critical': 'immediate',
         'exam_published': 'off', 'integrity_flag': 'off',
+        'tournament_result': 'off',
     },
     'super_admin': {
         'at_risk': 'digest', 'risk_critical': 'immediate',
         'exam_published': 'off', 'integrity_flag': 'immediate',
+        'tournament_result': 'off',
     },
     'student': {
         'at_risk': 'off', 'risk_critical': 'off',
         'exam_published': 'digest', 'integrity_flag': 'off',
+        'tournament_result': 'immediate',
     },
 }
 

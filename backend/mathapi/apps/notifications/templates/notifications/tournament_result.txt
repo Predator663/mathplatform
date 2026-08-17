@@ -1,0 +1,20 @@
+{{ greeting }}
+
+{% if is_champion %}{{ student_first_name }} won {{ tournament_title }}!{% else %}{{ tournament_title }} has concluded.{% endif %}
+{% if is_own_result %}Your tournament result is in.{% else %}{{ student_first_name }}'s tournament result is in for {{ classroom_name }}.{% endif %}
+
+  Tournament:       {{ tournament_title }}
+  Decisive exam:    {{ exam_title }}
+  Final rank:       {{ rank_display }}
+  Score:            {{ score_display }}
+{% if delta_display %}  Vs. prior average: {{ delta_display }}
+{% endif %}
+{% if badge_names %}
+New badge(s) earned: {{ badge_names|join:" · " }}
+{% endif %}
+{{ action_label }}: {{ action_url }}
+
+—
+You're receiving this because of your notification preferences on {{ platform_name }}.
+{% if preferences_url %}Manage notification settings: {{ preferences_url }}{% endif %}
+{{ footer_text }}
