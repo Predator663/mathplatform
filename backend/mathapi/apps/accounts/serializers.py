@@ -1,5 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 from .models import Subject, TeacherAssignment, AuditLog, SiteSettings
 
 User = get_user_model()
@@ -51,6 +53,16 @@ class RegisterSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         if attrs['password'] != attrs.pop('confirm_password'):
             raise serializers.ValidationError({'confirm_password': 'Passwords do not match.'})
+        # min_length=8 above only checks length. This runs the FULL set of
+        # AUTH_PASSWORD_VALIDATORS from settings (common-password list,
+        # similarity-to-email/name check, not-all-numeric) — without this
+        # call those validators are configured but never actually enforced.
+        temp_user = User(email=attrs.get('email'), first_name=attrs.get('first_name', ''),
+                          last_name=attrs.get('last_name', ''))
+        try:
+            validate_password(attrs['password'], user=temp_user)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError({'password': list(exc.messages)})
         return attrs
 
     def create(self, validated_data):
@@ -65,6 +77,14 @@ class ChangePasswordSerializer(serializers.Serializer):
         user = self.context['request'].user
         if not user.check_password(value):
             raise serializers.ValidationError('Current password is incorrect.')
+        return value
+
+    def validate_new_password(self, value):
+        user = self.context['request'].user
+        try:
+            validate_password(value, user=user)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(list(exc.messages))
         return value
 
 
