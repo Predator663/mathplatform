@@ -104,6 +104,7 @@ class _CronTriggerView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def _check_secret(self, request):
+        import hmac
         from django.conf import settings
         expected = getattr(settings, 'CRON_SECRET', '')
         if not expected:
@@ -112,7 +113,10 @@ class _CronTriggerView(APIView):
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
         provided = request.headers.get('X-Cron-Secret', '')
-        if provided != expected:
+        # Constant-time comparison — a plain `!=` leaks timing information
+        # proportional to how many leading characters match, which lets an
+        # attacker recover the secret byte-by-byte over many requests.
+        if not hmac.compare_digest(provided, expected):
             return Response({'detail': 'Invalid or missing X-Cron-Secret header.'}, status=status.HTTP_403_FORBIDDEN)
         return None
 

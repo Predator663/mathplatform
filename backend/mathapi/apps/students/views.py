@@ -460,6 +460,10 @@ class StudentProfileViewSet(viewsets.ModelViewSet):
             return Response({'detail': 'No file provided.'}, status=status.HTTP_400_BAD_REQUEST)
         if not csv_file.name.endswith('.csv'):
             return Response({'detail': 'File must be a CSV.'}, status=status.HTTP_400_BAD_REQUEST)
+        MAX_IMPORT_SIZE = 5 * 1024 * 1024  # 5MB — comfortably fits thousands of student rows
+        if csv_file.size > MAX_IMPORT_SIZE:
+            return Response({'detail': 'CSV file is too large (max 5MB). Split it into smaller batches.'},
+                             status=status.HTTP_400_BAD_REQUEST)
 
         decoded = csv_file.read().decode('utf-8-sig')
         reader = csv.DictReader(io.StringIO(decoded))

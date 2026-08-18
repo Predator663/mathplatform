@@ -32,6 +32,24 @@ SUBHDR = 'FF2d4f7c'
 
 
 def _fill(hex_color): return PatternFill('solid', fgColor=hex_color)
+
+# ── Formula-injection guard ──────────────────────────────────────────────
+# Any cell whose ENTIRE value is user-controlled free text (a student's
+# name, a tournament title someone typed in, a challenge label) must never
+# be allowed to start with =, +, -, or @ — Excel/Sheets/LibreOffice treat
+# a leading one of those as "this cell is a formula" and will evaluate it
+# when the file is opened, which is a well-known spreadsheet attack vector
+# (CSV/Excel formula injection). Prefixing with a straight quote forces it
+# to be stored and displayed as literal text instead.
+_FORMULA_TRIGGER_CHARS = ('=', '+', '-', '@', '\t', '\r')
+
+
+def _safe(value):
+    if isinstance(value, str) and value and value[0] in _FORMULA_TRIGGER_CHARS:
+        return "'" + value
+    return value
+
+
 def _font(bold=False, color='FF000000', size=10, italic=False):
     return Font(bold=bold, color=color, size=size, italic=italic, name='Calibri')
 def _align(h='left', v='center', wrap=False):
@@ -152,7 +170,7 @@ def _write_badges_sheet(wb, student, school_name, academic_year, badges, tournam
     ws.sheet_view.showGridLines = False
     ncols = 4
     row = _write_platform_header(
-        ws, school_name, f'{student.full_name} — Badges & Prizes',
+        ws, school_name, _safe(f'{student.full_name} — Badges & Prizes'),
         'Every badge earned for exam performance, quiz consistency, and tournament results.',
         academic_year, ncols,
     )
@@ -302,9 +320,9 @@ def generate_exam_scores_excel(exam, scores, sort_by='name',
         stream_name = s.student.stream.name if s.student.stream_id else '—'
 
         if s.is_absent:
-            row_data = [rank, s.student.student_id, s.student.full_name, stream_name, 'ABSENT', exam.max_score, '—', '—', '—']
+            row_data = [rank, s.student.student_id, _safe(s.student.full_name), stream_name, 'ABSENT', exam.max_score, '—', '—', '—']
         else:
-            row_data = [rank, s.student.student_id, s.student.full_name, stream_name,
+            row_data = [rank, s.student.student_id, _safe(s.student.full_name), stream_name,
                         float(s.score), float(exam.max_score), s.percentage/100,
                         s.letter_grade, 'Pass' if s.passed else 'Fail']
 
@@ -422,7 +440,7 @@ def generate_class_report_excel(classroom, students, scores_map, exams,
         ws.cell(next_row, 2).alignment = _align('center')
         ws.cell(next_row, 2).font = _font(size=8)
 
-        ws.cell(next_row, 3, s.full_name).fill = row_fill
+        ws.cell(next_row, 3, _safe(s.full_name)).fill = row_fill
         ws.cell(next_row, 3).border = _border()
         ws.cell(next_row, 3).font = _font(size=8)
 
@@ -505,7 +523,7 @@ def generate_class_report_excel(classroom, students, scores_map, exams,
                 aws.add_image(xl_img, f'B{arow}')
             aws.cell(arow, 2).border = _border()
 
-            name_c = aws.cell(arow, 3, row['student'].full_name)
+            name_c = aws.cell(arow, 3, _safe(row['student'].full_name))
             name_c.font = _font(size=9)
             name_c.border = _border()
 
@@ -802,7 +820,7 @@ def generate_student_report_excel(student, scores, topic_data,
     hws.sheet_view.showGridLines = False
     has_cmp = bool(class_by_exam)
     hcols = 11 if has_cmp else 8
-    _write_platform_header(hws, school_name, f'{student.full_name} — Exam History',
+    _write_platform_header(hws, school_name, _safe(f'{student.full_name} — Exam History'),
                             'Class Avg / vs Class show the classroom average on that same '
                             'exam and the student\'s difference from it.' if has_cmp else
                             'Full record of every exam taken.',
@@ -857,7 +875,7 @@ def generate_student_report_excel(student, scores, topic_data,
     if topic_data:
         tws = wb.create_sheet('Topic Mastery')
         tws.sheet_view.showGridLines = False
-        _write_platform_header(tws, school_name, f'{student.full_name} — Topic Mastery',
+        _write_platform_header(tws, school_name, _safe(f'{student.full_name} — Topic Mastery'),
                                 'Average performance broken down by topic.',
                                 scores[0].exam.academic_year if scores else '—', 7)
         tr = 6
@@ -894,7 +912,7 @@ def generate_student_report_excel(student, scores, topic_data,
     if term_groups:
         rws = wb.create_sheet('Term Breakdown')
         rws.sheet_view.showGridLines = False
-        _write_platform_header(rws, school_name, f'{student.full_name} — Term-by-Term Performance',
+        _write_platform_header(rws, school_name, _safe(f'{student.full_name} — Term-by-Term Performance'),
                                 'Average, highest and lowest score per academic term.',
                                 scores[0].exam.academic_year if scores else '—', 6)
         rr = 6
@@ -974,7 +992,7 @@ def generate_tournament_dossier_excel(tournament, dossier, analytics,
         xl_img.width = 36
         xl_img.height = 36
         ws.add_image(xl_img, f'A{row}')
-        c = ws.cell(row, 2, f'{champion.entry.display_name} — {champion.score_percentage}%')
+        c = ws.cell(row, 2, _safe(f'{champion.entry.display_name} — {champion.score_percentage}%'))
         c.font = _font(bold=True, size=11)
         ws.row_dimensions[row].height = 30
         row += 2
@@ -989,7 +1007,7 @@ def generate_tournament_dossier_excel(tournament, dossier, analytics,
             xl_img.width = 26
             xl_img.height = 26
             ws.add_image(xl_img, f'A{row}')
-            c = ws.cell(row, 2, f'{r.entry.display_name} — {r.score_percentage}% (+{r.delta:.1f} on prior avg)')
+            c = ws.cell(row, 2, _safe(f'{r.entry.display_name} — {r.score_percentage}% (+{r.delta:.1f} on prior avg)'))
             c.font = _font(size=9.5)
             ws.row_dimensions[row].height = 20
             row += 1
@@ -1026,7 +1044,7 @@ def generate_tournament_dossier_excel(tournament, dossier, analytics,
     lws = wb.create_sheet('Leaderboard')
     lws.sheet_view.showGridLines = False
     lrow = _write_platform_header(
-        lws, school_name, f'{tournament.title} — Final Leaderboard', 'Ranked by decisive-exam score.',
+        lws, school_name, _safe(f'{tournament.title} — Final Leaderboard'), 'Ranked by decisive-exam score.',
         tournament.exam.academic_year, 6,
     )
     lrow += 1
@@ -1045,7 +1063,7 @@ def generate_tournament_dossier_excel(tournament, dossier, analytics,
         if r.is_rising_star: flags.append('Rising Star')
         if r.is_absent: flags.append('Absent')
         row_vals = [
-            f'#{r.rank}' if r.rank else '—', r.entry.display_name,
+            f'#{r.rank}' if r.rank else '—', _safe(r.entry.display_name),
             f'{r.score_percentage}%' if r.score_percentage is not None else '—',
             f'{r.prior_average}%' if r.prior_average is not None else '—',
             f'{r.delta:+.1f}' if r.delta is not None else '—',
@@ -1068,7 +1086,7 @@ def generate_tournament_dossier_excel(tournament, dossier, analytics,
         cws = wb.create_sheet('Challenge Log')
         cws.sheet_view.showGridLines = False
         crow = _write_platform_header(
-            cws, school_name, f'{tournament.title} — Challenge Log', 'Every declared duel and its outcome.',
+            cws, school_name, _safe(f'{tournament.title} — Challenge Log'), 'Every declared duel and its outcome.',
             tournament.exam.academic_year, 4,
         )
         crow += 1
@@ -1082,9 +1100,9 @@ def generate_tournament_dossier_excel(tournament, dossier, analytics,
         chdr_row = crow
         crow += 1
         for i, ch in enumerate(challenges):
-            names = ' vs '.join(e.display_name for e in ch.entries.all())
-            result = ch.winner.display_name if ch.winner else ('Tied' if ch.is_tie else '—')
-            row_vals = [ch.label or f'Duel #{ch.id}', names, result, ch.get_status_display()]
+            names = ' vs '.join(_safe(e.display_name) for e in ch.entries.all())
+            result = _safe(ch.winner.display_name) if ch.winner else ('Tied' if ch.is_tie else '—')
+            row_vals = [_safe(ch.label) if ch.label else f'Duel #{ch.id}', names, result, ch.get_status_display()]
             fill = PatternFill('solid', fgColor='FFF8FAFC') if i % 2 else PatternFill('solid', fgColor=WHITE)
             for j, v in enumerate(row_vals, 1):
                 c = cws.cell(crow, j, v)

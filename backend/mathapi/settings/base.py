@@ -1,12 +1,31 @@
 from pathlib import Path
 from decouple import config
 from datetime import timedelta
+from django.core.exceptions import ImproperlyConfigured
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
-SECRET_KEY = config('SECRET_KEY', default='django-insecure-change-me-in-production-mathplatform-key')
+_INSECURE_DEFAULT_KEY = 'django-insecure-change-me-in-production-mathplatform-key'
+SECRET_KEY = config('SECRET_KEY', default=_INSECURE_DEFAULT_KEY)
 
-DEBUG = config('DEBUG', default=True, cast=bool)
+# DEBUG defaults to False — safe-by-default. Local development must
+# explicitly opt in via `.env` (DEBUG=True). This matters because a
+# forgotten/missing .env on a real deployment used to silently run with
+# DEBUG=True, which leaks stack traces, local variables, and file paths to
+# anyone who can trigger a server error.
+DEBUG = config('DEBUG', default=False, cast=bool)
+
+# A DEBUG=False process is never allowed to run with the publicly-known
+# placeholder SECRET_KEY — that key is committed to git history (visible in
+# every clone of this repo) and its exact value ships in this settings
+# file, so anyone who has ever seen this codebase can forge session/JWT
+# tokens for ANY user, including super_admin, if this check didn't exist.
+if not DEBUG and SECRET_KEY == _INSECURE_DEFAULT_KEY:
+    raise ImproperlyConfigured(
+        'SECRET_KEY is not set. Generate a real one (e.g. `python -c '
+        '"import secrets; print(secrets.token_urlsafe(50))"`) and set it as '
+        'SECRET_KEY in your .env before running with DEBUG=False.'
+    )
 
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1').split(',')
 
@@ -131,6 +150,20 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+        'rest_framework.throttling.ScopedRateThrottle',
+    ],
+    # 'anon'/'user' are broad safety nets so no endpoint is ever fully
+    # unthrottled. 'login' is deliberately much stricter and applied only
+    # to the login view — the highest-value target for credential
+    # brute-forcing — without slowing down normal authenticated use.
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '60/min',
+        'user': '300/min',
+        'login': '10/min',
+    },
 }
 
 # Without page_size_query_param set, DRF silently ignores any ?page_size=

@@ -1,6 +1,7 @@
 from rest_framework import generics, status, viewsets, permissions
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.tokens import RefreshToken
 from django_filters.rest_framework import DjangoFilterBackend
@@ -22,6 +23,13 @@ User = get_user_model()
 # ── Auth views ────────────────────────────────────────────────────────────────
 
 class LoginView(TokenObtainPairView):
+    # A stricter, dedicated throttle scope — login is the single highest-
+    # value target for credential brute-forcing, so it gets its own much
+    # tighter rate limit (see DEFAULT_THROTTLE_RATES['login']) independent
+    # of the general anon-request allowance.
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'login'
+
     def post(self, request, *args, **kwargs):
         response = super().post(request, *args, **kwargs)
         if response.status_code == 200:
