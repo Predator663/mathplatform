@@ -23,7 +23,7 @@ class MathTopicViewSet(viewsets.ModelViewSet):
     serializer_class = MathTopicSerializer
     permission_classes = [permissions.IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter]
-    filterset_fields = ['subject', 'is_active']
+    filterset_fields = ['subject', 'grade_level', 'is_active']
     search_fields = ['name']
 
     def get_queryset(self):

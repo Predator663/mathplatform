@@ -7,15 +7,18 @@ class MathTopicSerializer(serializers.ModelSerializer):
     subject_name = serializers.CharField(source='subject.name', read_only=True)
     subject_code = serializers.CharField(source='subject.code', read_only=True)
     subject_color = serializers.CharField(source='subject.color', read_only=True)
+    grade_level_name = serializers.CharField(source='grade_level.name', read_only=True, default=None)
+    grade_level_short = serializers.CharField(source='grade_level.short_name', read_only=True, default=None)
 
     class Meta:
         model = MathTopic
         fields = ['id', 'name', 'description', 'color', 'order', 'is_active',
-                  'subject', 'subject_name', 'subject_code', 'subject_color']
+                  'subject', 'subject_name', 'subject_code', 'subject_color',
+                  'grade_level', 'grade_level_name', 'grade_level_short']
         # DRF auto-generates a UniqueTogetherValidator from the model's
-        # unique_together = [('subject', 'name')] and runs it *before*
-        # validate() below — meaning it would raise its own generic "must
-        # make a unique set" error on a soft-deleted-topic-name clash
+        # unique_together = [('subject', 'grade_level', 'name')] and runs it
+        # *before* validate() below — meaning it would raise its own generic
+        # "must make a unique set" error on a soft-deleted-topic-name clash
         # before our friendlier "restore it instead" message ever got a
         # chance to run. Disabling it and doing the check entirely in
         # validate() (which can see is_active and give it) is intentional.
@@ -24,20 +27,28 @@ class MathTopicSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         subject = attrs.get('subject', getattr(self.instance, 'subject', None))
         name = attrs.get('name', getattr(self.instance, 'name', None))
+        # grade_level is optional (a topic can span all classes), so only
+        # constrain on it when it's actually part of this save — 'grade_level'
+        # missing from attrs on a partial_update means "leave unchanged".
+        if 'grade_level' in attrs or not self.instance:
+            grade_level = attrs.get('grade_level')
+        else:
+            grade_level = self.instance.grade_level
         if subject and name:
-            existing = MathTopic.objects.filter(subject=subject, name__iexact=name)
+            existing = MathTopic.objects.filter(subject=subject, grade_level=grade_level, name__iexact=name)
             if self.instance:
                 existing = existing.exclude(pk=self.instance.pk)
             clash = existing.first()
             if clash:
                 if clash.is_active:
-                    raise serializers.ValidationError({'name': 'A topic with this name already exists for this subject.'})
+                    raise serializers.ValidationError({'name': 'A topic with this name already exists for this subject and class.'})
                 raise serializers.ValidationError({
                     'name': (
-                        f'A deactivated topic named "{clash.name}" already exists for this subject. '
+                        f'A deactivated topic named "{clash.name}" already exists for this subject and class. '
                         'Restore it instead of creating a duplicate.'
                     ),
                 })
+
         return attrs
 
 

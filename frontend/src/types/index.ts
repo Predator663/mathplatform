@@ -228,6 +228,8 @@ export interface MathTopic {
   color: string; order: number; is_active: boolean;
   subject: number | null; subject_name: string | null;
   subject_code: string | null; subject_color: string | null;
+  grade_level: number | null; grade_level_name: string | null;
+  grade_level_short: string | null;
 }
 
 export interface ExamTopicWeight {

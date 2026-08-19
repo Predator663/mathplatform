@@ -7,14 +7,27 @@ User = get_user_model()
 
 class MathTopic(models.Model):
     """
-    School topic — now scoped to a Subject (e.g. Mathematics, Physics).
-    The old 'level' field is deprecated; scope is now via subject + classroom grade.
+    School topic — scoped to a Subject (e.g. Mathematics, Physics) and,
+    optionally, a GradeLevel (e.g. Form 2) so the curriculum can be laid
+    out per-class the way TIE's syllabus actually sequences topics across
+    Forms I-IV rather than as one flat list per subject. GradeLevel (not
+    Classroom) is used deliberately: a topic like "Fractions" belongs to
+    Form 1 curriculum-wide, not to one specific Form 1A-2026 instance, so
+    it shouldn't need re-creating every academic year or per stream.
+    The old 'level' field is deprecated in favour of this.
     """
     subject = models.ForeignKey(
         'accounts.Subject',
         on_delete=models.CASCADE,
         related_name='topics',
         null=True,  # null only during migration; set NOT NULL after data migration
+    )
+    grade_level = models.ForeignKey(
+        'students.GradeLevel',
+        on_delete=models.SET_NULL,
+        related_name='topics',
+        null=True, blank=True,
+        help_text='The class/Form this topic is taught in, e.g. Form 2. Optional — an unset topic applies across classes.',
     )
     name = models.CharField(max_length=100)
     description = models.TextField(blank=True)
@@ -24,12 +37,13 @@ class MathTopic(models.Model):
 
     class Meta:
         db_table = 'math_topics'
-        ordering = ['subject__name', 'order', 'name']
-        unique_together = [('subject', 'name')]
+        ordering = ['subject__name', 'grade_level__order', 'order', 'name']
+        unique_together = [('subject', 'grade_level', 'name')]
 
     def __str__(self):
         subject_code = self.subject.code if self.subject_id else '?'
-        return f'{self.name} [{subject_code}]'
+        grade = f' · {self.grade_level.short_name or self.grade_level.name}' if self.grade_level_id else ''
+        return f'{self.name} [{subject_code}{grade}]'
 
 
 class Exam(models.Model):

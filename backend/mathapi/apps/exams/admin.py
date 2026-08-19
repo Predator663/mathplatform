@@ -4,11 +4,11 @@ from .models import MathTopic, Exam, ExamTopicWeight, ExamScore, TopicScore, Sco
 
 @admin.register(MathTopic)
 class MathTopicAdmin(admin.ModelAdmin):
-    list_display  = ['name', 'subject', 'color', 'order', 'is_active', 'description']
+    list_display  = ['name', 'subject', 'grade_level', 'color', 'order', 'is_active', 'description']
     list_editable = ['color', 'order', 'is_active']
-    list_filter   = ['subject', 'is_active']
+    list_filter   = ['subject', 'grade_level', 'is_active']
     search_fields = ['name', 'description']
-    ordering      = ['subject__name', 'order', 'name']
+    ordering      = ['subject__name', 'grade_level__order', 'order', 'name']
 
 
 class ExamTopicWeightInline(admin.TabularInline):
