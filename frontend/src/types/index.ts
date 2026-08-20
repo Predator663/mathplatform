@@ -54,6 +54,19 @@ export interface AuditLog {
   ip_address: string | null; timestamp: string;
 }
 
+export interface AuditLogFacets {
+  actions: { value: AuditAction; label: string }[];
+  models: string[];
+  users: { id: number; email: string; name: string }[];
+}
+
+export interface AuditLogStats {
+  total: number;
+  by_action: Record<AuditAction, number>;
+  top_models: { model_name: string; count: number }[];
+  top_users: { id: number; email: string; name: string; count: number }[];
+}
+
 // ── Tanzania Curriculum ───────────────────────────────────────────────────────
 export type EducationLevel = 'pre_primary' | 'primary' | 'o_level' | 'a_level' | 'technical';
 export type ClassStream = 'general' | 'science' | 'arts' | 'commerce' | 'technical';

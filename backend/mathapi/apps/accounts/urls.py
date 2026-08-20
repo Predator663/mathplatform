@@ -18,4 +18,9 @@ urlpatterns = [
     path('change-password/', views.ChangePasswordView.as_view(), name='change_password'),
     path('settings/', views.SiteSettingsView.as_view(), name='site_settings'),
     path('audit-log/', views.AuditLogListView.as_view(), name='audit_log'),
+    path('audit-log/facets/', views.AuditLogFacetsView.as_view(), name='audit_log_facets'),
+    path('audit-log/stats/', views.AuditLogStatsView.as_view(), name='audit_log_stats'),
+    path('audit-log/<int:pk>/card/pdf/', views.AuditLogCardPDFView.as_view(), name='audit_log_card_pdf'),
+    path('audit-log/export/cards/pdf/', views.AuditLogExportCardsPDFView.as_view(), name='audit_log_export_cards_pdf'),
+    path('audit-log/export/csv/', views.AuditLogExportCSVView.as_view(), name='audit_log_export_csv'),
 ]

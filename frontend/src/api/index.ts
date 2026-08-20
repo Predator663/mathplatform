@@ -353,4 +353,12 @@ export const assignmentsApi = {
 
 export const auditApi = {
   list: (params?: object) => api.get('/auth/audit-log/', { params }),
+  facets: () => api.get('/auth/audit-log/facets/'),
+  stats: (params?: object) => api.get('/auth/audit-log/stats/', { params }),
+  downloadCard: (id: number) =>
+    api.get(`/auth/audit-log/${id}/card/pdf/`, { responseType: 'blob' }),
+  downloadCardsBatch: (params?: object) =>
+    api.get('/auth/audit-log/export/cards/pdf/', { params, responseType: 'blob' }),
+  exportCsv: (params?: object) =>
+    api.get('/auth/audit-log/export/csv/', { params, responseType: 'blob' }),
 };
