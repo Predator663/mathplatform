@@ -1,5 +1,8 @@
 from rest_framework import serializers
-from .models import StudentGroup, GroupMembership, GroupTransferLog, PeerConstraint
+from .models import (
+    StudentGroup, GroupMembership, GroupTransferLog, PeerConstraint,
+    GroupAssignment, GroupAssignmentScore, GroupAssignmentMemberMark,
+)
 
 
 class PeerConstraintSerializer(serializers.ModelSerializer):
@@ -74,6 +77,73 @@ class StudentGroupSerializer(serializers.ModelSerializer):
         if value and not (value.startswith('#') and len(value) in (4, 7)):
             raise serializers.ValidationError('badge_color must be a hex colour like #2563eb.')
         return value
+
+
+class GroupAssignmentSerializer(serializers.ModelSerializer):
+    classroom_name  = serializers.CharField(source='classroom.__str__', read_only=True)
+    stream_name     = serializers.CharField(source='stream.name', read_only=True, default=None)
+    subject_name    = serializers.CharField(source='subject.name', read_only=True, default=None)
+    assignment_type_display = serializers.CharField(source='get_assignment_type_display', read_only=True)
+    term_display    = serializers.CharField(source='get_term_display', read_only=True, default=None)
+    groups_scored   = serializers.SerializerMethodField()
+    groups_expected = serializers.SerializerMethodField()
+
+    class Meta:
+        model = GroupAssignment
+        fields = [
+            'id', 'classroom', 'classroom_name', 'stream', 'stream_name',
+            'subject', 'subject_name', 'title', 'description', 'assignment_type',
+            'assignment_type_display', 'term', 'term_display', 'academic_year',
+            'date_given', 'due_date', 'max_score', 'created_by', 'created_at',
+            'updated_at', 'groups_scored', 'groups_expected',
+        ]
+        read_only_fields = ['created_by', 'created_at', 'updated_at']
+
+    def _expected_groups_qs(self, obj):
+        qs = StudentGroup.objects.filter(classroom_id=obj.classroom_id, academic_year=obj.academic_year)
+        if obj.stream_id:
+            from django.db.models import Q
+            qs = qs.filter(Q(stream_id=obj.stream_id) | Q(stream__isnull=True))
+        return qs
+
+    def get_groups_expected(self, obj):
+        return self._expected_groups_qs(obj).count()
+
+    def get_groups_scored(self, obj):
+        return obj.group_scores.count()
+
+
+class GroupAssignmentMemberMarkSerializer(serializers.ModelSerializer):
+    student_id   = serializers.IntegerField(source='student.id', read_only=True)
+    student_name = serializers.CharField(source='student.full_name', read_only=True)
+    student_code = serializers.CharField(source='student.student_id', read_only=True)
+    effective_score = serializers.FloatField(read_only=True)
+    percentage      = serializers.FloatField(read_only=True)
+
+    class Meta:
+        model = GroupAssignmentMemberMark
+        fields = [
+            'id', 'student_id', 'student_name', 'student_code',
+            'adjustment', 'is_excused', 'note', 'effective_score', 'percentage', 'updated_at',
+        ]
+
+
+class GroupAssignmentScoreSerializer(serializers.ModelSerializer):
+    group_name  = serializers.CharField(source='group.name', read_only=True)
+    stream_id   = serializers.IntegerField(source='group.stream_id', read_only=True, default=None)
+    stream_name = serializers.CharField(source='group.stream.name', read_only=True, default=None)
+    percentage  = serializers.FloatField(read_only=True)
+    member_marks = GroupAssignmentMemberMarkSerializer(many=True, read_only=True)
+    entered_by_name = serializers.CharField(source='entered_by.get_full_name', read_only=True, default=None)
+
+    class Meta:
+        model = GroupAssignmentScore
+        fields = [
+            'id', 'assignment', 'group', 'group_name', 'stream_id', 'stream_name',
+            'score', 'percentage', 'is_absent', 'remarks', 'member_marks',
+            'entered_by', 'entered_by_name', 'entered_at', 'updated_at',
+        ]
+        read_only_fields = ['entered_by', 'entered_at', 'updated_at']
 
 
 class GroupTransferLogSerializer(serializers.ModelSerializer):

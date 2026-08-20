@@ -10,8 +10,14 @@ from rest_framework.parsers import MultiPartParser, FormParser
 from mathapi.apps.accounts.permissions import IsTeacherOrAdmin
 from mathapi.apps.accounts.scoping import assert_classroom_owned, get_teacher_classrooms
 from mathapi.apps.students.models import Classroom, Stream, StudentProfile
-from .models import StudentGroup, GroupMembership, GroupTransferLog, PerformanceTier, DEFAULT_BADGE_COLORS, PeerConstraint
-from .serializers import StudentGroupSerializer, GroupTransferLogSerializer, PeerConstraintSerializer
+from .models import (
+    StudentGroup, GroupMembership, GroupTransferLog, PerformanceTier, DEFAULT_BADGE_COLORS, PeerConstraint,
+    GroupAssignment, GroupAssignmentScore,
+)
+from .serializers import (
+    StudentGroupSerializer, GroupTransferLogSerializer, PeerConstraintSerializer,
+    GroupAssignmentSerializer, GroupAssignmentScoreSerializer,
+)
 from . import services
 
 
@@ -523,3 +529,191 @@ class ClassroomGroupTransfersView(APIView):
             Q(from_group__classroom_id=classroom_id) | Q(to_group__classroom_id=classroom_id)
         ).select_related('student__user', 'from_group', 'to_group', 'transferred_by').distinct()[:200]
         return Response(GroupTransferLogSerializer(logs, many=True).data)
+
+
+# ══════════════════════════ Group Assignments (marks) ═══════════════════════
+
+class GroupAssignmentViewSet(viewsets.ModelViewSet):
+    """
+    CRUD for group-work assignments, plus the bulk 'record-scores' action
+    that's the actual mechanism for marking groups: one score per group
+    per assignment, with optional per-student adjustments.
+    """
+    serializer_class = GroupAssignmentSerializer
+    permission_classes = [permissions.IsAuthenticated, IsTeacherOrAdmin]
+
+    def get_queryset(self):
+        qs = GroupAssignment.objects.select_related('classroom', 'stream', 'subject')
+        user = self.request.user
+        if user.role != 'super_admin':
+            qs = qs.filter(classroom__in=get_teacher_classrooms(user))
+        params = self.request.query_params
+        classroom_id = params.get('classroom')
+        if classroom_id:
+            qs = qs.filter(classroom_id=classroom_id)
+        stream_id = params.get('stream')
+        if stream_id:
+            qs = qs.filter(Q(stream_id=stream_id) | Q(stream__isnull=True))
+        subject_id = params.get('subject')
+        if subject_id:
+            qs = qs.filter(subject_id=subject_id)
+        term = params.get('term')
+        if term:
+            qs = qs.filter(term=term)
+        academic_year = params.get('academic_year')
+        if academic_year:
+            qs = qs.filter(academic_year=academic_year)
+        assignment_type = params.get('assignment_type')
+        if assignment_type:
+            qs = qs.filter(assignment_type=assignment_type)
+        return qs
+
+    def perform_create(self, serializer):
+        classroom = serializer.validated_data.get('classroom')
+        _owned_classroom_or_404(self.request.user, classroom.id)
+        stream = serializer.validated_data.get('stream')
+        _stream_in_classroom_or_400(stream, classroom.id)
+        serializer.save(created_by=self.request.user)
+
+    def perform_update(self, serializer):
+        classroom = serializer.instance.classroom
+        _owned_classroom_or_404(self.request.user, classroom.id)
+        if 'stream' in serializer.validated_data:
+            _stream_in_classroom_or_400(serializer.validated_data.get('stream'), classroom.id)
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        _owned_classroom_or_404(self.request.user, instance.classroom_id)
+        instance.delete()
+
+    @action(detail=True, methods=['get'], url_path='roster')
+    def roster(self, request, pk=None):
+        """
+        GET .../roster/ — every group expected to submit this assignment
+        (respecting its stream restriction, same as get_groups_expected on
+        the serializer), each paired with its existing score if one has
+        been recorded yet. Feeds the mark-entry screen.
+        """
+        assignment = self.get_object()
+        groups = StudentGroup.objects.filter(
+            classroom_id=assignment.classroom_id, academic_year=assignment.academic_year,
+        ).select_related('stream').prefetch_related('memberships__student__user').order_by('name')
+        if assignment.stream_id:
+            groups = groups.filter(Q(stream_id=assignment.stream_id) | Q(stream__isnull=True))
+
+        existing = {
+            s.group_id: s for s in GroupAssignmentScore.objects.filter(
+                assignment=assignment
+            ).select_related('group').prefetch_related('member_marks__student__user')
+        }
+
+        rows = []
+        for g in groups:
+            score = existing.get(g.id)
+            rows.append({
+                'group_id': g.id, 'group_name': g.name, 'stream_id': g.stream_id,
+                'stream_name': g.stream.name if g.stream_id else None,
+                'member_count': g.memberships.count(),
+                'members': [
+                    {'student_id': m.student_id, 'student_name': m.student.full_name}
+                    for m in g.memberships.all()
+                ],
+                'score': GroupAssignmentScoreSerializer(score).data if score else None,
+            })
+        return Response({
+            'assignment': GroupAssignmentSerializer(assignment).data,
+            'groups': rows,
+        })
+
+    @action(detail=True, methods=['post'], url_path='record-scores')
+    def record_scores(self, request, pk=None):
+        """
+        POST .../record-scores/
+        {"entries": [{"group_id": 1, "score": 42, "is_absent": false,
+                      "remarks": "", "member_adjustments": [
+                          {"student_id": 5, "adjustment": -5, "note": "Missed presentation"}
+                      ]}]}
+        The core "record marks of groups" mechanism — one call marks as
+        many groups as were given this assignment in one go.
+        """
+        assignment = self.get_object()
+        _owned_classroom_or_404(request.user, assignment.classroom_id)
+        entries = request.data.get('entries')
+        if not isinstance(entries, list) or not entries:
+            return Response({'detail': 'entries (a non-empty list) is required.'}, status=400)
+
+        with transaction.atomic():
+            result = services.record_group_assignment_scores(assignment, entries, request.user)
+
+        scores = GroupAssignmentScore.objects.filter(
+            id__in=[s.id for s in result['scores']]
+        ).select_related('group', 'group__stream').prefetch_related('member_marks__student__user')
+        return Response({
+            'scores': GroupAssignmentScoreSerializer(scores, many=True).data,
+            'errors': result['errors'],
+        }, status=200 if not result['errors'] else 207)
+
+
+class GroupWorkAnalyticsView(APIView):
+    """
+    GET /api/groups/assignments/classroom/<id>/analytics/
+    ?stream_id=&group_id=&subject_id=&term=&academic_year=
+    &assignment_type=&date_from=&date_to=
+    The dedicated Group Work Analytics data source: classroom / per-stream
+    / per-group rollups, a chronological trend, and a score distribution.
+    """
+    permission_classes = [permissions.IsAuthenticated, IsTeacherOrAdmin]
+
+    def get(self, request, classroom_id):
+        classroom = _owned_classroom_or_404(request.user, classroom_id)
+        params = request.query_params
+        created_by_id = request.user.id if request.user.role == 'teacher' else None
+        data = services.get_group_assignment_analytics(
+            classroom_id,
+            stream_id=params.get('stream_id') or None,
+            group_id=params.get('group_id') or None,
+            subject_id=params.get('subject_id') or None,
+            term=params.get('term') or None,
+            academic_year=params.get('academic_year') or classroom.academic_year,
+            assignment_type=params.get('assignment_type') or None,
+            date_from=params.get('date_from') or None,
+            date_to=params.get('date_to') or None,
+            created_by_id=created_by_id,
+        )
+        return Response({
+            'classroom_id': classroom.id,
+            'classroom_name': str(classroom),
+            **data,
+        })
+
+
+class GroupAssignmentReassignmentView(APIView):
+    """
+    GET /api/groups/assignments/classroom/<id>/reassignment-suggestions/
+    ?stream_id=&subject_id=&term=&academic_year=&assignment_type=
+    Flags groups whose group-assignment average lags the classroom
+    average and proposes individually-strong students to move in from
+    better-performing groups in the same stream. Advisory only — the
+    frontend actions a suggestion via the existing transfer-member
+    endpoint (POST /api/groups/groups/transfer-member/).
+    """
+    permission_classes = [permissions.IsAuthenticated, IsTeacherOrAdmin]
+
+    def get(self, request, classroom_id):
+        classroom = _owned_classroom_or_404(request.user, classroom_id)
+        params = request.query_params
+        created_by_id = request.user.id if request.user.role == 'teacher' else None
+        data = services.get_group_assignment_reassignment_suggestions(
+            classroom_id,
+            stream_id=params.get('stream_id') or None,
+            subject_id=params.get('subject_id') or None,
+            term=params.get('term') or None,
+            academic_year=params.get('academic_year') or classroom.academic_year,
+            assignment_type=params.get('assignment_type') or None,
+            created_by_id=created_by_id,
+        )
+        return Response({
+            'classroom_id': classroom.id,
+            'classroom_name': str(classroom),
+            **data,
+        })

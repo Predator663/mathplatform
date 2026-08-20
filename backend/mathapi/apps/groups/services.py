@@ -6,7 +6,29 @@ from collections import defaultdict
 from django.db.models import Q
 from mathapi.apps.exams.models import ExamScore
 from mathapi.apps.students.models import StudentProfile
-from .models import PerformanceTier, PeerConstraint, GroupMembership
+from .models import PerformanceTier, PeerConstraint, GroupMembership, StudentGroup
+
+# Score-percentage buckets used for group-assignment distribution charts —
+# kept identical to the bucket edges the analytics frontend already uses
+# for individual exam distributions, so a "60-69%" bar means the same
+# thing everywhere in the app.
+SCORE_BUCKETS = [
+    (0, 49, '0-49'), (50, 59, '50-59'), (60, 69, '60-69'),
+    (70, 79, '70-79'), (80, 89, '80-89'), (90, 100, '90-100'),
+]
+
+# How far below the classroom-wide average a group's average has to fall
+# (in percentage points) before it's flagged as needing a reassignment
+# look — matches the 20-point band used elsewhere in the app (e.g. C-to-A
+# is a 30-point spread) to avoid flagging normal variance.
+UNDERPERFORMING_GAP = 12.0
+
+
+def _bucket_for(pct: float) -> str:
+    for lo, hi, label in SCORE_BUCKETS:
+        if lo <= pct <= hi:
+            return label
+    return SCORE_BUCKETS[-1][2]
 
 # Mirrors ExamScore.letter_grade / reports engines exactly (see models.py
 # docstring on PerformanceTier) — do not drift these numbers apart.
@@ -495,6 +517,313 @@ def check_transfer_warnings(source_group_members: list, dest_group_members: list
             warnings.append('The destination group will be notably larger than the classroom average group size.')
 
     return warnings
+
+
+# ── Group assignments: recording marks ──────────────────────────────────────
+
+def record_group_assignment_scores(assignment, entries: list[dict], user) -> dict:
+    """
+    Upserts one GroupAssignmentScore per entry (`{group_id, score,
+    is_absent, remarks, member_adjustments: [...]}`), and syncs a
+    GroupAssignmentMemberMark for every *current* member of that group so
+    the mark is recorded once per group but still queryable per student.
+
+    `member_adjustments` is optional — omitting it just gives every
+    member the group's raw score (adjustment=0), which is the normal
+    "graded as a group" path. Passing entries for specific student_ids
+    lets a teacher tune one student's mark without re-entering everyone.
+
+    Returns {'scores': [GroupAssignmentScore, ...], 'errors': [str, ...]}
+    — a bad group_id in one entry doesn't abort the whole batch.
+    """
+    from .models import GroupAssignmentScore, GroupAssignmentMemberMark
+
+    valid_group_ids = set(
+        StudentGroup.objects.filter(classroom_id=assignment.classroom_id).values_list('id', flat=True)
+    )
+    saved, errors = [], []
+
+    for entry in entries:
+        group_id = entry.get('group_id')
+        if group_id not in valid_group_ids:
+            errors.append(f'Group {group_id} does not belong to this classroom — skipped.')
+            continue
+
+        score_val = entry.get('score', 0) or 0
+        is_absent = bool(entry.get('is_absent', False))
+        group_score, _ = GroupAssignmentScore.objects.update_or_create(
+            assignment=assignment, group_id=group_id,
+            defaults={
+                'score': 0 if is_absent else score_val,
+                'is_absent': is_absent,
+                'remarks': entry.get('remarks', ''),
+                'entered_by': user,
+            },
+        )
+
+        adjustments_by_student = {
+            a['student_id']: a for a in entry.get('member_adjustments', []) if a.get('student_id')
+        }
+        member_ids = GroupMembership.objects.filter(group_id=group_id).values_list('student_id', flat=True)
+        for student_id in member_ids:
+            override = adjustments_by_student.get(student_id, {})
+            GroupAssignmentMemberMark.objects.update_or_create(
+                group_score=group_score, student_id=student_id,
+                defaults={
+                    'adjustment': override.get('adjustment', 0) or 0,
+                    'is_excused': bool(override.get('is_excused', is_absent)),
+                    'note': override.get('note', ''),
+                },
+            )
+        saved.append(group_score)
+
+    return {'scores': saved, 'errors': errors}
+
+
+# ── Group assignments: analytics ────────────────────────────────────────────
+
+def _group_assignment_score_filters(
+    classroom_id, stream_id=None, group_id=None, subject_id=None, term=None,
+    academic_year=None, assignment_type=None, date_from=None, date_to=None, created_by_id=None,
+):
+    filters = Q(assignment__classroom_id=classroom_id, is_absent=False)
+    if stream_id:
+        filters &= Q(group__stream_id=stream_id) | Q(group__stream__isnull=True)
+    if group_id:
+        filters &= Q(group_id=group_id)
+    if subject_id:
+        filters &= Q(assignment__subject_id=subject_id)
+    if term:
+        filters &= Q(assignment__term=term)
+    if academic_year:
+        filters &= Q(assignment__academic_year=academic_year)
+    if assignment_type:
+        filters &= Q(assignment__assignment_type=assignment_type)
+    if date_from:
+        filters &= Q(assignment__date_given__gte=date_from)
+    if date_to:
+        filters &= Q(assignment__date_given__lte=date_to)
+    if created_by_id:
+        filters &= Q(assignment__created_by_id=created_by_id)
+    return filters
+
+
+def get_group_assignment_analytics(
+    classroom_id, stream_id=None, group_id=None, subject_id=None, term=None,
+    academic_year=None, assignment_type=None, date_from=None, date_to=None, created_by_id=None,
+) -> dict:
+    """
+    The data behind the dedicated Group Work Analytics page: classroom,
+    per-stream, and per-group rollups, a chronological trend, and a
+    score-distribution histogram — everything scoped by the same filters
+    the page exposes (stream / group / subject / term / year / type /
+    date range), so 'switch the stream filter' and 'export this view'
+    always agree on what they're looking at.
+    """
+    from .models import GroupAssignmentScore
+
+    filters = _group_assignment_score_filters(
+        classroom_id, stream_id=stream_id, group_id=group_id, subject_id=subject_id, term=term,
+        academic_year=academic_year, assignment_type=assignment_type,
+        date_from=date_from, date_to=date_to, created_by_id=created_by_id,
+    )
+    scores = list(
+        GroupAssignmentScore.objects.filter(filters)
+        .select_related('assignment', 'group', 'group__stream')
+        .order_by('assignment__date_given')
+    )
+
+    if not scores:
+        return {
+            'classroom_average_pct': None, 'assignments_count': 0, 'groups_scored_count': 0,
+            'distribution': {label: 0 for *_ , label in SCORE_BUCKETS},
+            'trend': [], 'per_group': [], 'per_stream': [],
+            'top_groups': [], 'bottom_groups': [],
+        }
+
+    all_pcts = [s.percentage for s in scores]
+    distribution = {label: 0 for *_, label in SCORE_BUCKETS}
+    for pct in all_pcts:
+        distribution[_bucket_for(pct)] += 1
+
+    # ── Trend: one point per assignment, classroom-wide average that day ──
+    by_assignment = defaultdict(list)
+    assignment_meta = {}
+    for s in scores:
+        by_assignment[s.assignment_id].append(s.percentage)
+        assignment_meta[s.assignment_id] = s.assignment
+    trend = [
+        {
+            'assignment_id': aid,
+            'title': assignment_meta[aid].title,
+            'date': assignment_meta[aid].date_given.isoformat(),
+            'assignment_type': assignment_meta[aid].assignment_type,
+            'average_pct': round(sum(pcts) / len(pcts), 1),
+            'groups_scored': len(pcts),
+        }
+        for aid, pcts in by_assignment.items()
+    ]
+    trend.sort(key=lambda t: t['date'])
+
+    # ── Per-group rollup ────────────────────────────────────────────────
+    by_group = defaultdict(list)
+    group_meta = {}
+    for s in scores:
+        by_group[s.group_id].append(s)
+        group_meta[s.group_id] = s.group
+    per_group = []
+    for gid, group_scores in by_group.items():
+        pcts = [s.percentage for s in group_scores]
+        g = group_meta[gid]
+        group_trend = sorted(
+            [{'assignment_id': s.assignment_id, 'title': s.assignment.title,
+              'date': s.assignment.date_given.isoformat(), 'pct': s.percentage} for s in group_scores],
+            key=lambda t: t['date'],
+        )
+        per_group.append({
+            'group_id': gid, 'group_name': g.name,
+            'stream_id': g.stream_id, 'stream_name': g.stream.name if g.stream_id else None,
+            'assignments_count': len(pcts),
+            'average_pct': round(sum(pcts) / len(pcts), 1),
+            'best_pct': max(pcts), 'worst_pct': min(pcts),
+            'trend': group_trend,
+        })
+    per_group.sort(key=lambda g: -g['average_pct'])
+
+    # ── Per-stream rollup ───────────────────────────────────────────────
+    by_stream = defaultdict(list)
+    stream_names = {}
+    for s in scores:
+        sid = s.group.stream_id
+        by_stream[sid].append(s.percentage)
+        stream_names[sid] = s.group.stream.name if sid else 'No Stream'
+    per_stream = [
+        {
+            'stream_id': sid, 'stream_name': stream_names[sid],
+            'group_count': len({s.group_id for s in scores if s.group.stream_id == sid}),
+            'assignments_scored': len(pcts),
+            'average_pct': round(sum(pcts) / len(pcts), 1),
+        }
+        for sid, pcts in by_stream.items()
+    ]
+    per_stream.sort(key=lambda s: -s['average_pct'])
+
+    return {
+        'classroom_average_pct': round(sum(all_pcts) / len(all_pcts), 1),
+        'assignments_count': len(by_assignment),
+        'groups_scored_count': len(by_group),
+        'distribution': distribution,
+        'trend': trend,
+        'per_group': per_group,
+        'per_stream': per_stream,
+        'top_groups': per_group[:5],
+        'bottom_groups': sorted(per_group, key=lambda g: g['average_pct'])[:5],
+    }
+
+
+# ── Group assignments: performance-based reassignment ───────────────────────
+
+def get_group_assignment_reassignment_suggestions(
+    classroom_id, stream_id=None, subject_id=None, term=None,
+    academic_year=None, assignment_type=None, created_by_id=None,
+) -> dict:
+    """
+    Flags groups whose *group-assignment* average sits well below the
+    classroom average and proposes individual students to move in —
+    candidates are drawn from students in other, better-performing groups
+    within the same stream who also rank Strong/Very Strong on their own
+    individual exam performance, so a move raises the weak group's floor
+    without just relocating the problem.
+
+    Nothing here is applied automatically — the frontend actions a
+    suggestion through the existing transfer-member endpoint, same
+    advisory-only philosophy as get_rebalance_suggestions.
+    """
+    analytics = get_group_assignment_analytics(
+        classroom_id, stream_id=stream_id, subject_id=subject_id, term=term,
+        academic_year=academic_year, assignment_type=assignment_type, created_by_id=created_by_id,
+    )
+    classroom_avg = analytics['classroom_average_pct']
+    per_group = analytics['per_group']
+
+    groups_out = [
+        {
+            'group_id': g['group_id'], 'group_name': g['group_name'],
+            'stream_id': g['stream_id'], 'stream_name': g['stream_name'],
+            'average_pct': g['average_pct'], 'assignments_count': g['assignments_count'],
+            'status': (
+                'below_average' if classroom_avg is not None and g['average_pct'] < classroom_avg - UNDERPERFORMING_GAP
+                else 'above_average' if classroom_avg is not None and g['average_pct'] > classroom_avg + UNDERPERFORMING_GAP
+                else 'average'
+            ),
+        }
+        for g in per_group
+    ]
+
+    if classroom_avg is None:
+        return {'classroom_average_pct': None, 'groups': groups_out, 'underperforming': []}
+
+    individual_performance = get_classroom_student_performance(
+        classroom_id, subject_id=subject_id, term=term,
+        academic_year=academic_year, created_by_id=created_by_id, stream_id=stream_id,
+    )
+    perf_by_student = {p['student_id']: p for p in individual_performance}
+
+    # Which group each student currently sits in, restricted to the same
+    # grouping round the analytics above are scoped to.
+    memberships = GroupMembership.objects.filter(
+        group__classroom_id=classroom_id
+    ).select_related('group', 'student__user')
+    if academic_year:
+        memberships = memberships.filter(group__academic_year=academic_year)
+    if stream_id:
+        memberships = memberships.filter(Q(group__stream_id=stream_id) | Q(group__stream__isnull=True))
+    members_by_group = defaultdict(list)
+    for m in memberships:
+        members_by_group[m.group_id].append(m)
+
+    group_by_id = {g['group_id']: g for g in per_group}
+    underperforming = []
+    for g in groups_out:
+        if g['status'] != 'below_average':
+            continue
+        gap = round(classroom_avg - g['average_pct'], 1)
+
+        candidates = []
+        for other_gid, other in group_by_id.items():
+            if other_gid == g['group_id'] or other['average_pct'] <= classroom_avg:
+                continue
+            # A candidate must belong to the same stream (or the move is
+            # meaningless — groups are stream-scoped in practice), and
+            # rank Strong/Very Strong individually so moving them doesn't
+            # just drag the destination group down instead.
+            for m in members_by_group.get(other_gid, []):
+                perf = perf_by_student.get(m.student_id)
+                if not perf or perf['tier'] not in ANCHOR_TIERS:
+                    continue
+                if g['stream_id'] and m.student.stream_id and m.student.stream_id != g['stream_id']:
+                    continue
+                candidates.append({
+                    'student_id': m.student_id, 'student_name': m.student.full_name,
+                    'from_group_id': other_gid, 'from_group_name': other['group_name'],
+                    'current_tier': perf['tier'], 'individual_average': perf['average'],
+                })
+        candidates.sort(key=lambda c: -(c['individual_average'] or 0))
+
+        underperforming.append({
+            'group_id': g['group_id'], 'group_name': g['group_name'],
+            'stream_id': g['stream_id'], 'stream_name': g['stream_name'],
+            'average_pct': g['average_pct'], 'gap_from_classroom_average': gap,
+            'candidates': candidates[:3],
+        })
+
+    underperforming.sort(key=lambda u: -u['gap_from_classroom_average'])
+
+    return {
+        'classroom_average_pct': classroom_avg,
+        'groups': groups_out,
+        'underperforming': underperforming,
+    }
 
 
 # ── Seating chart generator ─────────────────────────────────────────────────

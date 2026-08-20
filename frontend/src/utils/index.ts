@@ -88,6 +88,15 @@ export const EXAM_TYPE_COLORS: Record<ExamType, string> = {
   diagnostic:   'badge-green',
 };
 
+export const ASSIGNMENT_TYPE_LABELS: Record<string, string> = {
+  classwork:    'Classwork',
+  homework:     'Homework',
+  project:      'Project',
+  practical:    'Practical',
+  presentation: 'Presentation',
+  other:        'Other',
+};
+
 export function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

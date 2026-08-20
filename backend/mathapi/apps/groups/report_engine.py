@@ -338,6 +338,123 @@ def generate_groups_roster_pdf(classroom, groups: list, extra: dict) -> bytes:
     return buf.getvalue()
 
 
+def generate_group_work_analytics_pdf(classroom, analytics: dict, extra: dict) -> bytes:
+    """
+    Group Work Analytics summary: classroom headline, per-stream rollup,
+    per-group rollup (sorted strongest-first), and the assignment-by-
+    assignment trend — the PDF counterpart of the analytics page.
+    """
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=2.9*cm, bottomMargin=2.0*cm,
+                             leftMargin=MARGIN, rightMargin=MARGIN)
+    base, styles = _pdf_styles()
+    story = [
+        _meta_grid(_meta_pairs(classroom, extra), styles),
+        Spacer(1, 0.4*cm),
+    ]
+
+    def _pct_color(pct):
+        if pct is None:
+            return BRAND_GRAY
+        if pct >= 65: return BRAND_GREEN
+        if pct >= 45: return BRAND_AMBER
+        return BRAND_ROSE
+
+    # Headline stat strip
+    avg = analytics.get('classroom_average_pct')
+    avg_value_style = ParagraphStyle('avg_value', parent=styles['meta_value'], textColor=_pct_color(avg))
+    headline = Table([[
+        Paragraph('CLASSROOM AVERAGE', styles['meta_label']),
+        Paragraph('ASSIGNMENTS', styles['meta_label']),
+        Paragraph('GROUPS SCORED', styles['meta_label']),
+    ], [
+        Paragraph(f'{avg}%' if avg is not None else '—', avg_value_style),
+        Paragraph(str(analytics.get('assignments_count', 0)), styles['meta_value']),
+        Paragraph(str(analytics.get('groups_scored_count', 0)), styles['meta_value']),
+    ]], colWidths=[(PAGE_W - 2*MARGIN) / 3] * 3)
+    headline.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), BRAND_LIGHT),
+        ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor('#e5e7eb')),
+        ('INNERGRID', (0, 0), (-1, -1), 0.3, colors.HexColor('#e5e7eb')),
+        ('TOPPADDING', (0, 0), (-1, -1), 5), ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+        ('LEFTPADDING', (0, 0), (-1, -1), 6),
+    ]))
+    story.append(headline)
+    story.append(Spacer(1, 0.5*cm))
+
+    # Per-stream rollup
+    if analytics.get('per_stream'):
+        story.append(Paragraph('By Stream', ParagraphStyle('h2', fontSize=11, fontName='Helvetica-Bold',
+                                                             textColor=BRAND_DARK, spaceAfter=6)))
+        rows = [['Stream', 'Groups', 'Assignments Scored', 'Average %']]
+        for s in analytics['per_stream']:
+            rows.append([s['stream_name'], str(s['group_count']), str(s['assignments_scored']), f"{s['average_pct']}%"])
+        t = Table(rows, colWidths=[6.5*cm, 3*cm, 4.5*cm, 3*cm], repeatRows=1)
+        style_cmds = [
+            ('BACKGROUND', (0, 0), (-1, 0), BRAND_DARK), ('TEXTCOLOR', (0, 0), (-1, 0), WHITE),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'), ('FONTSIZE', (0, 0), (-1, -1), 8.5),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [WHITE, BRAND_LIGHT]),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#d1d5db')),
+            ('ALIGN', (1, 0), (-1, -1), 'CENTER'), ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('TOPPADDING', (0, 0), (-1, -1), 5), ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+        ]
+        for i, s in enumerate(analytics['per_stream'], start=1):
+            style_cmds.append(('TEXTCOLOR', (3, i), (3, i), _pct_color(s['average_pct'])))
+            style_cmds.append(('FONTNAME', (3, i), (3, i), 'Helvetica-Bold'))
+        t.setStyle(TableStyle(style_cmds))
+        story.append(t)
+        story.append(Spacer(1, 0.5*cm))
+
+    # Per-group rollup
+    story.append(Paragraph('By Group', ParagraphStyle('h2', fontSize=11, fontName='Helvetica-Bold',
+                                                        textColor=BRAND_DARK, spaceAfter=6)))
+    rows = [['Group', 'Stream', 'Assignments', 'Best %', 'Worst %', 'Average %']]
+    for g in analytics.get('per_group', []):
+        rows.append([
+            g['group_name'], g['stream_name'] or '—', str(g['assignments_count']),
+            f"{g['best_pct']}%", f"{g['worst_pct']}%", f"{g['average_pct']}%",
+        ])
+    t = Table(rows, colWidths=[4.6*cm, 3.4*cm, 2.6*cm, 2.4*cm, 2.4*cm, 2.6*cm], repeatRows=1)
+    style_cmds = [
+        ('BACKGROUND', (0, 0), (-1, 0), BRAND_DARK), ('TEXTCOLOR', (0, 0), (-1, 0), WHITE),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'), ('FONTSIZE', (0, 0), (-1, -1), 8.5),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [WHITE, BRAND_LIGHT]),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#d1d5db')),
+        ('ALIGN', (1, 0), (-1, -1), 'CENTER'), ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('TOPPADDING', (0, 0), (-1, -1), 5), ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+    ]
+    for i, g in enumerate(analytics.get('per_group', []), start=1):
+        style_cmds.append(('TEXTCOLOR', (5, i), (5, i), _pct_color(g['average_pct'])))
+        style_cmds.append(('FONTNAME', (5, i), (5, i), 'Helvetica-Bold'))
+    t.setStyle(TableStyle(style_cmds))
+    story.append(t)
+    story.append(Spacer(1, 0.5*cm))
+
+    # Assignment-by-assignment trend
+    if analytics.get('trend'):
+        story.append(Paragraph('Assignment Trend', ParagraphStyle('h2', fontSize=11, fontName='Helvetica-Bold',
+                                                                    textColor=BRAND_DARK, spaceAfter=6)))
+        rows = [['Date', 'Assignment', 'Groups Scored', 'Average %']]
+        for t_row in analytics['trend']:
+            rows.append([t_row['date'], t_row['title'], str(t_row['groups_scored']), f"{t_row['average_pct']}%"])
+        t = Table(rows, colWidths=[2.6*cm, 7.4*cm, 3.2*cm, 2.8*cm], repeatRows=1)
+        style_cmds = [
+            ('BACKGROUND', (0, 0), (-1, 0), BRAND_DARK), ('TEXTCOLOR', (0, 0), (-1, 0), WHITE),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'), ('FONTSIZE', (0, 0), (-1, -1), 8.5),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [WHITE, BRAND_LIGHT]),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#d1d5db')),
+            ('ALIGN', (2, 0), (-1, -1), 'CENTER'), ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('TOPPADDING', (0, 0), (-1, -1), 5), ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+        ]
+        t.setStyle(TableStyle(style_cmds))
+        story.append(t)
+
+    meta = {'school_name': extra['school_name'], 'doc_title': 'Group Work Analytics'}
+    doc.build(story, onFirstPage=lambda c, d: _header_footer(c, d, meta),
+              onLaterPages=lambda c, d: _header_footer(c, d, meta))
+    return buf.getvalue()
+
+
 # ═════════════════════════════════ Excel ═════════════════════════════════════
 
 def _fill(hexcolor):
@@ -476,6 +593,115 @@ def generate_groups_summary_excel(classroom, groups: list, extra: dict) -> bytes
     widths = [26, 12, 14, 12, 12, 10, 14]
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def generate_group_work_analytics_excel(classroom, analytics: dict, extra: dict) -> bytes:
+    """Three sheets: By Group, By Stream, Trend — the Excel counterpart
+    of the Group Work Analytics page, one tab per rollup."""
+    wb = Workbook()
+
+    def _pct_fill_font(pct):
+        if pct is None:
+            return None, Font(color='FF6b7280')
+        if pct >= 65: return _fill('FFecfdf5'), Font(color='FF10b981', bold=True)
+        if pct >= 45: return _fill('FFfffbeb'), Font(color='FFf59e0b', bold=True)
+        return _fill('FFfef2f2'), Font(color='FFf43f5e', bold=True)
+
+    # ── Sheet 1: By Group ────────────────────────────────────────────
+    ws = wb.active
+    ws.title = 'By Group'
+    ncols = 6
+    row = _write_xl_header(ws, classroom, extra, 'Group Work Analytics — By Group', ncols)
+    headers = ['Group', 'Stream', 'Assignments', 'Best %', 'Worst %', 'Average %']
+    for i, h in enumerate(headers, start=1):
+        c = ws.cell(row, i, h)
+        c.font = Font(bold=True, color='FFFFFFFF', size=10)
+        c.fill = _fill('FF111827')
+        c.alignment = Alignment(horizontal='center')
+        c.border = _thin_border()
+    row += 1
+    for g in analytics.get('per_group', []):
+        values = [g['group_name'], g['stream_name'] or '—', g['assignments_count'],
+                  f"{g['best_pct']}%", f"{g['worst_pct']}%", f"{g['average_pct']}%"]
+        for i, v in enumerate(values, start=1):
+            c = ws.cell(row, i, v)
+            c.border = _thin_border()
+            c.alignment = Alignment(horizontal='center' if i > 1 else 'left')
+        ws.cell(row, 1).font = Font(bold=True, color='FF111827')
+        fill, font = _pct_fill_font(g['average_pct'])
+        avg_cell = ws.cell(row, 6)
+        avg_cell.font = font
+        if fill:
+            avg_cell.fill = fill
+        row += 1
+    row += 1
+    _write_xl_footer(ws, row, ncols)
+    for i, w in enumerate([24, 16, 13, 10, 10, 12], start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    # ── Sheet 2: By Stream ───────────────────────────────────────────
+    ws2 = wb.create_sheet('By Stream')
+    ncols2 = 4
+    row = _write_xl_header(ws2, classroom, extra, 'Group Work Analytics — By Stream', ncols2)
+    headers = ['Stream', 'Groups', 'Assignments Scored', 'Average %']
+    for i, h in enumerate(headers, start=1):
+        c = ws2.cell(row, i, h)
+        c.font = Font(bold=True, color='FFFFFFFF', size=10)
+        c.fill = _fill('FF111827')
+        c.alignment = Alignment(horizontal='center')
+        c.border = _thin_border()
+    row += 1
+    for s in analytics.get('per_stream', []):
+        values = [s['stream_name'], s['group_count'], s['assignments_scored'], f"{s['average_pct']}%"]
+        for i, v in enumerate(values, start=1):
+            c = ws2.cell(row, i, v)
+            c.border = _thin_border()
+            c.alignment = Alignment(horizontal='center' if i > 1 else 'left')
+        ws2.cell(row, 1).font = Font(bold=True, color='FF111827')
+        fill, font = _pct_fill_font(s['average_pct'])
+        avg_cell = ws2.cell(row, 4)
+        avg_cell.font = font
+        if fill:
+            avg_cell.fill = fill
+        row += 1
+    row += 1
+    _write_xl_footer(ws2, row, ncols2)
+    for i, w in enumerate([20, 10, 18, 12], start=1):
+        ws2.column_dimensions[get_column_letter(i)].width = w
+
+    # ── Sheet 3: Trend ───────────────────────────────────────────────
+    ws3 = wb.create_sheet('Trend')
+    ncols3 = 5
+    row = _write_xl_header(ws3, classroom, extra, 'Group Work Analytics — Assignment Trend', ncols3)
+    headers = ['Date', 'Assignment', 'Type', 'Groups Scored', 'Average %']
+    for i, h in enumerate(headers, start=1):
+        c = ws3.cell(row, i, h)
+        c.font = Font(bold=True, color='FFFFFFFF', size=10)
+        c.fill = _fill('FF111827')
+        c.alignment = Alignment(horizontal='center')
+        c.border = _thin_border()
+    row += 1
+    for t_row in analytics.get('trend', []):
+        values = [t_row['date'], t_row['title'], t_row['assignment_type'],
+                  t_row['groups_scored'], f"{t_row['average_pct']}%"]
+        for i, v in enumerate(values, start=1):
+            c = ws3.cell(row, i, v)
+            c.border = _thin_border()
+            c.alignment = Alignment(horizontal='center' if i not in (2,) else 'left')
+        fill, font = _pct_fill_font(t_row['average_pct'])
+        avg_cell = ws3.cell(row, 5)
+        avg_cell.font = font
+        if fill:
+            avg_cell.fill = fill
+        row += 1
+    row += 1
+    _write_xl_footer(ws3, row, ncols3)
+    for i, w in enumerate([14, 30, 14, 15, 12], start=1):
+        ws3.column_dimensions[get_column_letter(i)].width = w
 
     buf = io.BytesIO()
     wb.save(buf)

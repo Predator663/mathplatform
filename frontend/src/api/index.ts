@@ -258,6 +258,26 @@ export const groupsApi = {
     api.get(`/groups/export/classroom/${classroomId}/roster/${format}/`, { params, responseType: 'blob' }),
 };
 
+// ── Group Assignments (marks + analytics) ────────────────────────────────
+export const groupAssignmentsApi = {
+  list: (params?: object) => api.get('/groups/assignments/', { params }),
+  get: (id: number) => api.get(`/groups/assignments/${id}/`),
+  create: (data: object) => api.post('/groups/assignments/', data),
+  update: (id: number, data: object) => api.patch(`/groups/assignments/${id}/`, data),
+  delete: (id: number) => api.delete(`/groups/assignments/${id}/`),
+  roster: (id: number) => api.get(`/groups/assignments/${id}/roster/`),
+  recordScores: (id: number, entries: object[]) =>
+    api.post(`/groups/assignments/${id}/record-scores/`, { entries }),
+  analytics: (classroomId: number, params?: object) =>
+    api.get(`/groups/assignments/classroom/${classroomId}/analytics/`, { params }),
+  reassignmentSuggestions: (classroomId: number, params?: object) =>
+    api.get(`/groups/assignments/classroom/${classroomId}/reassignment-suggestions/`, { params }),
+  exportAnalytics: (classroomId: number, format: 'pdf' | 'excel', params?: object) =>
+    api.get(`/groups/export/classroom/${classroomId}/assignments/analytics/${format}/`, { params, responseType: 'blob' }),
+  exportMarksCsv: (classroomId: number, params?: object) =>
+    api.get(`/groups/export/classroom/${classroomId}/assignments/marks/csv/`, { params, responseType: 'blob' }),
+};
+
 export const gamificationApi = {
   badges: () => api.get('/gamification/badges/'),
   myProgress: () => api.get('/gamification/my-progress/'),

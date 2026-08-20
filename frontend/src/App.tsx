@@ -32,6 +32,9 @@ import MarkEntryPage from './pages/marks/MarkEntryPage';
 import BulkImportPage from './pages/marks/BulkImportPage';
 import GroupsPage from './pages/groups/GroupsPage';
 import SeatingChartPage from './pages/groups/SeatingChartPage';
+import GroupAssignmentsPage from './pages/groups/GroupAssignmentsPage';
+import GroupAssignmentMarksPage from './pages/groups/GroupAssignmentMarksPage';
+import GroupWorkAnalyticsPage from './pages/groups/GroupWorkAnalyticsPage';
 import TournamentPage from './pages/tournaments/TournamentPage';
 import AnalyticsPage from './pages/analytics/AnalyticsPage';
 import StudentAnalyticsPage from './pages/analytics/StudentAnalyticsPage';
@@ -119,6 +122,10 @@ export default function App() {
             <Route path="import"             element={<BulkImportPage />} />
             <Route path="groups"             element={<GroupsPage />} />
             <Route path="groups/seating-chart/:classroomId" element={<SeatingChartPage />} />
+            <Route path="groups/assignments"    element={<GroupAssignmentsPage />} />
+            <Route path="groups/assignments/:id/marks" element={<GroupAssignmentMarksPage />} />
+            <Route path="groups/analytics"      element={<GroupWorkAnalyticsPage />} />
+            <Route path="groups/analytics/:classroomId" element={<GroupWorkAnalyticsPage />} />
             <Route path="tournaments"        element={<TournamentPage />} />
             <Route path="analytics"          element={<AnalyticsPage />} />
             <Route path="analytics/student/:id" element={<StudentAnalyticsPage />} />

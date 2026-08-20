@@ -188,6 +188,101 @@ export interface RebalanceSuggestions {
   groups_needing_attention: GroupNeedingAttention[];
 }
 
+// ── Group Assignments (marks + analytics) ───────────────────────────────────
+export type AssignmentType = 'classwork' | 'homework' | 'project' | 'practical' | 'presentation' | 'other';
+
+export interface GroupAssignment {
+  id: number; classroom: number; classroom_name: string;
+  stream: number | null; stream_name: string | null;
+  subject: number | null; subject_name: string | null;
+  title: string; description: string;
+  assignment_type: AssignmentType; assignment_type_display: string;
+  term: string; term_display: string | null; academic_year: string;
+  date_given: string; due_date: string | null; max_score: number;
+  created_by: number | null; created_at: string; updated_at: string;
+  groups_scored: number; groups_expected: number;
+}
+
+export interface GroupAssignmentMemberMark {
+  id: number; student_id: number; student_name: string; student_code: string;
+  adjustment: number; is_excused: boolean; note: string;
+  effective_score: number; percentage: number; updated_at: string;
+}
+
+export interface GroupAssignmentScore {
+  id: number; assignment: number; group: number; group_name: string;
+  stream_id: number | null; stream_name: string | null;
+  score: number; percentage: number; is_absent: boolean; remarks: string;
+  member_marks: GroupAssignmentMemberMark[];
+  entered_by: number | null; entered_by_name: string | null;
+  entered_at: string; updated_at: string;
+}
+
+export interface GroupAssignmentRosterRow {
+  group_id: number; group_name: string; stream_id: number | null; stream_name: string | null;
+  member_count: number;
+  members: { student_id: number; student_name: string }[];
+  score: GroupAssignmentScore | null;
+}
+
+export interface GroupAssignmentRoster {
+  assignment: GroupAssignment;
+  groups: GroupAssignmentRosterRow[];
+}
+
+export interface GroupWorkTrendPoint {
+  assignment_id: number; title: string; date: string;
+  assignment_type: AssignmentType; average_pct: number; groups_scored: number;
+}
+
+export interface GroupWorkPerGroup {
+  group_id: number; group_name: string; stream_id: number | null; stream_name: string | null;
+  assignments_count: number; average_pct: number; best_pct: number; worst_pct: number;
+  trend: { assignment_id: number; title: string; date: string; pct: number }[];
+}
+
+export interface GroupWorkPerStream {
+  stream_id: number | null; stream_name: string;
+  group_count: number; assignments_scored: number; average_pct: number;
+}
+
+export interface GroupWorkAnalytics {
+  classroom_id: number; classroom_name: string;
+  classroom_average_pct: number | null;
+  assignments_count: number; groups_scored_count: number;
+  distribution: Record<string, number>;
+  trend: GroupWorkTrendPoint[];
+  per_group: GroupWorkPerGroup[];
+  per_stream: GroupWorkPerStream[];
+  top_groups: GroupWorkPerGroup[];
+  bottom_groups: GroupWorkPerGroup[];
+}
+
+export interface GroupWorkReassignCandidate {
+  student_id: number; student_name: string;
+  from_group_id: number; from_group_name: string;
+  current_tier: PerformanceTier; individual_average: number | null;
+}
+
+export interface GroupWorkGroupStatus {
+  group_id: number; group_name: string; stream_id: number | null; stream_name: string | null;
+  average_pct: number; assignments_count: number;
+  status: 'below_average' | 'average' | 'above_average';
+}
+
+export interface GroupWorkUnderperforming {
+  group_id: number; group_name: string; stream_id: number | null; stream_name: string | null;
+  average_pct: number; gap_from_classroom_average: number;
+  candidates: GroupWorkReassignCandidate[];
+}
+
+export interface GroupWorkReassignmentSuggestions {
+  classroom_id: number; classroom_name: string;
+  classroom_average_pct: number | null;
+  groups: GroupWorkGroupStatus[];
+  underperforming: GroupWorkUnderperforming[];
+}
+
 export type PeerConstraintType = 'avoid' | 'prefer';
 
 export interface PeerConstraintEntry {

@@ -6,6 +6,7 @@ import toast from 'react-hot-toast';
 import {
   Users, Sparkles, Plus, Camera, Trash2, Edit2, ArrowRightLeft, X,
   FileText, FileSpreadsheet, Award, UserPlus, History, Check, TrendingUp, AlertTriangle, LayoutGrid,
+  ClipboardCheck, BarChart3,
 } from 'lucide-react';
 import { groupsApi, studentsApi, subjectsApi } from '../../api';
 import {
@@ -282,6 +283,12 @@ export default function GroupsPage() {
           </Button>
           <Button variant="secondary" size="sm" onClick={() => selectedClass && navigate(`/groups/seating-chart/${selectedClass}`)} disabled={!selectedClass}>
             <LayoutGrid size={14} /> Seating Chart
+          </Button>
+          <Button variant="secondary" size="sm" onClick={() => navigate('/groups/assignments')}>
+            <ClipboardCheck size={14} /> Group Assignments
+          </Button>
+          <Button variant="secondary" size="sm" onClick={() => selectedClass && navigate(`/groups/analytics/${selectedClass}`)} disabled={!selectedClass}>
+            <BarChart3 size={14} /> Group Work Analytics
           </Button>
           <Button variant="secondary" size="sm" onClick={() => setCreateOpen(true)} disabled={!selectedClass}>
             <Plus size={14} /> New Group

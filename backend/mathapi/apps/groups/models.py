@@ -145,6 +145,128 @@ class PeerConstraint(models.Model):
         return f'{self.get_constraint_type_display()}: {self.student_a_id} & {self.student_b_id}'
 
 
+class GroupAssignment(models.Model):
+    """
+    A piece of group work (classwork, homework, project, practical,
+    presentation...) given to some or all of a classroom's peer groups,
+    to be marked once per group rather than once per student. Mirrors
+    Exam's shape (classroom/subject/term/academic_year/date/max_score)
+    so it slots into the same mental model teachers already have, but
+    stays in the groups app since it's graded at group granularity.
+    """
+    class AssignmentType(models.TextChoices):
+        CLASSWORK    = 'classwork',    'Classwork'
+        HOMEWORK     = 'homework',     'Homework'
+        PROJECT      = 'project',      'Project'
+        PRACTICAL    = 'practical',    'Practical'
+        PRESENTATION = 'presentation', 'Presentation'
+        OTHER        = 'other',        'Other'
+
+    classroom       = models.ForeignKey('students.Classroom', on_delete=models.CASCADE,
+                                         related_name='group_assignments')
+    stream          = models.ForeignKey('students.Stream', on_delete=models.SET_NULL,
+                                         null=True, blank=True, related_name='group_assignments',
+                                         help_text='Optional — restrict this assignment to groups in one stream.')
+    subject         = models.ForeignKey('accounts.Subject', on_delete=models.SET_NULL,
+                                         null=True, blank=True, related_name='group_assignments')
+    title           = models.CharField(max_length=200)
+    description     = models.TextField(blank=True)
+    assignment_type = models.CharField(max_length=20, choices=AssignmentType.choices,
+                                        default=AssignmentType.CLASSWORK)
+    term            = models.CharField(max_length=20, choices=Exam.Term.choices, blank=True)
+    academic_year   = models.CharField(max_length=9)
+    date_given      = models.DateField()
+    due_date        = models.DateField(null=True, blank=True)
+    max_score       = models.DecimalField(max_digits=6, decimal_places=2, default=100)
+    created_by      = models.ForeignKey(User, on_delete=models.SET_NULL, null=True,
+                                         related_name='created_group_assignments')
+    created_at      = models.DateTimeField(auto_now_add=True)
+    updated_at      = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'group_assignments'
+        ordering = ['-date_given', '-created_at']
+
+    def __str__(self):
+        return f'{self.title} — {self.classroom} ({self.academic_year})'
+
+
+class GroupAssignmentScore(models.Model):
+    """
+    One group's mark for one GroupAssignment. This is the source of
+    truth — individual member marks (GroupAssignmentMemberMark) default
+    to this score and only diverge when a teacher records a per-student
+    adjustment (e.g. a student who didn't contribute).
+    """
+    assignment = models.ForeignKey(GroupAssignment, on_delete=models.CASCADE, related_name='group_scores')
+    group      = models.ForeignKey(StudentGroup, on_delete=models.CASCADE, related_name='assignment_scores')
+    score      = models.DecimalField(max_digits=6, decimal_places=2, default=0)
+    is_absent  = models.BooleanField(default=False, help_text='Whole group did not submit / present.')
+    remarks    = models.CharField(max_length=500, blank=True)
+    entered_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True,
+                                    related_name='entered_group_assignment_scores')
+    entered_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'group_assignment_scores'
+        unique_together = ['assignment', 'group']
+        ordering = ['-assignment__date_given', 'group__name']
+
+    def __str__(self):
+        return f'{self.group.name} – {self.assignment.title}: {self.score}'
+
+    @property
+    def percentage(self):
+        if self.assignment.max_score:
+            return round((float(self.score) / float(self.assignment.max_score)) * 100, 1)
+        return 0.0
+
+
+class GroupAssignmentMemberMark(models.Model):
+    """
+    A student's effective mark for one group assignment. Created
+    automatically for every current member when a group's score is
+    recorded, defaulting to the group score with no adjustment — so
+    'record marks once per group' is the normal path, while still
+    letting a teacher tune an individual student's mark (bonus for
+    carrying the group, penalty for not contributing, or excuse them
+    entirely) without ever having to hand-enter every student.
+    """
+    group_score = models.ForeignKey(GroupAssignmentScore, on_delete=models.CASCADE, related_name='member_marks')
+    student     = models.ForeignKey('students.StudentProfile', on_delete=models.CASCADE,
+                                     related_name='group_assignment_marks')
+    adjustment  = models.DecimalField(max_digits=6, decimal_places=2, default=0,
+                                       help_text='Added to (or, if negative, subtracted from) the group score '
+                                                  'for this student only.')
+    is_excused  = models.BooleanField(default=False,
+                                       help_text='Excluded from this student\'s and the group\'s analytics '
+                                                  '(e.g. was absent for this piece of work).')
+    note        = models.CharField(max_length=255, blank=True)
+    updated_at  = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'group_assignment_member_marks'
+        unique_together = ['group_score', 'student']
+        ordering = ['student__user__first_name']
+
+    def __str__(self):
+        return f'{self.student.full_name} – {self.group_score.assignment.title}'
+
+    @property
+    def effective_score(self):
+        max_score = float(self.group_score.assignment.max_score or 0)
+        raw = float(self.group_score.score) + float(self.adjustment)
+        return round(max(0.0, min(raw, max_score)), 2) if max_score else round(max(0.0, raw), 2)
+
+    @property
+    def percentage(self):
+        max_score = float(self.group_score.assignment.max_score or 0)
+        if not max_score:
+            return 0.0
+        return round((self.effective_score / max_score) * 100, 1)
+
+
 class GroupTransferLog(models.Model):
     """Audit trail for every move of a student between groups, so
     'balanced groups' stays explainable rather than a black box."""
