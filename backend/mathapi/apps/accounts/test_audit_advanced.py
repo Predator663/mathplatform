@@ -127,6 +127,26 @@ class AuditLogAdvancedEndpointsTests(APITestCase):
         res = self.client.get('/api/auth/audit-log/export/cards/pdf/', {'model_name': 'does-not-exist'})
         self.assertEqual(res.status_code, status.HTTP_404_NOT_FOUND)
 
+    def test_card_pdf_survives_xml_special_characters_in_diff_values(self):
+        # Maths content routinely contains '<', '>', and '&' (inequalities,
+        # "Form 3 & 4", etc.) — these must not crash ReportLab's XML parser.
+        log = AuditLog.objects.create(
+            user=self.admin, action=AuditLog.Action.UPDATE, model_name='mathtopic', object_id='7',
+            description='PATCH /api/exams/topics/7/?filter=A&B',
+            changes={
+                'name': {'old': 'Tom & Jerry Sets', 'new': 'A<B and C&D'},
+                'description': {'old': None, 'new': 'Solve for x where x < 5 & y > 3'},
+            },
+        )
+        self.client.force_authenticate(self.admin)
+        res = self.client.get(f'/api/auth/audit-log/{log.id}/card/pdf/')
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        content = b''.join(res.streaming_content) if res.streaming else res.content
+        self.assertTrue(content.startswith(b'%PDF'))
+
+        batch_res = self.client.get('/api/auth/audit-log/export/cards/pdf/', {'object_id': '7'})
+        self.assertEqual(batch_res.status_code, status.HTTP_200_OK)
+
     # ── CSV export ───────────────────────────────────────────────────
 
     def test_csv_export_contains_all_rows_and_header(self):

@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import { groupAssignmentsApi, studentsApi, subjectsApi, groupsApi } from '../../api';
 import { LoadingPage, EmptyState, Button, Select, Input, Table, Tr, Td } from '../../components/ui';
-import { downloadBlob, TERM_LABELS, ASSIGNMENT_TYPE_LABELS, gradeColor } from '../../utils';
+import { downloadBlob, blobErrorMessage, TERM_LABELS, ASSIGNMENT_TYPE_LABELS, gradeColor } from '../../utils';
 import type {
   Classroom, PaginatedResponse, Subject, Stream, StudentGroup,
   GroupWorkAnalytics, GroupWorkReassignmentSuggestions, GroupWorkPerGroup,
@@ -155,8 +155,8 @@ export default function GroupWorkAnalyticsPage() {
         downloadBlob(res.data, `group_work_analytics.${format === 'pdf' ? 'pdf' : 'xlsx'}`);
       }
       toast.success('Export downloaded.');
-    } catch {
-      toast.error('Export failed — make sure marks are recorded for this selection.');
+    } catch (e) {
+      toast.error(await blobErrorMessage(e, 'Export failed — make sure marks are recorded for this selection.'));
     }
   }
 

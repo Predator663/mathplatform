@@ -19,6 +19,14 @@ Double-click **`start.bat`** (project root). It:
 
 Double-click **`stop.bat`** to shut both down.
 Double-click **`status.bat`** to check what's currently running.
+Double-click **`restart.bat`** to cycle both (stop, then start, then open Chrome) - handy after pulling
+new backend code or changing `.env`, since the running servers won't pick that up on their own.
+
+All four render as a green-on-black "hacker" console (banner, boot-sequence checkmarks, an
+animated spinner while waiting on the servers, a brief matrix-rain intro) rather than plain
+text output. Set `MATHPLATFORM_NO_ANIMATION=1` as an environment variable first if you want the
+same information instantly, with no animation delay (e.g. running one of these from another
+script).
 
 ## Fully automatic - start at Windows login
 
@@ -49,6 +57,8 @@ Chrome automatically at login, edit `start_hidden.vbs` and add
 | `start.ps1`                | Starts backend + frontend (idempotent), waits, optionally opens Chrome |
 | `stop.ps1`                 | Stops both, with a fallback sweep of ports 8000/5173 for orphaned processes |
 | `status.ps1`               | Quick check of what's running                               |
+| `restart.ps1`              | Runs `stop.ps1` then `start.ps1`                              |
+| `hacker_theme.ps1`         | Shared console theme (banner, spinner, matrix intro) used by all four above |
 | `start_hidden.vbs`         | Runs `start.ps1` with zero visible window (used for autostart) |
 | `install_autostart.ps1`    | Adds a shortcut to the Windows Startup folder                |
 | `uninstall_autostart.ps1`  | Removes it                                                    |

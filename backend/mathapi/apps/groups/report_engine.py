@@ -9,6 +9,7 @@ that doesn't belong mixed into the general report engine.
 import io
 import os
 from datetime import datetime
+from xml.sax.saxutils import escape as _xml_escape
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -54,6 +55,15 @@ TIER_COLORS_XL = {
     'very_strong': 'FF10b981', 'strong': 'FF2563eb',
     'average': 'FFf59e0b', 'weak': 'FFf43f5e', 'unrated': 'FF9ca3af',
 }
+
+
+def _esc(v) -> str:
+    """Escape a value before it's interpolated into ReportLab's mini-XML
+    Paragraph markup. Any teacher-entered text (group names, badge
+    labels, etc.) can contain '<', '>', or '&' — ordinary in a maths
+    platform ("x < y", "Form 3 & 4") — and an unescaped one throws a
+    ReportLab ParseError that 500s the whole export."""
+    return _xml_escape(str(v))
 
 
 def _badge_path(group):
@@ -128,8 +138,8 @@ def _meta_pairs(classroom, extra: dict) -> list[tuple[str, str]]:
 def _meta_grid(meta_items: list[tuple[str, str]], styles) -> Table:
     """Render the Class / Grade Level / Subject / etc. block as a row of
     bordered, labelled cards instead of a stack of plain text lines."""
-    label_row = [Paragraph(label, styles['meta_label']) for label, _ in meta_items]
-    value_row = [Paragraph(str(val), styles['meta_value']) for _, val in meta_items]
+    label_row = [Paragraph(_esc(label), styles['meta_label']) for label, _ in meta_items]
+    value_row = [Paragraph(_esc(val), styles['meta_value']) for _, val in meta_items]
     col_w = (PAGE_W - 2*MARGIN) / len(meta_items)
     t = Table([label_row, value_row], colWidths=[col_w] * len(meta_items))
     t.setStyle(TableStyle([
@@ -197,7 +207,7 @@ def generate_groups_summary_pdf(classroom, groups: list, extra: dict) -> bytes:
         group_avg = round(sum(avgs) / len(avgs), 1) if avgs else None
         group_avgs.append(group_avg)
         rows.append([
-            Paragraph(f'<font color="{g.badge_color}">●</font> {g.name}', styles['body']),
+            Paragraph(f'<font color="{g.badge_color}">●</font> {_esc(g.name)}', styles['body']),
             str(g.memberships.count()),
             str(counts['very_strong']), str(counts['strong']),
             str(counts['average']), str(counts['weak']),
@@ -273,7 +283,7 @@ def generate_groups_roster_pdf(classroom, groups: list, extra: dict) -> bytes:
             d = Drawing(1.2*cm, 1.2*cm)
             d.add(Circle(0.6*cm, 0.6*cm, 0.55*cm, fillColor=colors.HexColor(g.badge_color), strokeColor=None))
             banner_cells.append(d)
-        title = f'{g.name}' + (f'  ·  {g.subject.name}' if g.subject_id else '')
+        title = f'{_esc(g.name)}' + (f'  \u00b7  {_esc(g.subject.name)}' if g.subject_id else '')
         banner_cells.append(Paragraph(title, styles['section']))
         banner = Table([banner_cells], colWidths=[1.6*cm, None])
         # Each group's banner is tinted with its own badge colour instead of

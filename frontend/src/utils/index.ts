@@ -103,3 +103,25 @@ export function downloadBlob(blob: Blob, filename: string) {
   a.href = url; a.download = filename; a.click();
   URL.revokeObjectURL(url);
 }
+
+// When a request uses `responseType: 'blob'`, axios still parses error
+// responses (400/403/404/500) as a Blob instead of JSON — so
+// `error.response.data.detail` is always undefined even though the server
+// sent a perfectly good {"detail": "..."} body. This decodes that blob back
+// into text/JSON so error messages from blob-download endpoints (PDF/CSV/
+// Excel exports) actually reach the person instead of a generic fallback.
+export async function blobErrorMessage(error: unknown, fallback: string): Promise<string> {
+  const data = (error as { response?: { data?: unknown } })?.response?.data;
+  if (!(data instanceof Blob)) return fallback;
+  try {
+    const text = await data.text();
+    try {
+      const parsed = JSON.parse(text);
+      return parsed?.detail || fallback;
+    } catch {
+      return text || fallback;
+    }
+  } catch {
+    return fallback;
+  }
+}

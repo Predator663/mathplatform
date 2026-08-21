@@ -13,27 +13,42 @@ import { cn } from '../../utils';
 import ThemeToggle from '../ui/ThemeToggle';
 import SubjectSwitcher from './SubjectSwitcher';
 
-const navItems = [
-  { to: '/dashboard',  icon: LayoutDashboard, label: 'Dashboard',   pageKey: 'dashboard' },
-  { to: '/classrooms', icon: School,           label: 'Classrooms',  pageKey: 'classrooms' },
-  { to: '/students',   icon: GraduationCap,    label: 'Students',    pageKey: 'students' },
-  { to: '/exams',      icon: BookOpen,          label: 'Exams',       pageKey: 'exams' },
-  { to: '/quizzes',    icon: CalendarCheck,     label: 'Daily Quizzes', pageKey: 'quizzes' },
-  { to: '/import',     icon: Upload,            label: 'Bulk Import', pageKey: 'import' },
-  { to: '/groups',     icon: Users2,            label: 'Peer Groups', pageKey: null },
-  { to: '/tournaments', icon: Swords,           label: 'Tournaments', pageKey: null },
-  { to: '/analytics',  icon: BarChart3,         label: 'Analytics',   pageKey: 'analytics' },
-  { to: '/at-risk',    icon: AlertTriangle,     label: 'At Risk',     pageKey: 'at_risk' },
-  { to: '/reports',    icon: FileText,          label: 'Reports',     pageKey: 'reports' },
+// Grouped into sections that mirror how the app is actually used day to
+// day, rather than one flat list — Overview (things you check often),
+// Academics (setup/records), Peer Learning (groups & competition),
+// Insights (analysis/reporting), then Admin (unchanged, gated separately).
+const overviewItems = [
+  { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard', pageKey: 'dashboard' },
 ];
 
+const academicItems = [
+  { to: '/classrooms', icon: School,        label: 'Classrooms',   pageKey: 'classrooms' },
+  { to: '/students',   icon: GraduationCap, label: 'Students',     pageKey: 'students' },
+  { to: '/exams',      icon: BookOpen,       label: 'Exams',        pageKey: 'exams' },
+  { to: '/quizzes',    icon: CalendarCheck,  label: 'Daily Quizzes', pageKey: 'quizzes' },
+  { to: '/import',     icon: Upload,         label: 'Bulk Import',  pageKey: 'import' },
+];
+
+const peerLearningItems = [
+  { to: '/groups',      icon: Users2, label: 'Peer Groups', pageKey: null },
+  { to: '/tournaments', icon: Swords, label: 'Tournaments', pageKey: null },
+];
+
+const insightsItems = [
+  { to: '/analytics', icon: BarChart3,     label: 'Analytics', pageKey: 'analytics' },
+  { to: '/at-risk',   icon: AlertTriangle, label: 'At Risk',   pageKey: 'at_risk' },
+  { to: '/reports',   icon: FileText,      label: 'Reports',   pageKey: 'reports' },
+];
+
+// Grouped roughly content-taxonomy first (who/what the platform tracks),
+// then platform-level administration (who can see what, and what happened).
 const adminItems = [
-  { to: '/users',     icon: Users,         label: 'Users',      pageKey: 'users' },
-  { to: '/subjects',  icon: BookMarked,    label: 'Subjects',   pageKey: null },
-  { to: '/topics',    icon: Brain,         label: 'Topics',     pageKey: null },
-  { to: '/grade-levels', icon: Layers,     label: 'Grade Levels', pageKey: null },
-  { to: '/audit-log', icon: ClipboardList, label: 'Audit Log',  pageKey: null },
-  { to: '/settings',  icon: Settings,      label: 'Settings',   pageKey: null },
+  { to: '/users',        icon: Users,         label: 'Users',        pageKey: 'users' },
+  { to: '/grade-levels', icon: Layers,        label: 'Grade Levels', pageKey: null },
+  { to: '/subjects',     icon: BookMarked,    label: 'Subjects',     pageKey: null },
+  { to: '/topics',       icon: Brain,         label: 'Topics',       pageKey: null },
+  { to: '/audit-log',    icon: ClipboardList, label: 'Audit Log',    pageKey: null },
+  { to: '/settings',     icon: Settings,      label: 'Settings',     pageKey: null },
 ];
 
 interface SidebarProps { onClose?: () => void; }
@@ -102,6 +117,13 @@ export default function Sidebar({ onClose }: SidebarProps) {
   const platformName = settings.platform_name || 'MathPlatform';
   const platformSubtitle = settings.platform_subtitle || 'Tanzania';
 
+  const sectionHeader = (label: string) => (
+    <p className="px-3 mb-1 text-[10px] font-display font-semibold text-secondary uppercase tracking-widest">{label}</p>
+  );
+  const divider = (key: string) => (
+    <div key={key} className="my-2 border-t border-surface" style={{ borderColor: 'var(--border)' }} />
+  );
+
   return (
     <aside className="w-60 h-screen bg-surface-900 border-r border-surface flex flex-col" style={{borderColor: 'var(--border)'}}>
       {/* Logo */}
@@ -138,14 +160,27 @@ export default function Sidebar({ onClose }: SidebarProps) {
 
       {/* Nav */}
       <nav className="flex-1 px-3 py-3 flex flex-col gap-0.5 overflow-y-auto">
-        {navItems.map(({ to, icon: Icon, label, pageKey }) => navLink(to, Icon, label, pageKey))}
-        {isStudent && navLink('/progress', Trophy, 'My Progress', null)}
+        {sectionHeader('Overview')}
+        {overviewItems.map(({ to, icon: Icon, label, pageKey }) => navLink(to, Icon, label, pageKey))}
         {navLink('/notifications', Bell, 'Notifications', null, unreadCount)}
+        {isStudent && navLink('/progress', Trophy, 'My Progress', null)}
+
+        {divider('div-academics')}
+        {sectionHeader('Academics')}
+        {academicItems.map(({ to, icon: Icon, label, pageKey }) => navLink(to, Icon, label, pageKey))}
+
+        {divider('div-peer-learning')}
+        {sectionHeader('Peer Learning')}
+        {peerLearningItems.map(({ to, icon: Icon, label, pageKey }) => navLink(to, Icon, label, pageKey))}
+
+        {divider('div-insights')}
+        {sectionHeader('Insights')}
+        {insightsItems.map(({ to, icon: Icon, label, pageKey }) => navLink(to, Icon, label, pageKey))}
 
         {isAdmin && (
           <>
-            <div className="my-2 border-t border-surface" style={{borderColor: 'var(--border)'}} />
-            <p className="px-3 mb-1 text-[10px] font-display font-semibold text-secondary uppercase tracking-widest">Admin</p>
+            {divider('div-admin')}
+            {sectionHeader('Admin')}
             {navLink('/exams/pending-review', ClipboardCheck, 'Pending Review', null, pendingCount)}
             {navLink('/exams/trash', Trash2, 'Trash', null, trashCount)}
             {adminItems.map(({ to, icon: Icon, label, pageKey }) => navLink(to, Icon, label, pageKey))}

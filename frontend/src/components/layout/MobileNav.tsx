@@ -1,17 +1,21 @@
 import { NavLink } from 'react-router-dom';
 import {
-  LayoutDashboard, GraduationCap, BookOpen,
-  BarChart3, FileText, School,
+  LayoutDashboard, BookOpen, CalendarCheck, Users2, BarChart3,
 } from 'lucide-react';
 import { cn } from '../../utils';
 
+// Curated for daily use on a small screen — the full nav (Classrooms,
+// Students, Reports, Admin, etc.) is always one tap away via the hamburger
+// menu, which opens the same grouped Sidebar used on desktop. This bar is
+// deliberately short: the things a teacher opens most on their phone
+// (marking exams, entering quiz marks, checking a group, glancing at
+// analytics), not everything the platform can do.
 const navItems = [
-  { to: '/dashboard',  icon: LayoutDashboard, label: 'Home' },
-  { to: '/classrooms', icon: School,          label: 'Classes' },
-  { to: '/students',   icon: GraduationCap,   label: 'Students' },
-  { to: '/exams',      icon: BookOpen,         label: 'Exams' },
-  { to: '/analytics',  icon: BarChart3,        label: 'Analytics' },
-  { to: '/reports',    icon: FileText,         label: 'Reports' },
+  { to: '/dashboard', icon: LayoutDashboard, label: 'Home' },
+  { to: '/exams',     icon: BookOpen,         label: 'Exams' },
+  { to: '/quizzes',   icon: CalendarCheck,    label: 'Quizzes' },
+  { to: '/groups',    icon: Users2,           label: 'Groups' },
+  { to: '/analytics', icon: BarChart3,        label: 'Analytics' },
 ];
 
 export default function MobileNav() {

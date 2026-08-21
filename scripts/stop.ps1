@@ -6,23 +6,30 @@ $runDir    = Join-Path $scriptDir 'run'
 $backendPidFile  = Join-Path $runDir 'backend.pid'
 $frontendPidFile = Join-Path $runDir 'frontend.pid'
 
+. (Join-Path $scriptDir 'hacker_theme.ps1')
+
 function Stop-Tracked($pidFile, $label) {
     if (-not (Test-Path $pidFile)) {
-        Write-Host "$label - no PID file, nothing tracked."
+        Write-Warn "$label - no PID file, nothing tracked."
         return
     }
     $storedPid = Get-Content $pidFile -ErrorAction SilentlyContinue
     if ($storedPid) {
         $proc = Get-Process -Id $storedPid -ErrorAction SilentlyContinue
         if ($proc) {
-            Write-Host "Stopping $label (PID $storedPid)..."
+            Write-Step "Stopping $label (PID $storedPid)..."
             Stop-Process -Id $storedPid -Force -ErrorAction SilentlyContinue
+            Write-Ok "$label stopped."
         } else {
-            Write-Host "$label - PID $storedPid wasn't running."
+            Write-Warn "$label - PID $storedPid wasn't running."
         }
     }
     Remove-Item $pidFile -ErrorAction SilentlyContinue
 }
+
+Initialize-HackerConsole -Title 'MathPlatform - Shutdown'
+Show-MatrixIntro -DurationMs 700
+Write-HackerBanner -Subtitle 'SHUTTING DOWN...'
 
 Stop-Tracked $backendPidFile  'Backend'
 Stop-Tracked $frontendPidFile 'Frontend'
@@ -33,9 +40,13 @@ Stop-Tracked $frontendPidFile 'Frontend'
 foreach ($port in 8000, 5173) {
     $conns = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
     foreach ($c in $conns) {
-        Write-Host "Killing leftover process on port $port (PID $($c.OwningProcess))"
+        Write-Step "Killing leftover process on port $port (PID $($c.OwningProcess))"
         Stop-Process -Id $c.OwningProcess -Force -ErrorAction SilentlyContinue
+        Write-Ok "Port $port cleared."
     }
 }
 
-Write-Host "MathPlatform stopped."
+Write-Host ''
+Write-HackerBanner -Subtitle 'SYSTEM OFFLINE'
+Write-Typewriter '  >> MathPlatform stopped.' -Color Red
+Write-Host ''

@@ -22,6 +22,8 @@ $logDir      = Join-Path $scriptDir 'logs'
 New-Item -ItemType Directory -Force -Path $runDir  | Out-Null
 New-Item -ItemType Directory -Force -Path $logDir  | Out-Null
 
+. (Join-Path $scriptDir 'hacker_theme.ps1')
+
 $backendPidFile  = Join-Path $runDir 'backend.pid'
 $frontendPidFile = Join-Path $runDir 'frontend.pid'
 $backendLog      = Join-Path $logDir 'backend.log'
@@ -30,7 +32,6 @@ $frontendLog     = Join-Path $logDir 'frontend.log'
 $backendHealthUrl = 'http://127.0.0.1:8000/api/'
 $frontendUrl       = 'http://localhost:5173'
 
-function Write-Step($msg) { Write-Host "> $msg" }
 
 # Runs a native .exe (python, pip, npm, ...) safely.
 #
@@ -80,26 +81,21 @@ function Get-TrackedProcess($pidFile) {
     return Get-Process -Id $storedPid -ErrorAction SilentlyContinue
 }
 
-function Wait-ForHttp($url, [int]$timeoutSec = 45) {
-    $elapsed = 0
-    while ($elapsed -lt $timeoutSec) {
-        try {
-            $resp = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 2
-            if ($resp.StatusCode -lt 500) { return $true }
-        } catch {
-            # Windows PowerShell 5.1 throws for ANY non-2xx status (404, 403,
-            # etc.), unlike PS7. That's still proof the server is up and
-            # answering - only a connection-level failure (nothing listening
-            # yet) means "keep waiting". Both WebException (5.1) and
-            # HttpResponseException (7+) carry the real response here.
-            $webResponse = $_.Exception.Response
-            if ($webResponse -and $webResponse.StatusCode) {
-                if ([int]$webResponse.StatusCode -lt 500) { return $true }
-            }
-            # else: genuine connection refused / timeout - not listening yet.
+function Test-HttpOk($url) {
+    try {
+        $resp = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 2
+        if ($resp.StatusCode -lt 500) { return $true }
+    } catch {
+        # Windows PowerShell 5.1 throws for ANY non-2xx status (404, 403,
+        # etc.), unlike PS7. That's still proof the server is up and
+        # answering - only a connection-level failure (nothing listening
+        # yet) means "keep waiting". Both WebException (5.1) and
+        # HttpResponseException (7+) carry the real response here.
+        $webResponse = $_.Exception.Response
+        if ($webResponse -and $webResponse.StatusCode) {
+            if ([int]$webResponse.StatusCode -lt 500) { return $true }
         }
-        Start-Sleep -Seconds 1
-        $elapsed++
+        # else: genuine connection refused / timeout - not listening yet.
     }
     return $false
 }
@@ -119,19 +115,18 @@ function Open-InChrome($url) {
     }
 }
 
-Write-Host ""
-Write-Host "========================================"
-Write-Host "  MathPlatform - starting in background"
-Write-Host "========================================"
+Initialize-HackerConsole -Title 'MathPlatform - Launcher'
+Show-MatrixIntro
+Write-HackerBanner -Subtitle 'BOOTING SYSTEM...'
 
 try {
 
 # -- Backend ------------------------------------------------------
 $backendProc = Get-TrackedProcess $backendPidFile
 if ($backendProc) {
-    Write-Step "Backend already running (PID $($backendProc.Id)) - leaving it alone."
+    Write-Ok "Backend already running (PID $($backendProc.Id)) - leaving it alone."
 } elseif (Test-PortListening 8000) {
-    Write-Step "Port 8000 is already in use by something this script didn't start - leaving it alone."
+    Write-Warn "Port 8000 is already in use by something this script didn't start - leaving it alone."
 } else {
     $venvPython = Join-Path $backendDir 'venv\Scripts\python.exe'
     if (-not (Test-Path $venvPython)) {
@@ -158,15 +153,15 @@ if ($backendProc) {
         -RedirectStandardError "$backendLog.err" `
         -PassThru
     $beProc.Id | Out-File -Encoding ascii -FilePath $backendPidFile
-    Write-Step "Backend started (PID $($beProc.Id)). Log: $backendLog"
+    Write-Ok "Backend started (PID $($beProc.Id)). Log: $backendLog"
 }
 
 # -- Frontend -----------------------------------------------------
 $frontendProc = Get-TrackedProcess $frontendPidFile
 if ($frontendProc) {
-    Write-Step "Frontend already running (PID $($frontendProc.Id)) - leaving it alone."
+    Write-Ok "Frontend already running (PID $($frontendProc.Id)) - leaving it alone."
 } elseif (Test-PortListening 5173) {
-    Write-Step "Port 5173 is already in use by something this script didn't start - leaving it alone."
+    Write-Warn "Port 5173 is already in use by something this script didn't start - leaving it alone."
 } else {
     if (-not (Test-Path (Join-Path $frontendDir 'node_modules'))) {
         Write-Step "First run: installing frontend dependencies (npm install)..."
@@ -185,22 +180,25 @@ if ($frontendProc) {
         -RedirectStandardError "$frontendLog.err" `
         -PassThru
     $feProc.Id | Out-File -Encoding ascii -FilePath $frontendPidFile
-    Write-Step "Frontend started (PID $($feProc.Id)). Log: $frontendLog"
+    Write-Ok "Frontend started (PID $($feProc.Id)). Log: $frontendLog"
 }
 
 # -- Wait for both to actually answer, then open Chrome ------------
-Write-Step "Waiting for both servers to respond..."
-$backendOk  = Wait-ForHttp $backendHealthUrl
-$frontendOk = Wait-ForHttp $frontendUrl
+Write-Host ''
+$backendOk  = Wait-WithSpinner -Action { Test-HttpOk $backendHealthUrl } -Label 'Waiting for backend'  -TimeoutSec 45
+$frontendOk = Wait-WithSpinner -Action { Test-HttpOk $frontendUrl }      -Label 'Waiting for frontend' -TimeoutSec 45
 
+Write-Host ''
 if ($backendOk -and $frontendOk) {
-    Write-Host ""
-    Write-Host "MathPlatform is up -> $frontendUrl"
+    Write-HackerBanner -Subtitle 'SYSTEM ONLINE'
+    Write-Typewriter "  >> All systems go: $frontendUrl" -Color Green
+    Write-Host ''
 } else {
-    Write-Host ""
-    Write-Host "WARNING: didn't get a response within the timeout."
-    if (-not $backendOk)  { Write-Host "  - Backend not responding.  Check $backendLog / $backendLog.err" }
-    if (-not $frontendOk) { Write-Host "  - Frontend not responding. Check $frontendLog / $frontendLog.err" }
+    Write-HackerBanner -Subtitle 'BOOT INCOMPLETE'
+    Write-Fail "Didn't get a response within the timeout."
+    if (-not $backendOk)  { Write-Fail "  Backend not responding.  Check $backendLog / $backendLog.err" }
+    if (-not $frontendOk) { Write-Fail "  Frontend not responding. Check $frontendLog / $frontendLog.err" }
+    Write-Host ''
 }
 
 if ($OpenChrome) {
@@ -208,10 +206,8 @@ if ($OpenChrome) {
 }
 
 } catch {
-    Write-Host ""
-    Write-Host "========================================"
-    Write-Host "  MathPlatform failed to start"
-    Write-Host "========================================"
-    Write-Host $_.Exception.Message
+    Write-Host ''
+    Write-HackerBanner -Subtitle 'BOOT FAILED'
+    Write-Fail $_.Exception.Message
     exit 1
 }

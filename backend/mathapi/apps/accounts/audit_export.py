@@ -7,6 +7,7 @@ already keeps its own copy rather than taking a cross-app dependency.
 """
 import io
 from datetime import datetime
+from xml.sax.saxutils import escape as _xml_escape
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -87,6 +88,17 @@ def _fmt_value(v):
     return str(v)
 
 
+def _esc(v) -> str:
+    """Escape a value for safe interpolation into ReportLab's mini-XML
+    Paragraph markup. Every piece of user-entered content (names,
+    descriptions, diff values — anything not written by this module
+    itself) MUST go through this before landing in an f-string that
+    becomes a Paragraph, or a bare '&'/'<'/'>' (routine in a maths
+    platform: "x < 5", "Form 3 & 4", grade comparisons, etc.) throws a
+    ReportLab ParseError and the whole export 500s."""
+    return _xml_escape(str(v))
+
+
 def _log_card_flowable(log, styles, compact=False) -> list:
     """Flowables for one audit-log 'card': header, metadata grid, and (if
     present) its full field-level diff — bordered top/bottom by a rule
@@ -99,9 +111,9 @@ def _log_card_flowable(log, styles, compact=False) -> list:
     user_email = log.user.email if log.user else '—'
 
     header_row = Table([[
-        Paragraph(f'<font color="{action_hex}">{log.get_action_display().upper()}</font>'
-                  f'  \u00b7  {log.model_name}' + (f' #{log.object_id}' if log.object_id else ''), styles['title']),
-        Paragraph(log.timestamp.strftime('%d %b %Y, %H:%M:%S'), styles['subtitle']),
+        Paragraph(f'<font color="{action_hex}">{_esc(log.get_action_display().upper())}</font>'
+                  f'  \u00b7  {_esc(log.model_name)}' + (f' #{_esc(log.object_id)}' if log.object_id else ''), styles['title']),
+        Paragraph(_esc(log.timestamp.strftime('%d %b %Y, %H:%M:%S')), styles['subtitle']),
     ]], colWidths=[(PAGE_W - 2*MARGIN) * 0.68, (PAGE_W - 2*MARGIN) * 0.32])
     header_row.setStyle(TableStyle([
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
@@ -112,8 +124,8 @@ def _log_card_flowable(log, styles, compact=False) -> list:
         ('USER', user_label), ('EMAIL', user_email),
         ('IP ADDRESS', log.ip_address or '—'), ('LOG ID', f'#{log.id}'),
     ]
-    label_row = [Paragraph(l, styles['label']) for l, _ in meta_pairs]
-    value_row = [Paragraph(_fmt_value(v), styles['value']) for _, v in meta_pairs]
+    label_row = [Paragraph(_esc(l), styles['label']) for l, _ in meta_pairs]
+    value_row = [Paragraph(_esc(_fmt_value(v)), styles['value']) for _, v in meta_pairs]
     col_w = (PAGE_W - 2*MARGIN) / len(meta_pairs)
     meta_grid = Table([label_row, value_row], colWidths=[col_w] * len(meta_pairs))
     meta_grid.setStyle(TableStyle([
@@ -128,7 +140,7 @@ def _log_card_flowable(log, styles, compact=False) -> list:
 
     if log.description:
         body.append(Spacer(1, 0.15*cm))
-        body.append(Paragraph(log.description, styles['mono']))
+        body.append(Paragraph(_esc(log.description), styles['mono']))
 
     changes = log.changes or {}
     max_fields = 6 if compact else 100
@@ -140,13 +152,13 @@ def _log_card_flowable(log, styles, compact=False) -> list:
         ]]
         for field, change in list(changes.items())[:max_fields]:
             diff_rows.append([
-                Paragraph(field, styles['mono']),
-                Paragraph(f'<font color="#f43f5e">{_fmt_value(change.get("old"))}</font>', styles['mono']),
-                Paragraph(f'<font color="#10b981">{_fmt_value(change.get("new"))}</font>', styles['mono']),
+                Paragraph(_esc(field), styles['mono']),
+                Paragraph(f'<font color="#f43f5e">{_esc(_fmt_value(change.get("old")))}</font>', styles['mono']),
+                Paragraph(f'<font color="#10b981">{_esc(_fmt_value(change.get("new")))}</font>', styles['mono']),
             ])
         remaining = len(changes) - max_fields
         if remaining > 0:
-            diff_rows.append([Paragraph(f'… and {remaining} more field(s)', styles['subtitle']), '', ''])
+            diff_rows.append([Paragraph(f'\u2026 and {remaining} more field(s)', styles['subtitle']), '', ''])
         diff_table = Table(diff_rows, colWidths=[
             (PAGE_W - 2*MARGIN) * 0.28, (PAGE_W - 2*MARGIN) * 0.36, (PAGE_W - 2*MARGIN) * 0.36,
         ])
@@ -179,8 +191,8 @@ def generate_single_card_pdf(log, extra: dict) -> bytes:
     story = [*_log_card_flowable(log, styles, compact=False)]
     story.append(Spacer(1, 0.4*cm))
     story.append(Paragraph(
-        f'Exported {datetime.now().strftime("%d %B %Y, %H:%M")} by {extra.get("generated_by", "—")} '
-        f'· Restricted to Super Admin accounts', styles['subtitle'],
+        f'Exported {datetime.now().strftime("%d %B %Y, %H:%M")} by {_esc(extra.get("generated_by", "—"))} '
+        f'\u00b7 Restricted to Super Admin accounts', styles['subtitle'],
     ))
     meta = {'school_name': extra['school_name'], 'doc_title': f'Audit Log Card #{log.id}'}
     doc.build(story, onFirstPage=lambda c, d: _header_footer(c, d, meta),

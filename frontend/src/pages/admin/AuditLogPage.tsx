@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { auditApi } from '../../api';
 import { Modal, Button, Select, LoadingPage, EmptyState } from '../../components/ui';
-import { downloadBlob } from '../../utils';
+import { downloadBlob, blobErrorMessage } from '../../utils';
 import type { AuditLog, AuditLogFacets, AuditLogStats, PaginatedResponse } from '../../types';
 
 const ACTION_COLORS: Record<string, string> = {
@@ -91,8 +91,8 @@ function LogDetailModal({ log, onClose }: { log: AuditLog; onClose: () => void }
       const res = await auditApi.downloadCard(log.id);
       downloadBlob(res.data, `audit_log_card_${log.id}.pdf`);
       toast.success('Card downloaded.');
-    } catch {
-      toast.error('Could not download this card.');
+    } catch (e) {
+      toast.error(await blobErrorMessage(e, 'Could not download this card.'));
     }
   }
 
@@ -303,8 +303,8 @@ export default function AuditLogPage() {
       const res = await auditApi.exportCsv(filterParams);
       downloadBlob(res.data, 'audit_log_export.csv');
       toast.success('CSV exported.');
-    } catch {
-      toast.error('CSV export failed.');
+    } catch (e) {
+      toast.error(await blobErrorMessage(e, 'CSV export failed.'));
     } finally {
       setExporting(null);
     }
@@ -316,8 +316,8 @@ export default function AuditLogPage() {
       const res = await auditApi.downloadCardsBatch(filterParams);
       downloadBlob(res.data, 'audit_log_cards.pdf');
       toast.success('Cards downloaded.');
-    } catch (e: any) {
-      toast.error(e?.response?.data?.detail || 'Card export failed — try narrowing your filters.');
+    } catch (e) {
+      toast.error(await blobErrorMessage(e, 'Card export failed — try narrowing your filters.'));
     } finally {
       setExporting(null);
     }
