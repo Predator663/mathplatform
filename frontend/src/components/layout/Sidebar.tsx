@@ -3,6 +3,7 @@ import {
   LayoutDashboard, Users, Users2, BookOpen, BarChart3, GraduationCap,
   AlertTriangle, LogOut, Settings, FileText, Upload, School, X,
   BookMarked, ClipboardList, ClipboardCheck, Layers, Trash2, Bell, Trophy, CalendarCheck, Brain, Swords,
+  Shield, HeartPulse,
 } from 'lucide-react';
 import { useAuthStore } from '../../store/auth';
 import { useSiteSettingsStore } from '../../store/siteSettings';
@@ -34,6 +35,13 @@ const peerLearningItems = [
   { to: '/tournaments', icon: Swords, label: 'Tournaments', pageKey: null },
 ];
 
+// Teacher/admin-only tools — never shown to students or parents.
+const leagueItems = [
+  { to: '/leagues',            icon: Shield, label: 'Skill Leagues', pageKey: null },
+  { to: '/leagues/hall-of-fame', icon: Trophy, label: 'Hall of Fame', pageKey: null },
+  { to: '/interventions',      icon: HeartPulse, label: 'Interventions', pageKey: null },
+];
+
 const insightsItems = [
   { to: '/analytics', icon: BarChart3,     label: 'Analytics', pageKey: 'analytics' },
   { to: '/at-risk',   icon: AlertTriangle, label: 'At Risk',   pageKey: 'at_risk' },
@@ -59,6 +67,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
   const navigate = useNavigate();
   const isAdmin = user?.role === 'super_admin';
   const isStudent = user?.role === 'student';
+  const isTeacherOrAdmin = user?.role === 'super_admin' || user?.role === 'teacher';
 
   // Live pending-review count badge — only fetched for admins.
   const { data: pendingData } = useQuery({
@@ -172,6 +181,14 @@ export default function Sidebar({ onClose }: SidebarProps) {
         {divider('div-peer-learning')}
         {sectionHeader('Peer Learning')}
         {peerLearningItems.map(({ to, icon: Icon, label, pageKey }) => navLink(to, Icon, label, pageKey))}
+
+        {isTeacherOrAdmin && (
+          <>
+            {divider('div-leagues')}
+            {sectionHeader('Leagues & Interventions')}
+            {leagueItems.map(({ to, icon: Icon, label, pageKey }) => navLink(to, Icon, label, pageKey))}
+          </>
+        )}
 
         {divider('div-insights')}
         {sectionHeader('Insights')}

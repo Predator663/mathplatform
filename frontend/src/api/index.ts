@@ -332,6 +332,48 @@ export const tournamentsApi = {
   exportExcel: (id: number) => api.get(`/reports/export/tournament/${id}/excel/`, { responseType: 'blob' }),
 };
 
+export const leaguesApi = {
+  seasons: (params?: object) => api.get('/leagues/seasons/', { params }),
+  season: (id: number) => api.get(`/leagues/seasons/${id}/`),
+  createSeason: (data: object) => api.post('/leagues/seasons/', data),
+  updateSeason: (id: number, data: object) => api.patch(`/leagues/seasons/${id}/`, data),
+  archiveSeason: (id: number) => api.post(`/leagues/seasons/${id}/archive/`),
+  reactivateSeason: (id: number) => api.post(`/leagues/seasons/${id}/reactivate/`),
+  evaluatePromotions: (id: number, triggerExamId: number) =>
+    api.post(`/leagues/seasons/${id}/evaluate-promotions/`, { trigger_exam_id: triggerExamId }),
+  seasonAnalytics: (id: number) => api.get(`/leagues/seasons/${id}/analytics/`),
+  placeStudent: (id: number, data: { student_id: number; group_id: number; score?: number }) =>
+    api.post(`/leagues/seasons/${id}/place-student/`, data),
+  groups: (params?: object) => api.get('/leagues/groups/', { params }),
+  createGroup: (data: object) => api.post('/leagues/groups/', data),
+  updateGroup: (id: number, data: object) => api.patch(`/leagues/groups/${id}/`, data),
+  deleteGroup: (id: number) => api.delete(`/leagues/groups/${id}/`),
+  promotions: (params?: object) => api.get('/leagues/promotions/', { params }),
+  approvePromotion: (id: number) => api.post(`/leagues/promotions/${id}/approve/`),
+  rejectPromotion: (id: number) => api.post(`/leagues/promotions/${id}/reject/`),
+  hallOfFame: (params?: object) => api.get('/leagues/hall-of-fame/', { params }),
+  studentSummary: (studentId: number) => api.get(`/leagues/student-summary/${studentId}/`),
+  exportHallOfFamePdf: (params?: object) =>
+    api.get('/reports/export/hall-of-fame/pdf/', { params, responseType: 'blob' }),
+  exportHallOfFameExcel: (params?: object) =>
+    api.get('/reports/export/hall-of-fame/excel/', { params, responseType: 'blob' }),
+};
+
+export const interventionsApi = {
+  programs: (params?: object) => api.get('/interventions/programs/', { params }),
+  program: (id: number) => api.get(`/interventions/programs/${id}/`),
+  create: (data: object) => api.post('/interventions/programs/', data),
+  discontinue: (id: number, notes?: string) =>
+    api.post(`/interventions/programs/${id}/discontinue/`, { notes }),
+  progress: (id: number) => api.get(`/interventions/programs/${id}/progress/`),
+  startStage: (id: number) => api.post(`/interventions/stages/${id}/start/`),
+  completeStage: (id: number, notes?: string) =>
+    api.post(`/interventions/stages/${id}/complete/`, { notes }),
+  candidates: (classroomId: number) => api.get('/interventions/candidates/', { params: { classroom: classroomId } }),
+  analytics: (params?: object) => api.get('/interventions/analytics/', { params }),
+  defaultTemplate: () => api.get('/interventions/default-template/'),
+};
+
 export const settingsApi = {
   get: () => api.get('/auth/settings/'),
   patch: (data: object) => api.patch('/auth/settings/', data),

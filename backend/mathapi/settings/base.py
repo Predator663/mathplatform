@@ -56,6 +56,8 @@ LOCAL_APPS = [
     'mathapi.apps.gamification',
     'mathapi.apps.quizzes',
     'mathapi.apps.tournaments',
+    'mathapi.apps.leagues',
+    'mathapi.apps.interventions',
 ]
 
 # admin MUST come after local apps so Django sees the custom

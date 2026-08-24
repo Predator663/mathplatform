@@ -140,3 +140,42 @@ TOURNAMENT_BADGE_CATALOG = [
         'icon': 'trending-up', 'criteria_type': 'tournament_underdog', 'threshold': 0,
     },
 ]
+
+# League badges — seeded by migrations/0007_seed_league_intervention_badges.py.
+# criteria_type meanings (evaluated in services.evaluate_badges):
+#   league_promotion  — total approved/auto-applied league promotions >= threshold
+#   league_top_tier   — event flag: currently sits in the highest band of any league season
+LEAGUE_BADGE_CATALOG = [
+    {
+        'code': 'league_promoted', 'name': 'Promoted',
+        'description': 'Moved up to a stronger league group.',
+        'icon': 'trending-up', 'criteria_type': 'league_promotion', 'threshold': 1,
+    },
+    {
+        'code': 'league_serial_climber', 'name': 'Serial Climber',
+        'description': 'Earned 3 league promotions.',
+        'icon': 'arrow-up-circle', 'criteria_type': 'league_promotion', 'threshold': 3,
+    },
+    {
+        'code': 'league_top_tier', 'name': 'Top Tier',
+        'description': 'Reached the highest band in a league.',
+        'icon': 'crown', 'criteria_type': 'league_top_tier', 'threshold': 0,
+    },
+]
+
+# Intervention badges — seeded by the same migration.
+# criteria_type meanings:
+#   intervention_completed  — event flag: finished every stage of an intervention program
+#   intervention_turnaround — event flag: improved 10+ points from baseline to program close
+INTERVENTION_BADGE_CATALOG = [
+    {
+        'code': 'intervention_completed', 'name': 'Comeback Plan Complete',
+        'description': 'Completed every stage of an intervention programme.',
+        'icon': 'check-circle', 'criteria_type': 'intervention_completed', 'threshold': 0,
+    },
+    {
+        'code': 'intervention_turnaround', 'name': 'Turnaround',
+        'description': 'Improved by 10 or more points across an intervention programme.',
+        'icon': 'rocket', 'criteria_type': 'intervention_turnaround', 'threshold': 0,
+    },
+]

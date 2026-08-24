@@ -1115,3 +1115,89 @@ def generate_tournament_dossier_excel(tournament, dossier, analytics,
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+def generate_hall_of_fame_excel(hof, *, scope_label='All Classrooms',
+                                 school_name='School of Excellence', academic_year='') -> bytes:
+    """Hall of Fame, Excel version — mirrors generate_hall_of_fame_pdf.
+    One sheet: reigning champions, top-tier standings, and the most-
+    promoted leaderboard, stacked with clear section headers."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Hall of Fame'
+    ncols = 6
+
+    row = _write_platform_header(ws, school_name, 'League Hall of Fame', f'Scope: {scope_label}', academic_year, ncols)
+    row += 1
+
+    top_tier = hof.get('top_tier', [])
+    champions = hof.get('season_champions', [])
+    most_promoted = hof.get('most_promoted', [])
+
+    def section_title(text):
+        nonlocal row
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=ncols)
+        c = ws.cell(row, 1, text)
+        c.font = _font(bold=True, color=WHITE, size=11)
+        c.fill = PatternFill('solid', fgColor=SUBHDR[2:])
+        c.alignment = _align('left')
+        row += 1
+
+    def header_row(cols):
+        nonlocal row
+        for i, label in enumerate(cols, 1):
+            c = ws.cell(row, i, label)
+            c.font = _font(bold=True, color=WHITE, size=9)
+            c.fill = PatternFill('solid', fgColor=HEADER[2:])
+            c.alignment = _align('center')
+        row += 1
+
+    # ── Reigning Champions ──────────────────────────────────────────────
+    section_title('Reigning Champions')
+    header_row(['Student', 'Season', 'Classroom', 'Band', 'Score', ''])
+    for c in champions:
+        ws.cell(row, 1, _safe(c['student_name']))
+        ws.cell(row, 2, _safe(c['season_title']))
+        ws.cell(row, 3, _safe(c['classroom']))
+        ws.cell(row, 4, _safe(c['group_name']))
+        sc = ws.cell(row, 5, c['score'])
+        sc.alignment = _align('center')
+        row += 1
+    if not champions:
+        ws.cell(row, 1, 'No seasons in scope yet.')
+        row += 1
+    row += 1
+
+    # ── Top-Tier Standings ───────────────────────────────────────────────
+    section_title('Top-Tier Standings')
+    header_row(['#', 'Student', 'Classroom', 'Season', 'Band', 'Score'])
+    for i, r in enumerate(top_tier, 1):
+        ws.cell(row, 1, i).alignment = _align('center')
+        ws.cell(row, 2, _safe(r['student_name']))
+        ws.cell(row, 3, _safe(r['classroom']))
+        ws.cell(row, 4, _safe(r['season_title']))
+        ws.cell(row, 5, _safe(r['group_name']))
+        ws.cell(row, 6, r['score']).alignment = _align('center')
+        row += 1
+    if not top_tier:
+        ws.cell(row, 1, 'No top-tier members in scope yet.')
+        row += 1
+    row += 1
+
+    # ── Most Promoted ────────────────────────────────────────────────────
+    section_title('Most Promoted')
+    header_row(['#', 'Student', 'Total Promotions', '', '', ''])
+    for i, r in enumerate(most_promoted, 1):
+        ws.cell(row, 1, i).alignment = _align('center')
+        ws.cell(row, 2, _safe(r['student_name']))
+        ws.cell(row, 3, r['promotion_count']).alignment = _align('center')
+        row += 1
+    if not most_promoted:
+        ws.cell(row, 1, 'No promotions recorded yet.')
+        row += 1
+
+    _freeze_and_autofit(ws, freeze_row=6, freeze_col=1, min_widths=[6, 24, 18, 20, 16, 10])
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()

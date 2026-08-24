@@ -16,12 +16,14 @@ from .pdf_engine import (
     generate_student_report_pdf,
     generate_at_risk_pdf,
     generate_tournament_dossier_pdf,
+    generate_hall_of_fame_pdf,
 )
 from .excel_engine import (
     generate_exam_scores_excel,
     generate_class_report_excel,
     generate_student_report_excel,
     generate_tournament_dossier_excel,
+    generate_hall_of_fame_excel,
 )
 import csv
 import io
@@ -640,4 +642,63 @@ class TournamentDossierExcelView(APIView):
             content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
         safe = tournament.title.replace(' ', '_')[:40]
         response['Content-Disposition'] = f'attachment; filename="tournament_{safe}_dossier.xlsx"'
+        return response
+
+
+class HallOfFamePDFView(APIView):
+    """
+    GET /api/reports/export/hall-of-fame/pdf/?classroom=<id>&school_name=
+    Scoped the same way the leagues app scopes access (teacher/admin
+    only); omit `classroom` for the school-wide Hall of Fame.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        from mathapi.apps.accounts.scoping import assert_classroom_owned
+        from mathapi.apps.leagues import services as league_services
+        from django.shortcuts import get_object_or_404
+
+        classroom = None
+        scope_label = 'All Classrooms'
+        classroom_id = request.query_params.get('classroom')
+        if classroom_id:
+            classroom = get_object_or_404(Classroom, id=classroom_id)
+            if request.user.role == 'teacher':
+                assert_classroom_owned(request.user, classroom.id)
+            scope_label = str(classroom)
+
+        school_name = _resolve_site_name(request)
+        hof = league_services.get_hall_of_fame(classroom=classroom, limit=int(request.query_params.get('limit', 15)))
+
+        pdf_bytes = generate_hall_of_fame_pdf(hof, scope_label=scope_label, school_name=school_name)
+        response = HttpResponse(pdf_bytes, content_type='application/pdf')
+        response['Content-Disposition'] = 'attachment; filename="hall_of_fame.pdf"'
+        return response
+
+
+class HallOfFameExcelView(APIView):
+    """GET /api/reports/export/hall-of-fame/excel/?classroom=<id>&school_name="""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        from mathapi.apps.accounts.scoping import assert_classroom_owned
+        from mathapi.apps.leagues import services as league_services
+        from django.shortcuts import get_object_or_404
+
+        classroom = None
+        scope_label = 'All Classrooms'
+        classroom_id = request.query_params.get('classroom')
+        if classroom_id:
+            classroom = get_object_or_404(Classroom, id=classroom_id)
+            if request.user.role == 'teacher':
+                assert_classroom_owned(request.user, classroom.id)
+            scope_label = str(classroom)
+
+        school_name = _resolve_site_name(request)
+        hof = league_services.get_hall_of_fame(classroom=classroom, limit=int(request.query_params.get('limit', 15)))
+
+        xlsx_bytes = generate_hall_of_fame_excel(hof, scope_label=scope_label, school_name=school_name)
+        response = HttpResponse(xlsx_bytes,
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        response['Content-Disposition'] = 'attachment; filename="hall_of_fame.xlsx"'
         return response

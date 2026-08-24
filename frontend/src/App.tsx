@@ -36,6 +36,10 @@ import GroupAssignmentsPage from './pages/groups/GroupAssignmentsPage';
 import GroupAssignmentMarksPage from './pages/groups/GroupAssignmentMarksPage';
 import GroupWorkAnalyticsPage from './pages/groups/GroupWorkAnalyticsPage';
 import TournamentPage from './pages/tournaments/TournamentPage';
+import LeaguesPage from './pages/leagues/LeaguesPage';
+import HallOfFamePage from './pages/leagues/HallOfFamePage';
+import InterventionsPage from './pages/interventions/InterventionsPage';
+import InterventionProgramPage from './pages/interventions/InterventionProgramPage';
 import AnalyticsPage from './pages/analytics/AnalyticsPage';
 import StudentAnalyticsPage from './pages/analytics/StudentAnalyticsPage';
 import ClassAnalyticsPage from './pages/analytics/ClassAnalyticsPage';
@@ -69,6 +73,12 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 function RequireAdmin({ children }: { children: React.ReactNode }) {
   const { user } = useAuthStore();
   if (user?.role !== 'super_admin') return <Navigate to="/dashboard" replace />;
+  return <>{children}</>;
+}
+
+function RequireTeacherOrAdmin({ children }: { children: React.ReactNode }) {
+  const { user } = useAuthStore();
+  if (user?.role !== 'super_admin' && user?.role !== 'teacher') return <Navigate to="/dashboard" replace />;
   return <>{children}</>;
 }
 
@@ -127,6 +137,10 @@ export default function App() {
             <Route path="groups/analytics"      element={<GroupWorkAnalyticsPage />} />
             <Route path="groups/analytics/:classroomId" element={<GroupWorkAnalyticsPage />} />
             <Route path="tournaments"        element={<TournamentPage />} />
+            <Route path="leagues"            element={<RequireTeacherOrAdmin><LeaguesPage /></RequireTeacherOrAdmin>} />
+            <Route path="leagues/hall-of-fame" element={<RequireTeacherOrAdmin><HallOfFamePage /></RequireTeacherOrAdmin>} />
+            <Route path="interventions"      element={<RequireTeacherOrAdmin><InterventionsPage /></RequireTeacherOrAdmin>} />
+            <Route path="interventions/:id"  element={<RequireTeacherOrAdmin><InterventionProgramPage /></RequireTeacherOrAdmin>} />
             <Route path="analytics"          element={<AnalyticsPage />} />
             <Route path="analytics/student/:id" element={<StudentAnalyticsPage />} />
             <Route path="analytics/class"    element={<ClassAnalyticsPage />} />

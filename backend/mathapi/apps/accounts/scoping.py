@@ -146,3 +146,21 @@ def scope_tournaments(user, base_qs=None):
         except Exception:
             return qs.none()
     return qs.none()
+
+
+def scope_league_seasons(user, base_qs=None):
+    """Return a scoped LeagueSeason queryset for the given user.
+
+    Leagues (and interventions) are teacher/admin-only tools — students
+    and parents never see them, so unlike scope_tournaments/scope_quizzes
+    there is no student/parent branch here at all; any non-teacher,
+    non-admin role gets an empty queryset.
+    """
+    from mathapi.apps.leagues.models import LeagueSeason
+    qs = base_qs if base_qs is not None else LeagueSeason.objects.all()
+    if user.role == 'super_admin':
+        return qs
+    if user.role == 'teacher':
+        classrooms = get_teacher_classrooms(user)
+        return qs.filter(created_by=user, classroom__in=classrooms)
+    return qs.none()

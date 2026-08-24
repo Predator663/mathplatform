@@ -1876,3 +1876,123 @@ def generate_tournament_dossier_pdf(tournament, dossier, analytics,
     doc.build(story, onFirstPage=lambda c, d: _header_footer(c, d, meta),
               onLaterPages=lambda c, d: _header_footer(c, d, meta))
     return buf.getvalue()
+
+
+def generate_hall_of_fame_pdf(hof, *, scope_label='All Classrooms',
+                               school_name='School of Excellence', academic_year='') -> bytes:
+    """
+    The league Hall of Fame export: current top-tier standings across every
+    active/archived season in scope, the reigning champion of each season,
+    and the all-time "most promoted" leaderboard. `hof` is the output of
+    leagues.services.get_hall_of_fame().
+    """
+    buf = io.BytesIO()
+    styles = _make_styles()
+
+    meta = {
+        'school_name': school_name,
+        'academic_year': academic_year,
+        'doc_title': 'League Hall of Fame',
+        'doc_subtitle': f'Scope: {scope_label}',
+        'footer_centre': 'League System',
+    }
+
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=MARGIN, rightMargin=MARGIN,
+        topMargin=4.2*cm, bottomMargin=2.2*cm,
+    )
+    story = []
+
+    top_tier = hof.get('top_tier', [])
+    champions = hof.get('season_champions', [])
+    most_promoted = hof.get('most_promoted', [])
+
+    story.append(_meta_grid([
+        ('TOP-TIER STUDENTS', len(top_tier)),
+        ('SEASONS REPRESENTED', len(champions)),
+        ('TRACKED CLIMBERS', len(most_promoted)),
+    ], styles))
+    story.append(Spacer(1, 0.45*cm))
+
+    # ── Reigning Champions ────────────────────────────────────────────────
+    if champions:
+        story.append(Paragraph('Reigning Champions', styles['section']))
+        callout_rows = []
+        for c in champions[:8]:
+            medallion = draw_badge_drawing('crown', size=24)
+            callout_rows.append([
+                medallion,
+                Paragraph(
+                    f"<b>{c['student_name']}</b> — {c['season_title']} ({c['classroom']})<br/>"
+                    f"Top of \"{c['group_name']}\" at {c['score']}%.",
+                    styles['body'],
+                ),
+            ])
+        champ_tbl = Table(callout_rows, colWidths=[32, PAGE_W - 2*MARGIN - 32])
+        champ_tbl.setStyle(TableStyle([
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('BOX', (0, 0), (-1, -1), 0.4, colors.HexColor('#e5e7eb')),
+            ('INNERGRID', (0, 0), (-1, -1), 0.3, colors.HexColor('#f3f4f6')),
+            ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#fffbeb')),
+            ('TOPPADDING', (0, 0), (-1, -1), 7),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 7),
+            ('LEFTPADDING', (0, 0), (-1, -1), 10),
+        ]))
+        story.append(champ_tbl)
+        story.append(Spacer(1, 0.4*cm))
+
+    # ── Top-Tier Standings ───────────────────────────────────────────────
+    if top_tier:
+        story.append(Paragraph('Top-Tier Standings', styles['section']))
+        rows = [['#', 'Student', 'Classroom', 'Season', 'Band', 'Score']]
+        for i, row in enumerate(top_tier, 1):
+            rows.append([
+                str(i), row['student_name'], row['classroom'], row['season_title'],
+                row['group_name'], f"{row['score']}%" if row['score'] is not None else '—',
+            ])
+        tbl = Table(rows, colWidths=[(PAGE_W - 2*MARGIN)*p for p in [0.06, 0.26, 0.18, 0.22, 0.16, 0.12]])
+        tbl.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), BRAND_DARK),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
+            ('GRID', (0, 0), (-1, -1), 0.3, colors.HexColor('#e5e7eb')),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, BRAND_LIGHT]),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('ALIGN', (0, 0), (0, -1), 'CENTER'),
+            ('ALIGN', (5, 0), (5, -1), 'CENTER'),
+            ('TOPPADDING', (0, 0), (-1, -1), 5),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+        ]))
+        story.append(tbl)
+        story.append(Spacer(1, 0.4*cm))
+
+    # ── Most Promoted ────────────────────────────────────────────────────
+    if most_promoted:
+        story.append(Paragraph('Most Promoted', styles['section']))
+        rows = [['#', 'Student', 'Total Promotions']]
+        for i, row in enumerate(most_promoted, 1):
+            rows.append([str(i), row['student_name'], str(row['promotion_count'])])
+        tbl2 = Table(rows, colWidths=[(PAGE_W - 2*MARGIN)*p for p in [0.1, 0.6, 0.3]])
+        tbl2.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), BRAND_DARK),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
+            ('GRID', (0, 0), (-1, -1), 0.3, colors.HexColor('#e5e7eb')),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, BRAND_LIGHT]),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('ALIGN', (0, 0), (0, -1), 'CENTER'),
+            ('ALIGN', (2, 0), (2, -1), 'CENTER'),
+            ('TOPPADDING', (0, 0), (-1, -1), 5),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+        ]))
+        story.append(tbl2)
+
+    if not (top_tier or champions or most_promoted):
+        story.append(Paragraph('No league data yet for this scope.', styles['body']))
+
+    doc.build(story, onFirstPage=lambda c, d: _header_footer(c, d, meta),
+              onLaterPages=lambda c, d: _header_footer(c, d, meta))
+    return buf.getvalue()

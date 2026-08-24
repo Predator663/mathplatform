@@ -106,7 +106,11 @@ def evaluate_badges(student, streak: StudentStreak = None, quiz_streak: QuizStre
                      is_giant_slayer: bool = False,
                      is_tournament_rising_star: bool = False,
                      is_flawless_duel: bool = False,
-                     is_underdog: bool = False) -> list:
+                     is_underdog: bool = False,
+                     league_promotions: int = None,
+                     is_league_top_tier: bool = False,
+                     is_intervention_completed: bool = False,
+                     is_intervention_turnaround: bool = False) -> list:
     """
     Awards any badges the student newly qualifies for, across both the
     exam-based and quiz-based criteria types. Returns the newly created
@@ -160,6 +164,14 @@ def evaluate_badges(student, streak: StudentStreak = None, quiz_streak: QuizStre
             qualifies = is_flawless_duel
         elif badge.criteria_type == 'tournament_underdog':
             qualifies = is_underdog
+        elif badge.criteria_type == 'league_promotion':
+            qualifies = league_promotions is not None and league_promotions >= badge.threshold
+        elif badge.criteria_type == 'league_top_tier':
+            qualifies = is_league_top_tier
+        elif badge.criteria_type == 'intervention_completed':
+            qualifies = is_intervention_completed
+        elif badge.criteria_type == 'intervention_turnaround':
+            qualifies = is_intervention_turnaround
 
         if not qualifies:
             continue

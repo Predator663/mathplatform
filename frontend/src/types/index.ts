@@ -806,3 +806,103 @@ export interface HeadToHeadRecord {
     winner: string | null; is_tie: boolean; resolved_at: string | null;
   }[];
 }
+
+// ── Leagues (skill-band groups + promotion) ─────────────────────────────────
+export type LeagueIntervalMode = 'auto' | 'manual';
+export type LeaguePromotionMode = 'auto' | 'manual';
+export type LeagueSeasonStatus = 'draft' | 'active' | 'archived';
+export type PromotionEventStatus = 'pending' | 'approved' | 'rejected' | 'auto_applied';
+
+export interface LeagueSeason {
+  id: number; title: string; classroom: number; classroom_name: string;
+  baseline_exam: number; baseline_exam_title: string;
+  interval_mode: LeagueIntervalMode; band_width: number; promotion_mode: LeaguePromotionMode;
+  status: LeagueSeasonStatus; created_by_name: string | null;
+  group_count: number; member_count: number; pending_promotion_count: number;
+  created_at: string; updated_at: string; activated_at: string | null;
+}
+
+export interface LeagueGroup {
+  id: number; season: number; name: string; min_mark: number; max_mark: number;
+  order: number; color: string; icon: string; member_count: number; created_at: string;
+}
+
+export interface LeagueMembership {
+  id: number; season: number; student: number; student_name: string; student_code: string;
+  group: number; group_name: string; group_color: string; group_order: number;
+  placement_score: number; latest_score: number | null; latest_exam: number | null;
+  is_promotion_pending: boolean; pending_target_group: number | null;
+  pending_target_group_name: string | null; pending_trigger_score: number | null;
+  is_top_tier: boolean; joined_at: string; updated_at: string;
+}
+
+export interface LeagueSeasonDetail extends LeagueSeason {
+  groups: LeagueGroup[]; memberships: LeagueMembership[];
+}
+
+export interface PromotionEvent {
+  id: number; membership: number; season: number; student: number; student_name: string;
+  from_group: number; from_group_name: string; to_group: number; to_group_name: string;
+  trigger_exam: number; trigger_exam_title: string; trigger_score: number;
+  status: PromotionEventStatus; decided_by_name: string | null; decided_at: string | null;
+  created_at: string;
+}
+
+export interface LeagueBandStat {
+  group_id: number; name: string; order: number; color: string; icon: string;
+  min_mark: number; max_mark: number; member_count: number; average_score: number | null;
+}
+
+export interface LeagueAnalytics {
+  season_id: number; total_members: number; band_stats: LeagueBandStat[];
+  pending_promotions: {
+    membership_id: number; student_id: number; student_name: string;
+    current_group: string; target_group: string | null; trigger_score: number | null;
+  }[];
+  promotions_staged: number; promotions_applied: number; promotions_rejected: number;
+  promotion_rate: number | null;
+}
+
+export interface HallOfFame {
+  top_tier: { student_id: number; student_name: string; classroom: string; season_title: string; group_name: string; score: number | null }[];
+  season_champions: { season_id: number; season_title: string; classroom: string; student_id: number; student_name: string; group_name: string; score: number | null }[];
+  most_promoted: { student_id: number; student_name: string; promotion_count: number }[];
+  generated_at: string;
+}
+
+// ── Interventions (slow-learner staged improvement plans) ──────────────────
+export type InterventionProgramStatus = 'active' | 'completed' | 'discontinued';
+export type InterventionStageStatus = 'pending' | 'active' | 'completed' | 'skipped';
+
+export interface InterventionStage {
+  id: number; program: number; order: number; title: string; description: string;
+  status: InterventionStageStatus; measured_before: number | null; measured_after: number | null;
+  improvement: number | null; is_locked: boolean; notes: string;
+  started_at: string | null; completed_at: string | null;
+}
+
+export interface InterventionProgram {
+  id: number; student: number; student_name: string; student_code: string;
+  classroom: number; classroom_name: string; subject: number | null;
+  status: InterventionProgramStatus; trigger_reason: string;
+  baseline_average: number; latest_average: number | null; improvement: number | null;
+  stage_count: number; completed_stage_count: number; current_stage_title: string | null;
+  created_by_name: string | null; started_at: string; completed_at: string | null; updated_at: string;
+}
+
+export interface InterventionProgramDetail extends InterventionProgram {
+  stages: InterventionStage[];
+}
+
+export interface SlowLearnerCandidate {
+  student_id: number; student_name: string; student_code: string;
+  exam_count: number; slope: number; early_average: number; recent_average: number;
+  overall_average: number; trend: 'flat' | 'falling';
+}
+
+export interface InterventionAnalytics {
+  active_count: number; completed_count: number; discontinued_count: number;
+  average_improvement: number | null; success_rate: number | null;
+  leaderboard: { student_id: number; student_name: string; improvement: number | null; baseline_average: number; latest_average: number | null }[];
+}
+
