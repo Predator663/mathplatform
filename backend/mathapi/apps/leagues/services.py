@@ -373,17 +373,27 @@ def get_league_analytics(season: LeagueSeason) -> dict:
     }
 
 
-def get_hall_of_fame(*, classroom=None, limit=10) -> dict:
+def get_hall_of_fame(*, classroom=None, classrooms=None, limit=10) -> dict:
     """
     School-wide (or classroom-scoped) hall of fame — computed fresh every
     call rather than stored, so it's never stale: current top-tier
     students ranked by their latest score, the students promoted the most
     times ever, and a per-active-season champion list. This is what both
     the Hall of Fame page and its PDF/Excel export read from.
+
+    `classroom` — restrict to exactly one classroom (the "Hall of Fame for
+    class X" view).
+    `classrooms` — restrict to a set of classrooms (e.g. a teacher's own
+    assigned classrooms when no single classroom was picked), so a
+    teacher without a name-first-day-of-term "All classrooms" selection
+    never sees another teacher's students. Ignored if `classroom` is set.
+    Leave both None for a school-wide view (admins only, in practice).
     """
     seasons = LeagueSeason.objects.all()
     if classroom is not None:
         seasons = seasons.filter(classroom=classroom)
+    elif classrooms is not None:
+        seasons = seasons.filter(classroom__in=classrooms)
 
     top_tier_rows = []
     champions = []
@@ -421,6 +431,8 @@ def get_hall_of_fame(*, classroom=None, limit=10) -> dict:
     )
     if classroom is not None:
         promotion_qs = promotion_qs.filter(season__classroom=classroom)
+    elif classrooms is not None:
+        promotion_qs = promotion_qs.filter(season__classroom__in=classrooms)
     most_promoted = (
         promotion_qs.values('student_id', 'student__user__first_name', 'student__user__last_name')
         .annotate(promotion_count=Count('id'))

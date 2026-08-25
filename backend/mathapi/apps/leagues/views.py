@@ -167,13 +167,16 @@ class HallOfFameView(APIView):
     def get(self, request):
         from mathapi.apps.students.models import Classroom
         classroom = None
+        classrooms = None
         classroom_id = request.query_params.get('classroom')
         if classroom_id:
             classroom = get_object_or_404(Classroom, id=classroom_id)
             if request.user.role == 'teacher':
                 assert_classroom_owned(request.user, classroom.id)
+        elif request.user.role == 'teacher':
+            classrooms = get_teacher_classrooms(request.user)
         limit = int(request.query_params.get('limit', 10))
-        return Response(services.get_hall_of_fame(classroom=classroom, limit=limit))
+        return Response(services.get_hall_of_fame(classroom=classroom, classrooms=classrooms, limit=limit))
 
 
 class StudentLeagueSummaryView(APIView):

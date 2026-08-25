@@ -369,7 +369,13 @@ def generate_exam_scores_excel(exam, scores, sort_by='name',
 
 def generate_class_report_excel(classroom, students, scores_map, exams,
                                   sort_by='name', school_name='School of Excellence',
-                                  top_achievers=None) -> bytes:
+                                  top_achievers=None, league_intervention=None) -> bytes:
+    """
+    `league_intervention` — optional list of dicts, one per student who has
+    a league membership and/or an active intervention programme (see
+    generate_class_report_pdf's docstring for the shape). Written as its
+    own sheet, same as Top Achievers, only when supplied.
+    """
     students = list(students)
     exams = list(exams)
 
@@ -549,6 +555,55 @@ def generate_class_report_excel(classroom, students, scores_map, exams,
         aws.column_dimensions['E'].width = 28
         aws.freeze_panes = aws.cell(header_row + 1, 1)
 
+    # ── League & Interventions sheet ─────────────────────────────────────
+    if league_intervention:
+        lws = wb.create_sheet('League & Interventions')
+        lws.sheet_view.showGridLines = False
+        lrow = _write_platform_header(
+            lws, school_name, f'{classroom} — League Standing & Interventions',
+            'Current league band, promotion status, and any active intervention programme.',
+            classroom.academic_year, 6,
+        )
+        lrow += 1
+        headers = ['Student', 'League Band', 'Promotion', 'Intervention', 'Stage Progress', 'Improvement']
+        for j, h in enumerate(headers, 1):
+            c = lws.cell(lrow, j, h)
+            c.font = _font(bold=True, color=WHITE, size=9)
+            c.fill = PatternFill('solid', fgColor=HEADER[2:])
+            c.alignment = _align('center')
+            c.border = _border()
+        lws.row_dimensions[lrow].height = 18
+        header_row = lrow
+        lrow += 1
+
+        for i, row in enumerate(league_intervention, 1):
+            fill = PatternFill('solid', fgColor='FFF8FAFC') if i % 2 == 0 else PatternFill('solid', fgColor=WHITE)
+            name_c = lws.cell(lrow, 1, _safe(row['student'].full_name))
+            name_c.font = _font(size=9); name_c.fill = fill; name_c.border = _border()
+
+            band_c = lws.cell(lrow, 2, row.get('league_band') or '—')
+            band_c.alignment = _align('center'); band_c.fill = fill; band_c.border = _border()
+
+            promo = 'Staged' if row.get('is_promotion_pending') else ('—' if not row.get('league_band') else 'Stable')
+            promo_c = lws.cell(lrow, 3, promo)
+            promo_c.alignment = _align('center'); promo_c.fill = fill; promo_c.border = _border()
+
+            interv_c = lws.cell(lrow, 4, row.get('intervention_status') or '—')
+            interv_c.alignment = _align('center'); interv_c.fill = fill; interv_c.border = _border()
+
+            progress_c = lws.cell(lrow, 5, row.get('intervention_progress') or '—')
+            progress_c.alignment = _align('center'); progress_c.fill = fill; progress_c.border = _border()
+
+            imp = row.get('intervention_improvement')
+            imp_c = lws.cell(lrow, 6, f'+{imp}' if isinstance(imp, (int, float)) and imp >= 0 else (imp if imp is not None else '—'))
+            imp_c.alignment = _align('center'); imp_c.fill = fill; imp_c.border = _border()
+            lrow += 1
+
+        lws.column_dimensions['A'].width = 26
+        for col in ['B', 'C', 'D', 'E', 'F']:
+            lws.column_dimensions[col].width = 16
+        lws.freeze_panes = lws.cell(header_row + 1, 1)
+
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
@@ -564,7 +619,8 @@ def _std_dev_xl(values):
 def generate_student_report_excel(student, scores, topic_data,
                                    school_name='School of Excellence',
                                    trend=None, comparison=None,
-                                   badges=None, tournament_stats=None) -> bytes:
+                                   badges=None, tournament_stats=None,
+                                   league_summary=None, intervention_summary=None) -> bytes:
     """
     Individual student report, Excel version — mirrors generate_student_report_pdf.
 
@@ -573,6 +629,10 @@ def generate_student_report_excel(student, scores, topic_data,
     record), Exam History (with classroom-average comparison columns),
     Topic Mastery, Term Breakdown. Chart source data lives on a hidden
     '_ChartData' sheet so the Summary sheet itself stays readable.
+
+    `league_summary`/`intervention_summary` — optional, teacher/admin-only
+    data (see pdf_engine.generate_student_report_pdf's docstring). Adds a
+    'League & Interventions' sheet only when at least one is supplied.
     """
     scores = list(scores)
     trend = trend or {}
@@ -814,6 +874,73 @@ def generate_student_report_excel(student, scores, topic_data,
         scores[0].exam.academic_year if scores else '—',
         badges or [], tournament_stats,
     )
+
+    # ── League & Interventions sheet (teacher/admin-only data) ─────────────
+    if league_summary or intervention_summary:
+        academic_year = scores[0].exam.academic_year if scores else '—'
+        lws = wb.create_sheet('League & Interventions')
+        lws.sheet_view.showGridLines = False
+        lrow = _write_platform_header(
+            lws, school_name, f'{student.full_name} — League & Intervention Record',
+            'Current league standing and any intervention programme progress.',
+            academic_year, 6,
+        )
+        lrow += 1
+
+        memberships = (league_summary or {}).get('memberships') or []
+        if memberships:
+            c = lws.cell(lrow, 1, 'League Standing')
+            c.font = _font(bold=True, color=WHITE, size=10)
+            lws.merge_cells(start_row=lrow, start_column=1, end_row=lrow, end_column=6)
+            c.fill = PatternFill('solid', fgColor=SUBHDR[2:])
+            lrow += 1
+            headers = ['Season', 'Band', 'Latest Score', 'Status', '', '']
+            for j, h in enumerate(headers, 1):
+                hc = lws.cell(lrow, j, h)
+                hc.font = _font(bold=True, color=WHITE, size=9)
+                hc.fill = PatternFill('solid', fgColor=HEADER[2:])
+                hc.alignment = _align('center')
+            lrow += 1
+            for m in memberships:
+                status = 'Staged for promotion' if m.get('is_promotion_pending') else ('Top tier' if m.get('is_top_tier') else 'Active')
+                lws.cell(lrow, 1, _safe(m.get('season_title') or '—'))
+                lws.cell(lrow, 2, _safe(m.get('group_name') or '—')).alignment = _align('center')
+                lws.cell(lrow, 3, f"{m.get('latest_score')}%" if m.get('latest_score') is not None else '—').alignment = _align('center')
+                lws.cell(lrow, 4, status).alignment = _align('center')
+                lrow += 1
+            lifetime = (league_summary or {}).get('lifetime_promotions')
+            if lifetime:
+                lws.cell(lrow, 1, f'Lifetime league promotions: {lifetime}').font = _font(bold=True, size=9)
+                lrow += 1
+            lrow += 1
+
+        if intervention_summary:
+            c = lws.cell(lrow, 1, 'Intervention Programmes')
+            c.font = _font(bold=True, color=WHITE, size=10)
+            lws.merge_cells(start_row=lrow, start_column=1, end_row=lrow, end_column=6)
+            c.fill = PatternFill('solid', fgColor=SUBHDR[2:])
+            lrow += 1
+            headers = ['Reason', 'Status', 'Stage Progress', 'Baseline', 'Latest', 'Change']
+            for j, h in enumerate(headers, 1):
+                hc = lws.cell(lrow, j, h)
+                hc.font = _font(bold=True, color=WHITE, size=9)
+                hc.fill = PatternFill('solid', fgColor=HEADER[2:])
+                hc.alignment = _align('center')
+            lrow += 1
+            for p in intervention_summary:
+                change = p.get('improvement')
+                change_str = (f"+{change}" if change is not None and change >= 0 else str(change)) if change is not None else '—'
+                lws.cell(lrow, 1, _safe(p.get('trigger_reason') or 'Comeback plan'))
+                lws.cell(lrow, 2, p.get('status_label') or '—').alignment = _align('center')
+                lws.cell(lrow, 3, f"{p.get('completed_stage_count', 0)}/{p.get('stage_count', 0)}").alignment = _align('center')
+                lws.cell(lrow, 4, f"{p.get('baseline_average')}%" if p.get('baseline_average') is not None else '—').alignment = _align('center')
+                lws.cell(lrow, 5, f"{p.get('latest_average')}%" if p.get('latest_average') is not None else '—').alignment = _align('center')
+                lws.cell(lrow, 6, change_str).alignment = _align('center')
+                lrow += 1
+
+        lws.column_dimensions['A'].width = 28
+        for col in ['B', 'C', 'D', 'E', 'F']:
+            lws.column_dimensions[col].width = 16
 
     # ── Exam History sheet ───────────────────────────────────────────────────
     hws = wb.create_sheet('Exam History')

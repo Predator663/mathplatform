@@ -10,7 +10,7 @@ import { Link } from 'react-router-dom';
 import { interventionsApi, studentsApi } from '../../api';
 import { LoadingPage, EmptyState, Button, Select } from '../../components/ui';
 import { useAuthStore } from '../../store/auth';
-import { cn } from '../../utils';
+import { cn, apiErrorMessage } from '../../utils';
 import type {
   SlowLearnerCandidate, InterventionProgram, InterventionAnalytics, Classroom, PaginatedResponse,
 } from '../../types';
@@ -126,15 +126,17 @@ export default function InterventionsPage() {
   });
   const classrooms = listFrom(classroomsData);
 
-  const { data: candidates, isLoading: candidatesLoading } = useQuery<SlowLearnerCandidate[]>({
+  const { data: candidates, isLoading: candidatesLoading, isError: candidatesError, error: candidatesErr } = useQuery<SlowLearnerCandidate[]>({
     queryKey: ['intervention-candidates', classroomId],
     queryFn: () => interventionsApi.candidates(Number(classroomId)).then(r => r.data),
     enabled: !!classroomId,
+    retry: 1,
   });
 
-  const { data: programsData, isLoading: programsLoading } = useQuery<PaginatedResponse<InterventionProgram> | InterventionProgram[]>({
+  const { data: programsData, isLoading: programsLoading, isError: programsError, error: programsErr } = useQuery<PaginatedResponse<InterventionProgram> | InterventionProgram[]>({
     queryKey: ['intervention-programs', classroomId],
     queryFn: () => interventionsApi.programs(classroomId ? { classroom: classroomId } : {}).then(r => r.data),
+    retry: 1,
   });
   const programs = listFrom(programsData);
 
@@ -177,7 +179,9 @@ export default function InterventionsPage() {
         </h2>
         {!classroomId ? (
           <p className="text-muted text-sm">Select a classroom to scan for students who haven't improved.</p>
-        ) : candidatesLoading ? <LoadingPage /> : (candidates ?? []).length === 0 ? (
+        ) : candidatesLoading ? <LoadingPage /> : candidatesError ? (
+          <p className="text-rose-400 text-sm">Couldn't load candidates: {apiErrorMessage(candidatesErr)}</p>
+        ) : (candidates ?? []).length === 0 ? (
           <p className="text-muted text-sm">No flagged students right now — everyone's trending up.</p>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -190,7 +194,9 @@ export default function InterventionsPage() {
         <h2 className="font-display font-semibold text-lg text-primary flex items-center gap-2 mb-3">
           <ClipboardList className="text-azure-400" size={18} /> Programs
         </h2>
-        {programsLoading ? <LoadingPage /> : programs.length === 0 ? (
+        {programsLoading ? <LoadingPage /> : programsError ? (
+          <p className="text-rose-400 text-sm">Couldn't load programs: {apiErrorMessage(programsErr)}</p>
+        ) : programs.length === 0 ? (
           <EmptyState icon={<Users2 size={36} />} title="No programs yet" message="Start one from a flagged candidate above." />
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">

@@ -5,14 +5,28 @@ import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
 import {
   ChevronLeft, Lock, PlayCircle, CheckCircle2, Circle, Sparkles, TrendingUp, TrendingDown,
-  Ban, Search, Target, Users, ClipboardCheck, GraduationCap,
+  Ban, Search, Target, Users, ClipboardCheck, GraduationCap, AlertTriangle, RotateCcw,
 } from 'lucide-react';
 import { interventionsApi } from '../../api';
 import { LoadingPage, Button, Modal } from '../../components/ui';
-import { cn } from '../../utils';
+import { cn, apiErrorMessage } from '../../utils';
 import type { InterventionProgramDetail, InterventionStage } from '../../types';
 
 const STAGE_ICONS = [Search, Target, Users, ClipboardCheck, GraduationCap];
+
+function ErrorPanel({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-16 gap-3 text-center px-4">
+      <AlertTriangle size={36} className="text-rose-400" />
+      <p className="font-display font-semibold text-primary">Couldn't load this program</p>
+      <p className="text-muted max-w-sm text-sm">{message}</p>
+      <div className="flex items-center gap-2">
+        <Link to="/interventions" className="text-sm text-secondary hover:text-primary flex items-center gap-1"><ChevronLeft size={14} /> Back</Link>
+        <Button variant="secondary" size="sm" onClick={onRetry}><RotateCcw size={14} /> Try again</Button>
+      </div>
+    </div>
+  );
+}
 
 function StageNode({ stage, index, canStart, onStart, onComplete, starting, completing }: {
   stage: InterventionStage; index: number; canStart: boolean;
@@ -114,9 +128,10 @@ export default function InterventionProgramPage() {
   const queryClient = useQueryClient();
   const [discontinuing, setDiscontinuing] = useState(false);
 
-  const { data: program, isLoading } = useQuery<InterventionProgramDetail>({
+  const { data: program, isLoading, isError, error, refetch } = useQuery<InterventionProgramDetail>({
     queryKey: ['intervention-program', programId],
     queryFn: () => interventionsApi.program(programId).then(r => r.data),
+    retry: 1,
   });
 
   const startMutation = useMutation({
@@ -146,7 +161,9 @@ export default function InterventionProgramPage() {
     },
   });
 
-  if (isLoading || !program) return <LoadingPage />;
+  if (isLoading) return <LoadingPage />;
+  if (isError) return <ErrorPanel message={apiErrorMessage(error)} onRetry={() => refetch()} />;
+  if (!program) return <ErrorPanel message="No data came back from the server." onRetry={() => refetch()} />;
 
   const stages = [...program.stages].sort((a, b) => a.order - b.order);
   const pct = program.stage_count ? Math.round((program.completed_stage_count / program.stage_count) * 100) : 0;

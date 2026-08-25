@@ -125,3 +125,15 @@ export async function blobErrorMessage(error: unknown, fallback: string): Promis
     return fallback;
   }
 }
+
+// Turns any react-query/axios error into a short, human-readable string —
+// used by pages that need to show a real "here's what went wrong" message
+// instead of leaving a loading spinner running forever when a request fails.
+export function apiErrorMessage(error: unknown, fallback = 'Something went wrong loading this page.'): string {
+  const err = error as { response?: { status?: number; data?: any }; message?: string };
+  const detail = err?.response?.data?.detail || (Array.isArray(err?.response?.data) ? err.response.data[0] : undefined);
+  if (detail) return String(detail);
+  if (err?.response?.status) return `Server responded with ${err.response.status}.`;
+  if (err?.message === 'Network Error') return "Couldn't reach the server — check that the backend is running.";
+  return err?.message || fallback;
+}

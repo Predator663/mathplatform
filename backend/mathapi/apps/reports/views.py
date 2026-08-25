@@ -73,6 +73,83 @@ def _student_prizes(student_id):
     return badges, tournament_stats
 
 
+def _student_league_intervention(student_id):
+    """
+    League standing + intervention programme history for one student —
+    teacher/admin-only data. The caller (StudentReportPDFView/ExcelView)
+    only invokes this when the requester's role is 'teacher' or
+    'super_admin'; a student pulling her own report never triggers this,
+    so the report generators never even receive the data to render.
+    """
+    from mathapi.apps.leagues.services import get_student_league_summary
+    from mathapi.apps.interventions.models import InterventionProgram
+
+    league_summary = get_student_league_summary(student_id)
+
+    programs = InterventionProgram.objects.filter(student_id=student_id).order_by('-started_at')
+    intervention_summary = [
+        {
+            'trigger_reason': p.trigger_reason,
+            'status_label': p.get_status_display(),
+            'stage_count': p.stage_count,
+            'completed_stage_count': p.completed_stage_count,
+            'baseline_average': p.baseline_average,
+            'latest_average': p.latest_average,
+            'improvement': p.improvement,
+        }
+        for p in programs
+    ]
+    return league_summary, intervention_summary
+
+
+def _classroom_league_intervention(students):
+    """
+    Per-student league band + intervention status for the class report's
+    'League Standing & Interventions' section — only students with a
+    league membership or an intervention programme on record are
+    included, so the section stays empty (and un-rendered) for classrooms
+    that never used either feature.
+    """
+    from mathapi.apps.leagues.models import LeagueMembership
+    from mathapi.apps.interventions.models import InterventionProgram
+
+    student_ids = [s.id for s in students]
+    students_by_id = {s.id: s for s in students}
+
+    league_by_student = {}
+    for m in (
+        LeagueMembership.objects.filter(student_id__in=student_ids, season__status='active')
+        .select_related('group').order_by('student_id', '-joined_at')
+    ):
+        league_by_student.setdefault(m.student_id, m)
+
+    intervention_by_student = {}
+    for p in (
+        InterventionProgram.objects.filter(student_id__in=student_ids, status=InterventionProgram.Status.ACTIVE)
+        .order_by('student_id', '-started_at')
+    ):
+        intervention_by_student.setdefault(p.student_id, p)
+
+    rows = []
+    for sid in set(league_by_student) | set(intervention_by_student):
+        student = students_by_id.get(sid)
+        if not student:
+            continue
+        membership = league_by_student.get(sid)
+        program = intervention_by_student.get(sid)
+        rows.append({
+            'student': student,
+            'league_band': membership.group.name if membership else None,
+            'league_color': membership.group.color if membership else None,
+            'is_promotion_pending': membership.is_promotion_pending if membership else False,
+            'intervention_status': program.get_status_display() if program else None,
+            'intervention_progress': f'{program.completed_stage_count}/{program.stage_count}' if program else None,
+            'intervention_improvement': program.improvement if program else None,
+        })
+    rows.sort(key=lambda r: r['student'].full_name.lower())
+    return rows
+
+
 def _resolve_site_name(request) -> str:
     """
     Resolve the name that should appear on every generated report header.
@@ -195,10 +272,12 @@ class ClassReportPDFView(APIView):
             scores_map[sc.student_id][sc.exam_id] = sc.percentage
 
         top_achievers = _classroom_top_achievers(list(students))
+        league_intervention = _classroom_league_intervention(list(students))
 
         pdf_bytes = generate_class_report_pdf(
             classroom, students, scores_map, exams,
             sort_by=sort_by, school_name=school_name, top_achievers=top_achievers,
+            league_intervention=league_intervention,
         )
 
         response = HttpResponse(pdf_bytes, content_type='application/pdf')
@@ -234,10 +313,14 @@ class StudentReportPDFView(APIView):
         trend = services.get_student_trend(student_id, created_by_id=created_by_id)
         comparison = services.get_student_classroom_comparison(student_id, created_by_id=created_by_id)
         badges, tournament_stats = _student_prizes(student_id)
+        league_summary = intervention_summary = None
+        if request.user.role in ('teacher', 'super_admin'):
+            league_summary, intervention_summary = _student_league_intervention(student_id)
 
         pdf_bytes = generate_student_report_pdf(
             student, scores, topic_data, school_name=school_name, trend=trend, comparison=comparison,
             badges=badges, tournament_stats=tournament_stats,
+            league_summary=league_summary, intervention_summary=intervention_summary,
         )
 
         response = HttpResponse(pdf_bytes, content_type='application/pdf')
@@ -273,10 +356,14 @@ class StudentReportExcelView(APIView):
         trend = services.get_student_trend(student_id, created_by_id=created_by_id)
         comparison = services.get_student_classroom_comparison(student_id, created_by_id=created_by_id)
         badges, tournament_stats = _student_prizes(student_id)
+        league_summary = intervention_summary = None
+        if request.user.role in ('teacher', 'super_admin'):
+            league_summary, intervention_summary = _student_league_intervention(student_id)
 
         xlsx_bytes = generate_student_report_excel(
             student, scores, topic_data, school_name=school_name, trend=trend, comparison=comparison,
             badges=badges, tournament_stats=tournament_stats,
+            league_summary=league_summary, intervention_summary=intervention_summary,
         )
 
         response = HttpResponse(
@@ -348,10 +435,12 @@ class ClassReportExcelView(APIView):
             scores_map[sc.student_id][sc.exam_id] = sc.percentage
 
         top_achievers = _classroom_top_achievers(list(students))
+        league_intervention = _classroom_league_intervention(list(students))
 
         xlsx_bytes = generate_class_report_excel(
             classroom, students, scores_map, exams,
             sort_by=sort_by, school_name=school_name, top_achievers=top_achievers,
+            league_intervention=league_intervention,
         )
 
         response = HttpResponse(xlsx_bytes,
@@ -654,11 +743,16 @@ class HallOfFamePDFView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        from mathapi.apps.accounts.scoping import assert_classroom_owned
+        from mathapi.apps.accounts.scoping import assert_classroom_owned, get_teacher_classrooms
         from mathapi.apps.leagues import services as league_services
         from django.shortcuts import get_object_or_404
+        from rest_framework.exceptions import PermissionDenied
+
+        if request.user.role not in ('teacher', 'super_admin'):
+            raise PermissionDenied('League Hall of Fame is a teacher/admin view.')
 
         classroom = None
+        classrooms = None
         scope_label = 'All Classrooms'
         classroom_id = request.query_params.get('classroom')
         if classroom_id:
@@ -666,9 +760,13 @@ class HallOfFamePDFView(APIView):
             if request.user.role == 'teacher':
                 assert_classroom_owned(request.user, classroom.id)
             scope_label = str(classroom)
+        elif request.user.role == 'teacher':
+            classrooms = get_teacher_classrooms(request.user)
 
         school_name = _resolve_site_name(request)
-        hof = league_services.get_hall_of_fame(classroom=classroom, limit=int(request.query_params.get('limit', 15)))
+        hof = league_services.get_hall_of_fame(
+            classroom=classroom, classrooms=classrooms, limit=int(request.query_params.get('limit', 15)),
+        )
 
         pdf_bytes = generate_hall_of_fame_pdf(hof, scope_label=scope_label, school_name=school_name)
         response = HttpResponse(pdf_bytes, content_type='application/pdf')
@@ -681,11 +779,16 @@ class HallOfFameExcelView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        from mathapi.apps.accounts.scoping import assert_classroom_owned
+        from mathapi.apps.accounts.scoping import assert_classroom_owned, get_teacher_classrooms
         from mathapi.apps.leagues import services as league_services
         from django.shortcuts import get_object_or_404
+        from rest_framework.exceptions import PermissionDenied
+
+        if request.user.role not in ('teacher', 'super_admin'):
+            raise PermissionDenied('League Hall of Fame is a teacher/admin view.')
 
         classroom = None
+        classrooms = None
         scope_label = 'All Classrooms'
         classroom_id = request.query_params.get('classroom')
         if classroom_id:
@@ -693,9 +796,13 @@ class HallOfFameExcelView(APIView):
             if request.user.role == 'teacher':
                 assert_classroom_owned(request.user, classroom.id)
             scope_label = str(classroom)
+        elif request.user.role == 'teacher':
+            classrooms = get_teacher_classrooms(request.user)
 
         school_name = _resolve_site_name(request)
-        hof = league_services.get_hall_of_fame(classroom=classroom, limit=int(request.query_params.get('limit', 15)))
+        hof = league_services.get_hall_of_fame(
+            classroom=classroom, classrooms=classrooms, limit=int(request.query_params.get('limit', 15)),
+        )
 
         xlsx_bytes = generate_hall_of_fame_excel(hof, scope_label=scope_label, school_name=school_name)
         response = HttpResponse(xlsx_bytes,

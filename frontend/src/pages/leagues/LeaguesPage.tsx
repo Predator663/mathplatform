@@ -4,14 +4,14 @@ import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
 import {
   Swords, Shield, Trophy, Crown, Plus, X, ChevronRight, ChevronLeft, ArrowUp, Check,
-  Ban, Users2, Target, Sparkles, Award, Settings2, PlayCircle, Archive, RotateCcw, Gem,
+  Ban, Users2, Target, Sparkles, Award, Settings2, PlayCircle, Archive, RotateCcw, Gem, AlertTriangle,
 } from 'lucide-react';
 import { leaguesApi, studentsApi, examsApi } from '../../api';
 import {
   LoadingPage, EmptyState, Button, Input, Select, Modal, StatCard,
 } from '../../components/ui';
 import { useAuthStore } from '../../store/auth';
-import { cn } from '../../utils';
+import { cn, apiErrorMessage } from '../../utils';
 import type {
   LeagueSeason, LeagueSeasonDetail, LeagueGroup, PromotionEvent, Classroom, Exam,
   PaginatedResponse, LeagueIntervalMode, LeaguePromotionMode,
@@ -299,14 +299,30 @@ function PendingPromotionsPanel({ season }: { season: LeagueSeasonDetail }) {
   );
 }
 
+// ── Error panel (shown instead of an endless spinner when a fetch fails) ────
+function ErrorPanel({ message, onRetry, onBack }: { message: string; onRetry: () => void; onBack?: () => void }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-16 gap-3 text-center px-4">
+      <AlertTriangle size={36} className="text-rose-400" />
+      <p className="font-display font-semibold text-primary">Couldn't load this league</p>
+      <p className="text-muted max-w-sm text-sm">{message}</p>
+      <div className="flex items-center gap-2">
+        {onBack && <Button variant="ghost" size="sm" onClick={onBack}><ChevronLeft size={14} /> Back</Button>}
+        <Button variant="secondary" size="sm" onClick={onRetry}><RotateCcw size={14} /> Try again</Button>
+      </div>
+    </div>
+  );
+}
+
 // ── Season Detail ────────────────────────────────────────────────────────────
 function SeasonDetail({ seasonId, onBack }: { seasonId: number; onBack: () => void }) {
   const queryClient = useQueryClient();
   const [evalOpen, setEvalOpen] = useState(false);
 
-  const { data: season, isLoading } = useQuery<LeagueSeasonDetail>({
+  const { data: season, isLoading, isError, error, refetch } = useQuery<LeagueSeasonDetail>({
     queryKey: ['league-season', seasonId],
     queryFn: () => leaguesApi.season(seasonId).then(r => r.data),
+    retry: 1,
   });
 
   const archiveMutation = useMutation({
@@ -317,7 +333,9 @@ function SeasonDetail({ seasonId, onBack }: { seasonId: number; onBack: () => vo
     },
   });
 
-  if (isLoading || !season) return <LoadingPage />;
+  if (isLoading) return <LoadingPage />;
+  if (isError) return <ErrorPanel message={apiErrorMessage(error)} onRetry={() => refetch()} onBack={onBack} />;
+  if (!season) return <ErrorPanel message="No data came back from the server." onRetry={() => refetch()} onBack={onBack} />;
   const groups = [...season.groups].sort((a, b) => a.order - b.order);
 
   return (
@@ -374,9 +392,10 @@ export default function LeaguesPage() {
   });
   const classrooms = listFrom(classroomsData);
 
-  const { data: seasonsData, isLoading } = useQuery<PaginatedResponse<LeagueSeason> | LeagueSeason[]>({
+  const { data: seasonsData, isLoading, isError, error, refetch } = useQuery<PaginatedResponse<LeagueSeason> | LeagueSeason[]>({
     queryKey: ['league-seasons'],
     queryFn: () => leaguesApi.seasons({ page_size: 100 }).then(r => r.data),
+    retry: 1,
   });
   const seasons = listFrom(seasonsData);
 
@@ -407,7 +426,9 @@ export default function LeaguesPage() {
         </div>
       </div>
 
-      {isLoading ? <LoadingPage /> : seasons.length === 0 ? (
+      {isLoading ? <LoadingPage /> : isError ? (
+        <ErrorPanel message={apiErrorMessage(error)} onRetry={() => refetch()} />
+      ) : seasons.length === 0 ? (
         <EmptyState
           icon={<Target size={40} />}
           title="No leagues yet"

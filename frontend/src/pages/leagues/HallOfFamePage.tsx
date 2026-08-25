@@ -2,18 +2,31 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
-import { Crown, Trophy, Medal, TrendingUp, Download, FileSpreadsheet, ChevronLeft } from 'lucide-react';
+import { Crown, Trophy, Medal, TrendingUp, Download, FileSpreadsheet, ChevronLeft, AlertTriangle, RotateCcw } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { leaguesApi, studentsApi } from '../../api';
 import { LoadingPage, EmptyState, Button, Select } from '../../components/ui';
 import { useAuthStore } from '../../store/auth';
-import { downloadBlob } from '../../utils';
+import { downloadBlob, apiErrorMessage } from '../../utils';
 import type { HallOfFame, Classroom, PaginatedResponse } from '../../types';
 
 function listFrom<T>(data: PaginatedResponse<T> | T[] | undefined): T[] {
   if (!data) return [];
   return Array.isArray(data) ? data : data.results ?? [];
 }
+
+function ErrorPanel({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-16 gap-3 text-center px-4">
+      <AlertTriangle size={36} className="text-rose-400" />
+      <p className="font-display font-semibold text-primary">Couldn't load the Hall of Fame</p>
+      <p className="text-muted max-w-sm text-sm">{message}</p>
+      <Button variant="secondary" size="sm" onClick={onRetry}><RotateCcw size={14} /> Try again</Button>
+    </div>
+  );
+}
+
+
 
 const RANK_STYLES = [
   'bg-gradient-to-r from-amber-500/20 to-amber-500/5 border-amber-500/40',
@@ -32,9 +45,10 @@ export default function HallOfFamePage() {
   });
   const classrooms = listFrom(classroomsData);
 
-  const { data: hof, isLoading } = useQuery<HallOfFame>({
+  const { data: hof, isLoading, isError, error, refetch } = useQuery<HallOfFame>({
     queryKey: ['hall-of-fame', classroomId],
     queryFn: () => leaguesApi.hallOfFame(classroomId ? { classroom: classroomId } : {}).then(r => r.data),
+    retry: 1,
   });
 
   if (user?.role === 'student' || user?.role === 'parent') {
@@ -82,7 +96,11 @@ export default function HallOfFamePage() {
         </div>
       </div>
 
-      {isLoading || !hof ? <LoadingPage /> : (
+      {isLoading ? <LoadingPage /> : isError ? (
+        <ErrorPanel message={apiErrorMessage(error)} onRetry={() => refetch()} />
+      ) : !hof ? (
+        <ErrorPanel message="No data came back from the server." onRetry={() => refetch()} />
+      ) : (
         <div className="flex flex-col gap-8">
           {/* Reigning Champions */}
           <section>

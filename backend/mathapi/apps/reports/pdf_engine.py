@@ -778,6 +778,84 @@ def _honors_achievements_section(styles, badges, tournament_stats=None, width=No
     return items
 
 
+def _league_intervention_section(styles, league_summary=None, intervention_summary=None) -> list:
+    """
+    'League Standing & Intervention Progress' block for the individual
+    student report — teacher/admin-only data, so this section is only
+    ever emitted when the caller (a teacher or admin pulling this
+    student's report) explicitly supplies it. A student pulling her own
+    report never sees this: the view simply never passes these values in
+    that case, keeping this generator itself the single source of truth
+    for the section's content without needing a role check in here.
+    """
+    items = []
+    if not league_summary and not intervention_summary:
+        return items
+
+    items.append(Paragraph('League Standing &amp; Intervention Progress', styles['section']))
+    items.append(Spacer(1, 0.08*cm))
+
+    if league_summary and league_summary.get('memberships'):
+        rows = [['Season', 'Band', 'Score', 'Status']]
+        for m in league_summary['memberships']:
+            status = 'Staged for promotion' if m.get('is_promotion_pending') else ('Top tier' if m.get('is_top_tier') else 'Active')
+            rows.append([
+                m.get('season_title') or '—', m.get('group_name') or '—',
+                f"{m.get('latest_score')}%" if m.get('latest_score') is not None else '—', status,
+            ])
+        tbl = Table(rows, colWidths=[(PAGE_W - 2*MARGIN)*p for p in [0.32, 0.28, 0.16, 0.24]])
+        tbl.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), BRAND_DARK),
+            ('TEXTCOLOR', (0, 0), (-1, 0), WHITE),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
+            ('GRID', (0, 0), (-1, -1), 0.3, colors.HexColor('#e5e7eb')),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [WHITE, BRAND_LIGHT]),
+            ('ALIGN', (2, 0), (3, -1), 'CENTER'),
+            ('TOPPADDING', (0, 0), (-1, -1), 4),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ]))
+        items.append(tbl)
+        lifetime = league_summary.get('lifetime_promotions')
+        if lifetime:
+            items.append(Spacer(1, 0.15*cm))
+            items.append(Paragraph(f'Lifetime league promotions: <b>{lifetime}</b>', styles['body']))
+        items.append(Spacer(1, 0.3*cm))
+    elif league_summary is not None:
+        items.append(Paragraph('Not currently placed in a league.', styles['body']))
+        items.append(Spacer(1, 0.2*cm))
+
+    if intervention_summary:
+        rows = [['Programme', 'Status', 'Stage', 'Baseline', 'Latest', 'Change']]
+        for p in intervention_summary:
+            change = p.get('improvement')
+            change_str = (f"+{change}" if change is not None and change >= 0 else str(change)) if change is not None else '—'
+            rows.append([
+                p.get('trigger_reason') or 'Comeback plan', p.get('status_label') or '—',
+                f"{p.get('completed_stage_count', 0)}/{p.get('stage_count', 0)}",
+                f"{p.get('baseline_average')}%" if p.get('baseline_average') is not None else '—',
+                f"{p.get('latest_average')}%" if p.get('latest_average') is not None else '—',
+                change_str,
+            ])
+        tbl2 = Table(rows, colWidths=[(PAGE_W - 2*MARGIN)*p for p in [0.30, 0.16, 0.12, 0.14, 0.14, 0.14]])
+        tbl2.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), BRAND_DARK),
+            ('TEXTCOLOR', (0, 0), (-1, 0), WHITE),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 7.5),
+            ('GRID', (0, 0), (-1, -1), 0.3, colors.HexColor('#e5e7eb')),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [WHITE, BRAND_LIGHT]),
+            ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
+            ('TOPPADDING', (0, 0), (-1, -1), 4),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ]))
+        items.append(tbl2)
+    elif intervention_summary is not None:
+        items.append(Paragraph('No intervention programmes on record.', styles['body']))
+
+    return items
+
+
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 def generate_exam_scores_pdf(exam, scores, sort_by='name', school_name='School of Excellence') -> bytes:
@@ -917,13 +995,20 @@ def generate_exam_scores_pdf(exam, scores, sort_by='name', school_name='School o
 
 def generate_class_report_pdf(classroom, students, scores_map, exams,
                                sort_by='name', school_name='School of Excellence',
-                               top_achievers=None) -> bytes:
+                               top_achievers=None, league_intervention=None) -> bytes:
     """
     Class performance report: one row per student, one column per exam.
     sort_by: 'name' | 'average_desc' | 'average_asc' | 'student_id'
 
     `top_achievers` — optional list of dicts (already ranked by the caller):
     [{'student': StudentProfile, 'badge_count': int, 'latest_badge': Badge|None}, ...]
+
+    `league_intervention` — optional list of dicts, one per student who has
+    a league membership and/or an active intervention programme:
+    [{'student': StudentProfile, 'league_band': str|None, 'league_color': str|None,
+      'is_promotion_pending': bool, 'intervention_status': str|None,
+      'intervention_progress': str|None}, ...]. Teacher/admin report only —
+    the caller decides whether to pass this at all.
     """
     buf = io.BytesIO()
     styles = _make_styles()
@@ -1096,6 +1181,35 @@ def generate_class_report_pdf(classroom, students, scores_map, exams,
     mtbl.setStyle(TableStyle(matrix_styles))
     story.append(mtbl)
 
+    # ── League Standing & Interventions ─────────────────────────────────────
+    if league_intervention:
+        story.append(Spacer(1, 0.4*cm))
+        story.append(Paragraph('League Standing &amp; Interventions', styles['section']))
+        rows = [['Student', 'League Band', 'Promotion', 'Intervention', 'Progress']]
+        for row in league_intervention:
+            rows.append([
+                row['student'].full_name,
+                row.get('league_band') or '—',
+                'Staged' if row.get('is_promotion_pending') else ('—' if not row.get('league_band') else 'Stable'),
+                row.get('intervention_status') or '—',
+                row.get('intervention_progress') or '—',
+            ])
+        li_tbl = Table(rows, colWidths=[(PAGE_W - 2*MARGIN)*p for p in [0.30, 0.18, 0.15, 0.18, 0.19]], repeatRows=1)
+        li_tbl.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), BRAND_DARK),
+            ('TEXTCOLOR', (0, 0), (-1, 0), WHITE),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
+            ('GRID', (0, 0), (-1, -1), 0.3, colors.HexColor('#e5e7eb')),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [WHITE, BRAND_LIGHT]),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
+            ('ALIGN', (0, 0), (0, -1), 'LEFT'),
+            ('TOPPADDING', (0, 0), (-1, -1), 4),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ]))
+        story.append(li_tbl)
+
     doc.build(story, onFirstPage=lambda c, d: _header_footer(c, d, meta),
               onLaterPages=lambda c, d: _header_footer(c, d, meta))
     return buf.getvalue()
@@ -1104,7 +1218,8 @@ def generate_class_report_pdf(classroom, students, scores_map, exams,
 def generate_student_report_pdf(student, scores, topic_data,
                                  school_name='School of Excellence',
                                  trend=None, comparison=None,
-                                 badges=None, tournament_stats=None) -> bytes:
+                                 badges=None, tournament_stats=None,
+                                 league_summary=None, intervention_summary=None) -> bytes:
     """
     Full individual student analytics report (A4).
 
@@ -1119,6 +1234,11 @@ def generate_student_report_pdf(student, scores, topic_data,
     `badges` — optional list of gamification.models.StudentBadge (already
     fetched/ordered by the caller). `tournament_stats` — optional dict with
     keys participations/titles/match_wins/rising_star_count.
+
+    `league_summary`/`intervention_summary` — optional, teacher/admin-only
+    data (see leagues.services.get_student_league_summary and the
+    intervention program list built by the caller). Leave both None for a
+    student's own self-service report — the section simply won't render.
     """
     buf = io.BytesIO()
     styles = _make_styles()
@@ -1192,6 +1312,10 @@ def generate_student_report_pdf(student, scores, topic_data,
 
     # ── Honors & Achievements (badges + tournament record) ────────────────
     story.extend(_honors_achievements_section(styles, badges or [], tournament_stats))
+    league_items = _league_intervention_section(styles, league_summary, intervention_summary)
+    if league_items:
+        story.append(Spacer(1, 0.3*cm))
+        story.extend(league_items)
     story.append(Spacer(1, 0.4*cm))
 
     # ── Score trend chart ────────────────────────────────────────────────────
