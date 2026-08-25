@@ -590,6 +590,89 @@ def get_most_improved_students(
     return improved
 
 
+def get_classroom_trend_roster(
+    classroom_id: int,
+    subject_id: int = None,
+    created_by_id: int = None,
+    stream_id: int = None,
+    min_exams: int = 2,
+) -> dict:
+    """
+    Classifies every student in a classroom as 'improving', 'declining', or
+    'stable' from their exam score trend line (same slope math and >2/<-2
+    thresholds as _calculate_trend, so this stays consistent with every
+    other trend label already shown on a student's own report).
+
+    Unlike get_most_improved_students (which ranks by raw first->last
+    delta and is meant for a "who grew the most" leaderboard), this
+    returns the FULL roster classified into three buckets — the "who's
+    rising, who's dropping, who's stable" view of a whole class at once.
+    Students with fewer than `min_exams` scores are grouped separately as
+    'insufficient_data' rather than silently guessed at.
+    """
+    filters = Q(is_absent=False, student__classroom_id=classroom_id)
+    if subject_id:
+        filters &= Q(exam__subject_id=subject_id)
+    if stream_id:
+        filters &= Q(student__stream_id=stream_id)
+    if created_by_id:
+        filters &= Q(exam__created_by_id=created_by_id)
+
+    scores = ExamScore.objects.filter(filters).select_related('student__user').order_by(
+        'student_id', 'exam__exam_date',
+    )
+
+    student_pcts = defaultdict(list)
+    for s in scores:
+        student_pcts[s.student_id].append(s.percentage)
+
+    profile_map = {
+        sp.id: sp
+        for sp in StudentProfile.objects.select_related('user').filter(id__in=list(student_pcts.keys()))
+    }
+
+    roster = []
+    insufficient = []
+    for sid, pcts in student_pcts.items():
+        sp = profile_map.get(sid)
+        if not sp:
+            continue
+        row = {
+            'student_id': sid,
+            'student_name': sp.full_name,
+            'student_code': sp.student_id,
+            'exams_counted': len(pcts),
+            'first_percentage': pcts[0],
+            'latest_percentage': pcts[-1],
+            'delta': round(pcts[-1] - pcts[0], 1),
+            'slope': _linear_slope(pcts),
+        }
+        if len(pcts) < min_exams:
+            insufficient.append(row)
+        else:
+            row['trend'] = _calculate_trend(pcts)
+            roster.append(row)
+
+    roster.sort(key=lambda r: r['slope'], reverse=True)
+    improving = [r for r in roster if r['trend'] == 'improving']
+    declining = [r for r in roster if r['trend'] == 'declining']
+    stable = [r for r in roster if r['trend'] == 'stable']
+
+    return {
+        'classroom_id': classroom_id,
+        'improving': improving,
+        'declining': declining,
+        'stable': stable,
+        'insufficient_data': insufficient,
+        'summary': {
+            'improving_count': len(improving),
+            'declining_count': len(declining),
+            'stable_count': len(stable),
+            'insufficient_data_count': len(insufficient),
+        },
+    }
+
+
 def get_comparative_analysis(
     classroom_ids: list,
     academic_year: str = None,

@@ -848,9 +848,19 @@ export interface PromotionEvent {
   created_at: string;
 }
 
+export type TrendLabel = 'improving' | 'declining' | 'stable';
+
+export interface LeagueBandMemberTrend {
+  membership_id: number; student_id: number; student_name: string;
+  latest_score: number | null; placement_score: number;
+  trend: TrendLabel | null; distance_to_promotion: number | null; is_promotion_pending: boolean;
+}
+
 export interface LeagueBandStat {
   group_id: number; name: string; order: number; color: string; icon: string;
   min_mark: number; max_mark: number; member_count: number; average_score: number | null;
+  members: LeagueBandMemberTrend[]; climbers: LeagueBandMemberTrend[];
+  rising_count: number; declining_count: number; stable_count: number;
 }
 
 export interface LeagueAnalytics {
@@ -861,6 +871,18 @@ export interface LeagueAnalytics {
   }[];
   promotions_staged: number; promotions_applied: number; promotions_rejected: number;
   promotion_rate: number | null;
+}
+
+export interface TrendRosterRow {
+  student_id: number; student_name: string; student_code: string; exams_counted: number;
+  first_percentage: number; latest_percentage: number; delta: number; slope: number; trend: TrendLabel;
+}
+
+export interface ClassroomTrendRoster {
+  classroom_id: number;
+  improving: TrendRosterRow[]; declining: TrendRosterRow[]; stable: TrendRosterRow[];
+  insufficient_data: (Omit<TrendRosterRow, 'trend'>)[];
+  summary: { improving_count: number; declining_count: number; stable_count: number; insufficient_data_count: number };
 }
 
 export interface HallOfFame {

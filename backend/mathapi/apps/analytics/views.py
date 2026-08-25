@@ -331,6 +331,36 @@ class ClassroomRiskScoresView(APIView):
         return Response(data)
 
 
+class ClassroomTrendRosterView(APIView):
+    """
+    GET /api/analytics/classrooms/<id>/trends/ — every student in the
+    classroom classified as improving/declining/stable from her score
+    trend line. Teacher/admin analytics view; not exposed to students or
+    parents (naming a specific student's trend is fine via
+    StudentTrendView, but a whole-roster comparison isn't appropriate for
+    a non-staff viewer).
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, classroom_id):
+        user = request.user
+        if user.role not in ('teacher', 'super_admin'):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('This is a teacher/admin analytics view.')
+        if user.role == 'teacher':
+            from mathapi.apps.accounts.scoping import assert_classroom_owned
+            assert_classroom_owned(user, classroom_id)
+        subject_id = _get_subject_id(request)
+        stream_id = _get_stream_id(request)
+        created_by_id = user.id if user.role == 'teacher' else None
+        min_exams = int(request.query_params.get('min_exams', 2))
+        data = services.get_classroom_trend_roster(
+            classroom_id, subject_id=subject_id, created_by_id=created_by_id,
+            stream_id=stream_id, min_exams=min_exams,
+        )
+        return Response(data)
+
+
 class TopicDependencyChainsView(APIView):
     """Feature 3 — Root-Cause Topic Dependency Chains."""
     permission_classes = [permissions.IsAuthenticated]

@@ -1,18 +1,20 @@
 import { useState } from 'react';
+import type { ReactNode } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
 import {
-  HeartPulse, TrendingDown, Minus, Plus, ChevronRight, CheckCircle2, XCircle,
-  Activity, Users2, ClipboardList,
+  HeartPulse, TrendingDown, TrendingUp, Minus, Plus, ChevronRight, CheckCircle2, XCircle,
+  Activity, Users2, ClipboardList, LineChart,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { interventionsApi, studentsApi } from '../../api';
+import { interventionsApi, studentsApi, analyticsApi } from '../../api';
 import { LoadingPage, EmptyState, Button, Select } from '../../components/ui';
 import { useAuthStore } from '../../store/auth';
 import { cn, apiErrorMessage } from '../../utils';
 import type {
   SlowLearnerCandidate, InterventionProgram, InterventionAnalytics, Classroom, PaginatedResponse,
+  ClassroomTrendRoster, TrendRosterRow,
 } from '../../types';
 
 function listFrom<T>(data: PaginatedResponse<T> | T[] | undefined): T[] {
@@ -75,6 +77,57 @@ function CandidateCard({ candidate, classroomId }: { candidate: SlowLearnerCandi
         <Plus size={14} /> Start Intervention Plan
       </Button>
     </motion.div>
+  );
+}
+
+function TrendColumn({ title, icon, tone, rows }: {
+  title: string; icon: ReactNode; tone: 'emerald' | 'rose' | 'slate'; rows: TrendRosterRow[];
+}) {
+  const toneClasses = {
+    emerald: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
+    rose: 'text-rose-400 bg-rose-500/10 border-rose-500/20',
+    slate: 'text-secondary bg-surface-700/40 border-surface',
+  }[tone];
+  return (
+    <div className="flex flex-col gap-2">
+      <div className={cn('flex items-center justify-between px-3 py-1.5 rounded-lg border text-xs font-display font-bold uppercase tracking-widest', toneClasses)}>
+        <span className="flex items-center gap-1.5">{icon} {title}</span>
+        <span>{rows.length}</span>
+      </div>
+      <div className="flex flex-col gap-1.5 max-h-72 overflow-y-auto">
+        {rows.length === 0 && <p className="text-xs text-muted italic px-1">No students here.</p>}
+        {rows.map(r => (
+          <div key={r.student_id} className="flex items-center justify-between text-sm bg-surface-800/60 rounded-lg px-3 py-2">
+            <span className="text-primary/90 truncate">{r.student_name}</span>
+            <span className={cn('font-mono text-xs shrink-0', tone === 'emerald' ? 'text-emerald-400' : tone === 'rose' ? 'text-rose-400' : 'text-secondary')}>
+              {r.delta >= 0 ? '+' : ''}{r.delta} pts
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TrendRosterPanel({ classroomId }: { classroomId: string }) {
+  const { data, isLoading, isError, error } = useQuery<ClassroomTrendRoster>({
+    queryKey: ['classroom-trends', classroomId],
+    queryFn: () => analyticsApi.classroomTrends(Number(classroomId)).then(r => r.data),
+    enabled: !!classroomId,
+    retry: 1,
+  });
+
+  if (!classroomId) return <p className="text-muted text-sm">Select a classroom to see who's rising, dropping, or holding steady.</p>;
+  if (isLoading) return <LoadingPage />;
+  if (isError) return <p className="text-rose-400 text-sm">Couldn't load trends: {apiErrorMessage(error)}</p>;
+  if (!data) return null;
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <TrendColumn title="Rising" icon={<TrendingUp size={13} />} tone="emerald" rows={data.improving} />
+      <TrendColumn title="Stable" icon={<Minus size={13} />} tone="slate" rows={data.stable} />
+      <TrendColumn title="Dropping" icon={<TrendingDown size={13} />} tone="rose" rows={data.declining} />
+    </div>
   );
 }
 
@@ -172,6 +225,13 @@ export default function InterventionsPage() {
           <div className="stat-card"><span className="label">Success Rate</span><p className="font-display font-bold text-xl text-primary">{analytics.success_rate !== null ? `${analytics.success_rate}%` : '—'}</p></div>
         </div>
       )}
+
+      <section>
+        <h2 className="font-display font-semibold text-lg text-primary flex items-center gap-2 mb-3">
+          <LineChart className="text-azure-400" size={18} /> Who's Rising, Dropping, or Stable
+        </h2>
+        <TrendRosterPanel classroomId={classroomId} />
+      </section>
 
       <section>
         <h2 className="font-display font-semibold text-lg text-primary flex items-center gap-2 mb-3">

@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 import {
   Swords, Shield, Trophy, Crown, Plus, X, ChevronRight, ChevronLeft, ArrowUp, Check,
   Ban, Users2, Target, Sparkles, Award, Settings2, PlayCircle, Archive, RotateCcw, Gem, AlertTriangle,
+  TrendingUp, TrendingDown, Minus,
 } from 'lucide-react';
 import { leaguesApi, studentsApi, examsApi } from '../../api';
 import {
@@ -14,7 +15,7 @@ import { useAuthStore } from '../../store/auth';
 import { cn, apiErrorMessage } from '../../utils';
 import type {
   LeagueSeason, LeagueSeasonDetail, LeagueGroup, PromotionEvent, Classroom, Exam,
-  PaginatedResponse, LeagueIntervalMode, LeaguePromotionMode,
+  PaginatedResponse, LeagueIntervalMode, LeaguePromotionMode, LeagueAnalytics, LeagueBandStat,
 } from '../../types';
 import { Link } from 'react-router-dom';
 
@@ -202,8 +203,18 @@ function EvaluatePromotionsModal({ open, onClose, season }: { open: boolean; onC
 }
 
 // ── Band tier card ───────────────────────────────────────────────────────────
-function BandCard({ group, detail }: { group: LeagueGroup; detail?: LeagueSeasonDetail }) {
+function TrendGlyph({ trend }: { trend: 'improving' | 'declining' | 'stable' | null }) {
+  if (trend === 'improving') return <TrendingUp size={12} className="text-emerald-400 shrink-0" />;
+  if (trend === 'declining') return <TrendingDown size={12} className="text-rose-400 shrink-0" />;
+  if (trend === 'stable') return <Minus size={12} className="text-secondary shrink-0" />;
+  return null;
+}
+
+function BandCard({ group, detail, bandStat }: { group: LeagueGroup; detail?: LeagueSeasonDetail; bandStat?: LeagueBandStat }) {
   const members = (detail?.memberships ?? []).filter(m => m.group === group.id);
+  const trendByStudent = new Map((bandStat?.members ?? []).map(m => [m.student_id, m]));
+  const climberIds = new Set((bandStat?.climbers ?? []).map(c => c.student_id));
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
@@ -215,26 +226,49 @@ function BandCard({ group, detail }: { group: LeagueGroup; detail?: LeagueSeason
           <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: group.color }} />
           <span className="font-display font-bold text-primary">{group.name}%</span>
         </div>
-        <span className="text-xs text-secondary flex items-center gap-1"><Users2 size={12} /> {members.length}</span>
+        <div className="flex items-center gap-2 text-xs text-secondary">
+          {bandStat && bandStat.rising_count > 0 && (
+            <span className="flex items-center gap-0.5 text-emerald-400"><TrendingUp size={11} /> {bandStat.rising_count}</span>
+          )}
+          {bandStat && bandStat.declining_count > 0 && (
+            <span className="flex items-center gap-0.5 text-rose-400"><TrendingDown size={11} /> {bandStat.declining_count}</span>
+          )}
+          <span className="flex items-center gap-1"><Users2 size={12} /> {members.length}</span>
+        </div>
       </div>
       <div className="flex flex-col gap-1.5 max-h-64 overflow-y-auto">
         {members.length === 0 && <p className="text-xs text-muted italic">No students yet.</p>}
-        {members.map(m => (
-          <div key={m.id} className="flex items-center justify-between text-sm px-2 py-1.5 rounded-lg bg-surface-700/40">
-            <span className="text-primary/90 truncate flex items-center gap-1.5">
-              {m.is_top_tier && <Crown size={12} className="text-amber-400 shrink-0" />}
-              {m.student_name}
-            </span>
-            <div className="flex items-center gap-1.5 shrink-0">
-              {m.is_promotion_pending && (
-                <span className="badge bg-violet-500/15 text-violet-400 text-[10px] flex items-center gap-1">
-                  <ArrowUp size={10} /> Staged {m.pending_target_group_name ? `→ ${m.pending_target_group_name}%` : ''}
-                </span>
+        {members.map(m => {
+          const t = trendByStudent.get(m.student);
+          const isClimber = climberIds.has(m.student);
+          return (
+            <div
+              key={m.id}
+              className={cn(
+                'flex items-center justify-between text-sm px-2 py-1.5 rounded-lg',
+                isClimber ? 'bg-emerald-500/10 ring-1 ring-emerald-500/30' : 'bg-surface-700/40',
               )}
-              <span className="font-mono text-xs text-secondary">{m.latest_score ?? m.placement_score}%</span>
+            >
+              <span className="text-primary/90 truncate flex items-center gap-1.5">
+                {m.is_top_tier && <Crown size={12} className="text-amber-400 shrink-0" />}
+                <TrendGlyph trend={t?.trend ?? null} />
+                {m.student_name}
+                {isClimber && <span className="text-[9px] text-emerald-400 font-display font-bold uppercase tracking-wide shrink-0">Climbing</span>}
+              </span>
+              <div className="flex items-center gap-1.5 shrink-0">
+                {m.is_promotion_pending && (
+                  <span className="badge bg-violet-500/15 text-violet-400 text-[10px] flex items-center gap-1">
+                    <ArrowUp size={10} /> Staged {m.pending_target_group_name ? `→ ${m.pending_target_group_name}%` : ''}
+                  </span>
+                )}
+                {!m.is_promotion_pending && t?.distance_to_promotion != null && (
+                  <span className="text-[10px] text-muted">{t.distance_to_promotion}% to next</span>
+                )}
+                <span className="font-mono text-xs text-secondary">{m.latest_score ?? m.placement_score}%</span>
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </motion.div>
   );
@@ -325,6 +359,13 @@ function SeasonDetail({ seasonId, onBack }: { seasonId: number; onBack: () => vo
     retry: 1,
   });
 
+  const { data: analytics } = useQuery<LeagueAnalytics>({
+    queryKey: ['league-season-analytics', seasonId],
+    queryFn: () => leaguesApi.seasonAnalytics(seasonId).then(r => r.data),
+    retry: 1,
+  });
+  const bandStatByGroupId = new Map<number, LeagueBandStat>((analytics?.band_stats ?? []).map(b => [b.group_id, b]));
+
   const archiveMutation = useMutation({
     mutationFn: () => season?.status === 'archived' ? leaguesApi.reactivateSeason(seasonId) : leaguesApi.archiveSeason(seasonId),
     onSuccess: () => {
@@ -371,7 +412,7 @@ function SeasonDetail({ seasonId, onBack }: { seasonId: number; onBack: () => vo
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
         <AnimatePresence>
-          {groups.map(g => <BandCard key={g.id} group={g} detail={season} />)}
+          {groups.map(g => <BandCard key={g.id} group={g} detail={season} bandStat={bandStatByGroupId.get(g.id)} />)}
         </AnimatePresence>
       </div>
 

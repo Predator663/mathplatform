@@ -321,28 +321,77 @@ def _is_currently_top_tier(student):
     return False
 
 
+def _student_trend(student):
+    """
+    Classifies a student's overall exam trajectory as 'improving',
+    'declining', or 'stable' — same slope math and >2/<-2 thresholds as
+    analytics.services._calculate_trend, and the same full-history read
+    as interventions.services._history, reused here (not duplicated) so
+    a student's trend label means the same thing everywhere in the
+    platform, whether it's shown on her own report, in an intervention
+    plan, or inside a league band. Returns None (rather than a guess)
+    when there isn't enough exam history to call a trend yet.
+    """
+    from mathapi.apps.analytics.services import _calculate_trend
+    from mathapi.apps.interventions.services import _history
+    history = _history(student)
+    if len(history) < 2:
+        return None
+    return _calculate_trend([pct for _, pct in history])
+
+
 def get_league_analytics(season: LeagueSeason) -> dict:
     """
     Dedicated analytics payload for one season: per-band headcount and
-    average, movement summary (staged vs. applied vs. auto), and score
-    spread — the "never miss a bit of info" view for a league the way
+    average, movement summary (staged vs. applied vs. auto), score
+    spread, and — per band — every member's overall trend (rising/
+    dropping/stable) plus how close she sits to the next tier up, sorted
+    so the closest-to-promotion "climbers" surface first. The "never miss
+    a bit of info" view for a league, the way
     tournaments.services.get_tournament_analytics is for a tournament.
     """
     groups = list(season.groups.annotate(
         member_count=Count('members', distinct=True),
     ).order_by('order'))
+    top_order = season.top_group_order
 
     band_stats = []
     for g in groups:
-        scores = list(
+        memberships = list(
             LeagueMembership.objects.filter(season=season, group=g)
-            .exclude(latest_score__isnull=True).values_list('latest_score', flat=True)
+            .select_related('student__user').order_by('-latest_score')
         )
+        scores = [m.latest_score for m in memberships if m.latest_score is not None]
+
+        members = []
+        for m in memberships:
+            distance_to_promotion = None
+            if g.order != top_order and m.latest_score is not None:
+                distance_to_promotion = round(float(g.max_mark) - m.latest_score, 2)
+            members.append({
+                'membership_id': m.id, 'student_id': m.student_id, 'student_name': m.student.full_name,
+                'latest_score': m.latest_score, 'placement_score': m.placement_score,
+                'trend': _student_trend(m.student),
+                'distance_to_promotion': distance_to_promotion,
+                'is_promotion_pending': m.is_promotion_pending,
+            })
+        # Climbers: not already staged, has a distance to close, closest first —
+        # this is "who's going higher within this group" at a glance.
+        climbers = sorted(
+            [mm for mm in members if mm['distance_to_promotion'] is not None and not mm['is_promotion_pending']],
+            key=lambda mm: mm['distance_to_promotion'],
+        )
+
         band_stats.append({
             'group_id': g.id, 'name': g.name, 'order': g.order, 'color': g.color, 'icon': g.icon,
             'min_mark': float(g.min_mark), 'max_mark': float(g.max_mark),
             'member_count': g.member_count,
             'average_score': round(sum(scores) / len(scores), 2) if scores else None,
+            'members': members,
+            'climbers': climbers[:5],
+            'rising_count': sum(1 for mm in members if mm['trend'] == 'improving'),
+            'declining_count': sum(1 for mm in members if mm['trend'] == 'declining'),
+            'stable_count': sum(1 for mm in members if mm['trend'] == 'stable'),
         })
 
     events = PromotionEvent.objects.filter(season=season)

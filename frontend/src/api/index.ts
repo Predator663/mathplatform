@@ -203,6 +203,7 @@ export const analyticsApi = {
   integrityFlags: (params?: object) => api.get('/analytics/integrity/', { params }),
   studentRisk: (id: number, params?: object) => api.get(`/analytics/students/${id}/risk/`, { params }),
   classroomRisk: (id: number, params?: object) => api.get(`/analytics/classrooms/${id}/risk/`, { params }),
+  classroomTrends: (id: number, params?: object) => api.get(`/analytics/classrooms/${id}/trends/`, { params }),
   topicDependencies: (id: number, params?: object) => api.get(`/analytics/classrooms/${id}/topic-dependencies/`, { params }),
   teacherConsistency: (params?: object) => api.get('/analytics/teacher-consistency/', { params }),
   gradeBoundaryWhatIf: (id: number, params?: object) => api.get(`/analytics/students/${id}/boundary-whatif/`, { params }),
