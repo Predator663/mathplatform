@@ -5,7 +5,7 @@ import toast from 'react-hot-toast';
 import {
   Swords, Trophy, Crown, Shield, ShieldCheck, Zap, Sparkles, Star, TrendingUp, Flag,
   Plus, X, Play, Lock, Radio, Target, Users2, School, Clock, ChevronRight, Award, Flame,
-  CheckCircle2, AlertTriangle, Ban, Skull, Eye, ScanLine, ListChecks,
+  CheckCircle2, AlertTriangle, Ban, Skull, Eye, ScanLine, ListChecks, Trash2, UsersRound,
 } from 'lucide-react';
 import { tournamentsApi, studentsApi, examsApi, gamificationApi } from '../../api';
 import {
@@ -235,6 +235,22 @@ function RegisterEntryModal({ open, onClose, tournament }: { open: boolean; onCl
     onError: (err: any) => toast.error(err?.response?.data?.detail || 'Registration failed'),
   });
 
+  const registerClassMutation = useMutation({
+    mutationFn: () => tournamentsApi.registerClass(tournament.id),
+    onSuccess: (res: any) => {
+      const { created_count, already_registered_count, skipped_due_to_cap } = res.data;
+      if (created_count === 0) {
+        toast(already_registered_count > 0 ? 'Everyone in this class is already registered' : 'No active students found in this class');
+      } else {
+        toast.success(`Registered ${created_count} student${created_count === 1 ? '' : 's'} from the whole class`
+          + (skipped_due_to_cap ? ` (${skipped_due_to_cap} left out — tournament is full)` : ''));
+      }
+      queryClient.invalidateQueries({ queryKey: ['tournament', tournament.id] });
+      onClose();
+    },
+    onError: (err: any) => toast.error(err?.response?.data?.detail || 'Could not register the class'),
+  });
+
   const selfRegister = () => {
     const my = (user as any)?.student_profile_id;
     tournamentsApi.register(tournament.id, { student_id: my }).then(() => {
@@ -254,15 +270,31 @@ function RegisterEntryModal({ open, onClose, tournament }: { open: boolean; onCl
         </Button>
       </>}>
       {tournament.mode === 'individual' ? (
-        <SearchableSelect
-          label="Student"
-          placeholder="Search students…"
-          options={students
-            .filter((s: any) => !registeredStudentIds.has(s.id))
-            .map((s: any) => ({ value: s.id, label: `${s.full_name} (${s.student_id})` }))}
-          value={studentId}
-          onChange={setStudentId}
-        />
+        <div className="flex flex-col gap-3">
+          <SearchableSelect
+            label="Student"
+            placeholder="Search students…"
+            options={students
+              .filter((s: any) => !registeredStudentIds.has(s.id))
+              .map((s: any) => ({ value: s.id, label: `${s.full_name} (${s.student_id})` }))}
+            value={studentId}
+            onChange={setStudentId}
+          />
+          {isStaff && (
+            <>
+              <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-secondary">
+                <div className="flex-1 h-px bg-surface-700" /> or <div className="flex-1 h-px bg-surface-700" />
+              </div>
+              <Button type="button" variant="secondary" size="sm" className="w-full justify-center"
+                onClick={() => registerClassMutation.mutate()} loading={registerClassMutation.isPending}>
+                <UsersRound size={14} /> Register Entire Class ({tournament.classroom_name})
+              </Button>
+              <p className="text-[11px] text-secondary text-center -mt-1">
+                Registers every active student in this classroom who isn't entered yet.
+              </p>
+            </>
+          )}
+        </div>
       ) : (
         <Select label="Stream" value={streamId} onChange={e => setStreamId(e.target.value)}
           options={[{ value: '', label: 'Select a stream…' },
@@ -718,6 +750,7 @@ function TournamentDetailPanel({ tournamentId, onClose }: { tournamentId: number
   const [challengeOpen, setChallengeOpen] = useState(false);
   const [autoMatchOpen, setAutoMatchOpen] = useState(false);
   const [exportingFormat, setExportingFormat] = useState<'pdf' | 'excel' | null>(null);
+  const [exportingMatchups, setExportingMatchups] = useState(false);
 
   const { data: tournament, isLoading } = useQuery<TournamentDetail>({
     queryKey: ['tournament', tournamentId],
@@ -747,6 +780,16 @@ function TournamentDetailPanel({ tournamentId, onClose }: { tournamentId: number
     onError: (err: any) => toast.error(err?.response?.data?.detail || 'Action failed'),
   });
 
+  const deleteMutation = useMutation({
+    mutationFn: () => tournamentsApi.delete(tournamentId),
+    onSuccess: () => {
+      toast.success('Tournament deleted');
+      queryClient.invalidateQueries({ queryKey: ['tournaments'] });
+      onClose();
+    },
+    onError: (err: any) => toast.error(err?.response?.data?.detail || 'Could not delete tournament'),
+  });
+
   const withdrawMutation = useMutation({
     mutationFn: (entryId: number) => tournamentsApi.withdraw(tournamentId, entryId),
     onSuccess: () => {
@@ -767,6 +810,20 @@ function TournamentDetailPanel({ tournamentId, onClose }: { tournamentId: number
       toast.error('Export failed');
     } finally {
       setExportingFormat(null);
+    }
+  };
+
+  const handleExportMatchups = async () => {
+    setExportingMatchups(true);
+    try {
+      const res = await tournamentsApi.exportMatchupsPdf(tournamentId);
+      const safeName = (tournament?.title ?? 'tournament').replace(/\s+/g, '_').slice(0, 40);
+      downloadBlob(res.data as Blob, `${safeName}_matchups.pdf`);
+      toast.success('Matchups PDF downloaded');
+    } catch {
+      toast.error('Export failed');
+    } finally {
+      setExportingMatchups(false);
     }
   };
 
@@ -821,6 +878,13 @@ function TournamentDetailPanel({ tournamentId, onClose }: { tournamentId: number
               )}
               {tournament.status !== 'completed' && tournament.status !== 'cancelled' && (
                 <Button size="sm" variant="danger" onClick={() => lifecycleMutation.mutate('cancel')} loading={lifecycleMutation.isPending}><Skull size={13} /> Cancel</Button>
+              )}
+              {(tournament.status === 'cancelled' || tournament.status === 'draft') && (
+                <Button size="sm" variant="danger"
+                  onClick={() => { if (confirm(`Delete "${tournament.title}"? This cannot be undone.`)) deleteMutation.mutate(); }}
+                  loading={deleteMutation.isPending}>
+                  <Trash2 size={13} /> Delete
+                </Button>
               )}
             </div>
           )}
@@ -891,14 +955,22 @@ function TournamentDetailPanel({ tournamentId, onClose }: { tournamentId: number
 
         {tab === 'challenges' && (
           <>
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between flex-wrap gap-2">
               <p className="text-xs text-secondary">Declared head-to-head duels</p>
-              {tournament.entries.length >= 2 && tournament.status !== 'completed' && tournament.status !== 'cancelled' && (
-                <div className="flex items-center gap-2">
-                  <Button size="sm" variant="secondary" onClick={() => setAutoMatchOpen(true)}><Zap size={13} /> Auto-Match by Level</Button>
-                  <Button size="sm" variant="secondary" onClick={() => setChallengeOpen(true)}><Swords size={13} /> Declare Challenge</Button>
-                </div>
-              )}
+              <div className="flex items-center gap-2 flex-wrap">
+                {tournament.challenges.length > 0 && (
+                  <Button size="sm" variant="secondary" onClick={() => handleExportMatchups()}
+                    loading={exportingMatchups} disabled={exportingMatchups}>
+                    <ScanLine size={13} /> Matchups PDF
+                  </Button>
+                )}
+                {isStaff && tournament.entries.length >= 2 && tournament.status !== 'completed' && tournament.status !== 'cancelled' && (
+                  <>
+                    <Button size="sm" variant="secondary" onClick={() => setAutoMatchOpen(true)}><Zap size={13} /> Auto-Match by Level</Button>
+                    <Button size="sm" variant="secondary" onClick={() => setChallengeOpen(true)}><Swords size={13} /> Declare Challenge</Button>
+                  </>
+                )}
+              </div>
             </div>
             {tournament.challenges.length === 0 ? (
               <EmptyState icon={<Swords size={28} />} title="No challenges declared" message="Students can register to challenge each other here." />

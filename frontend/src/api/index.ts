@@ -318,6 +318,7 @@ export const tournamentsApi = {
   finalize: (id: number) => api.post(`/tournaments/tournaments/${id}/finalize/`),
   register: (id: number, data: { student_id?: number; stream_id?: number }) =>
     api.post(`/tournaments/tournaments/${id}/register/`, data),
+  registerClass: (id: number) => api.post(`/tournaments/tournaments/${id}/register-class/`),
   withdraw: (id: number, entry_id: number) =>
     api.post(`/tournaments/tournaments/${id}/withdraw/`, { entry_id }),
   challenges: (id: number) => api.get(`/tournaments/tournaments/${id}/challenges/`),
@@ -336,6 +337,7 @@ export const tournamentsApi = {
   intel: (params?: object) => api.get('/tournaments/intel/', { params }),
   exportPdf: (id: number) => api.get(`/reports/export/tournament/${id}/pdf/`, { responseType: 'blob' }),
   exportExcel: (id: number) => api.get(`/reports/export/tournament/${id}/excel/`, { responseType: 'blob' }),
+  exportMatchupsPdf: (id: number) => api.get(`/reports/export/tournament/${id}/matchups/pdf/`, { responseType: 'blob' }),
 };
 
 export const leaguesApi = {

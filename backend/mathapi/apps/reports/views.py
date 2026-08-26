@@ -16,6 +16,7 @@ from .pdf_engine import (
     generate_student_report_pdf,
     generate_at_risk_pdf,
     generate_tournament_dossier_pdf,
+    generate_challenge_matchups_pdf,
     generate_hall_of_fame_pdf,
 )
 from .excel_engine import (
@@ -706,6 +707,40 @@ class TournamentDossierPDFView(APIView):
         response = HttpResponse(pdf_bytes, content_type='application/pdf')
         safe = tournament.title.replace(' ', '_')[:40]
         response['Content-Disposition'] = f'attachment; filename="tournament_{safe}_dossier.pdf"'
+        return response
+
+
+class ChallengeMatchupsPDFView(APIView):
+    """
+    GET /api/reports/export/tournament/<tournament_id>/matchups/pdf/?school_name=
+    "Who am I facing?" sheet — just the declared duels and who's still
+    unmatched, no scores/analytics. Open to anyone who can already view
+    the tournament (students included — same scoping as the tournament
+    detail endpoint), since this is the one students actually want.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, tournament_id):
+        from mathapi.apps.accounts.scoping import scope_tournaments
+        from django.shortcuts import get_object_or_404
+
+        tournament = get_object_or_404(
+            scope_tournaments(request.user).select_related('exam', 'classroom'),
+            id=tournament_id,
+        )
+        school_name = _resolve_site_name(request)
+        challenges = tournament.challenges.prefetch_related(
+            'entries__student__user', 'entries__stream', 'winner__student__user', 'winner__stream',
+        ).all()
+        unmatched_entries = list(
+            tournament.entries.filter(withdrawn=False, challenges__isnull=True)
+            .select_related('student__user', 'stream').distinct()
+        )
+
+        pdf_bytes = generate_challenge_matchups_pdf(tournament, challenges, unmatched_entries, school_name=school_name)
+        response = HttpResponse(pdf_bytes, content_type='application/pdf')
+        safe = tournament.title.replace(' ', '_')[:40]
+        response['Content-Disposition'] = f'attachment; filename="tournament_{safe}_matchups.pdf"'
         return response
 
 

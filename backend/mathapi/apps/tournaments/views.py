@@ -40,7 +40,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
         if self.action in ['create']:
             return [IsTeacherOrAdmin()]
         if self.action in ['update', 'partial_update', 'destroy', 'open_registration',
-                            'close_registration', 'finalize', 'cancel', 'auto_match']:
+                            'close_registration', 'finalize', 'cancel', 'auto_match', 'register_class']:
             return [IsTeacherOrAdmin()]
         return [permissions.IsAuthenticated()]
 
@@ -76,7 +76,35 @@ class TournamentViewSet(viewsets.ModelViewSet):
         tournament = self.get_object()
         if request.user.role != 'super_admin' and tournament.created_by_id != request.user.id:
             return Response({'detail': 'You can only delete tournaments you created.'}, status=status.HTTP_403_FORBIDDEN)
+        if tournament.status not in (Tournament.Status.CANCELLED, Tournament.Status.DRAFT):
+            return Response(
+                {'detail': 'Only cancelled or draft tournaments can be deleted. Cancel this tournament first.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         return super().destroy(request, *args, **kwargs)
+
+    # ── Bulk registration ───────────────────────────────────────────────────
+    @action(detail=True, methods=['post'], url_path='register-class')
+    def register_class(self, request, pk=None):
+        """
+        POST /api/tournaments/tournaments/<id>/register-class/ — registers
+        every active, not-yet-entered student in the tournament's own
+        classroom in one shot. Individual-mode, registration-open only.
+        """
+        tournament = self.get_object()
+        if tournament.mode != Tournament.Mode.INDIVIDUAL:
+            return Response({'detail': 'Register Entire Class only applies to student-vs-student tournaments.'},
+                             status=status.HTTP_400_BAD_REQUEST)
+        if tournament.status != Tournament.Status.REGISTRATION_OPEN:
+            return Response({'detail': 'Registration is not open for this tournament.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        result = services.register_entire_class(tournament, registered_by=request.user)
+        return Response({
+            'created': EntrySlimSerializer(result['created'], many=True).data,
+            'created_count': result['created_count'],
+            'already_registered_count': result['already_registered_count'],
+            'skipped_due_to_cap': len(result['skipped_due_to_cap']),
+        }, status=status.HTTP_201_CREATED)
 
     # ── Lifecycle ────────────────────────────────────────────────────────
     @action(detail=True, methods=['post'], url_path='open-registration')

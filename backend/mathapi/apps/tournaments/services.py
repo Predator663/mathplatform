@@ -82,6 +82,53 @@ def register_entry(tournament: Tournament, *, student=None, stream=None, registe
 
 
 @transaction.atomic
+def register_entire_class(tournament: Tournament, *, registered_by=None):
+    """
+    Bulk-registers every active student in the tournament's own classroom
+    who isn't already entered — the "Register Entire Class" shortcut so a
+    teacher doesn't have to add entrants one at a time. Individual-mode
+    only (a stream-mode tournament registers whole streams, not students).
+
+    Respects max_entrants: stops once the cap is reached and reports
+    whoever was left out because of it, so the caller can surface that
+    distinctly from students who were already registered.
+    """
+    from mathapi.apps.students.models import StudentProfile
+
+    if tournament.mode != Tournament.Mode.INDIVIDUAL:
+        raise ValueError('Register Entire Class only applies to student-vs-student tournaments.')
+
+    already_registered_ids = set(
+        tournament.entries.filter(withdrawn=False, student__isnull=False).values_list('student_id', flat=True)
+    )
+    candidates = list(
+        StudentProfile.objects.filter(classroom=tournament.classroom, is_active=True)
+        .exclude(id__in=already_registered_ids)
+        .order_by('user__first_name', 'user__last_name')
+    )
+
+    remaining_slots = None
+    if tournament.max_entrants:
+        current_count = tournament.entries.filter(withdrawn=False).count()
+        remaining_slots = max(0, tournament.max_entrants - current_count)
+
+    to_register = candidates if remaining_slots is None else candidates[:remaining_slots]
+    left_out_by_cap = [] if remaining_slots is None else candidates[remaining_slots:]
+
+    created = [
+        register_entry(tournament, student=student, registered_by=registered_by)
+        for student in to_register
+    ]
+
+    return {
+        'created': created,
+        'created_count': len(created),
+        'already_registered_count': len(already_registered_ids),
+        'skipped_due_to_cap': left_out_by_cap,
+    }
+
+
+@transaction.atomic
 def resolve_challenge(challenge: Challenge):
     """Reads live exam scores for every entry in the challenge and declares
     a winner. No-ops (stays pending) until every entry has a score."""
