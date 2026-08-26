@@ -14,6 +14,7 @@ from .models import Tournament, TournamentEntry, Challenge, EntryResult
 
 GIANT_SLAYER_GAP = 12.0     # percentage points the winner must have trailed the loser's seed by
 RISING_STAR_DELTA = 15.0    # percentage points above own prior average to count as a rising star
+LEVEL_COMPATIBILITY_GAP = 15.0  # percentage points apart before two entrants count as "different level"
 
 
 def _student_entry_score(student_id, exam):
@@ -362,6 +363,183 @@ def get_tournament_analytics(tournament: Tournament) -> dict:
         'top_riser': {
             'name': top_riser.entry.display_name, 'delta': top_riser.delta,
         } if top_riser and top_riser.delta and top_riser.delta > 0 else None,
+    }
+
+
+def check_entry_compatibility(entry_a: TournamentEntry, entry_b: TournamentEntry) -> dict:
+    """
+    Are these two entrants actually at the same level? Compares each
+    student's historical average across EVERY previous published exam
+    (not just seed_average, which was frozen at registration time and can
+    go stale) and flags a pair as incompatible once the gap crosses
+    LEVEL_COMPATIBILITY_GAP.
+
+    This never blocks anything — a wide-gap duel is still a perfectly
+    valid "giant slayer" story the badge system already rewards — it's
+    purely informational, surfaced so a teacher can choose to re-pair a
+    lopsided matchup via auto_create_compatible_challenges() instead.
+
+    Only meaningful for two individual (student) entries; stream entries
+    return compatible=None since "level" isn't a single number for a
+    whole stream in the same sense.
+    """
+    if not entry_a.student_id or not entry_b.student_id:
+        return {
+            'compatible': None, 'gap': None, 'threshold': LEVEL_COMPATIBILITY_GAP,
+            'reason': 'Compatibility is only evaluated for student-vs-student entries.',
+            'entry_a': {'id': entry_a.id, 'name': entry_a.display_name, 'average': None},
+            'entry_b': {'id': entry_b.id, 'name': entry_b.display_name, 'average': None},
+        }
+
+    avg_a = get_prior_average(entry_a.student, exclude_exam=entry_a.tournament.exam)
+    avg_b = get_prior_average(entry_b.student, exclude_exam=entry_b.tournament.exam)
+
+    if avg_a is None or avg_b is None:
+        missing = entry_a.display_name if avg_a is None else entry_b.display_name
+        return {
+            'compatible': None, 'gap': None, 'threshold': LEVEL_COMPATIBILITY_GAP,
+            'reason': f'{missing} has no prior exam history yet, so capability cannot be judged.',
+            'entry_a': {'id': entry_a.id, 'name': entry_a.display_name, 'average': avg_a},
+            'entry_b': {'id': entry_b.id, 'name': entry_b.display_name, 'average': avg_b},
+        }
+
+    gap = round(abs(avg_a - avg_b), 2)
+    compatible = gap <= LEVEL_COMPATIBILITY_GAP
+    return {
+        'compatible': compatible, 'gap': gap, 'threshold': LEVEL_COMPATIBILITY_GAP,
+        'reason': None if compatible else f'{gap} percentage points apart on average — different skill levels.',
+        'entry_a': {'id': entry_a.id, 'name': entry_a.display_name, 'average': avg_a},
+        'entry_b': {'id': entry_b.id, 'name': entry_b.display_name, 'average': avg_b},
+    }
+
+
+def check_challenge_compatibility(challenge: Challenge) -> dict | None:
+    """Same check as check_entry_compatibility, but for an already-created
+    two-entry Challenge. Returns None for challenges that aren't a clean
+    student-vs-student pair (byes, 3+-way, stream duels)."""
+    entries = list(challenge.entries.select_related('student', 'stream', 'tournament__exam').all())
+    if len(entries) != 2:
+        return None
+    return check_entry_compatibility(entries[0], entries[1])
+
+
+def _pair_adjacent(ranked: list) -> list:
+    """ranked: list of (entry, avg) sorted descending, even length. Pairs
+    strictly consecutively — the arrangement that minimises every pair's
+    gap simultaneously for a FIXED, already-sorted list."""
+    pairs = []
+    for i in range(0, len(ranked) - 1, 2):
+        pairs.append((ranked[i], ranked[i + 1]))
+    return pairs
+
+
+def suggest_compatible_pairs(tournament: Tournament) -> dict:
+    """
+    Looks at every individual entrant who isn't already in a challenge and
+    proposes same-level 1-v-1 pairings from their historical averages
+    (every previous published exam, same source as get_prior_average).
+
+    Strategy: sort entrants by average descending, then pair adjacent
+    students. With an odd number of entrants, someone has to sit out —
+    rather than always benching the lowest scorer (which can force a
+    lopsided pair elsewhere, e.g. when the odd one out sits in the middle
+    of a tightly-clustered tier), every possible bye candidate is tried
+    and whichever leaves the smallest total gap across all resulting
+    pairs is kept. For typical classroom-sized tournaments this exhaustive
+    check is cheap (O(n^2) comparisons on a few dozen entrants at most).
+
+    Returns proposed pairs (each tagged compatible/not, same as
+    check_entry_compatibility), the student sitting out as a bye, and
+    students excluded for having no exam history to seed a level from —
+    nothing here is written to the database; see
+    auto_create_compatible_challenges for that.
+    """
+    unpaired_entries = list(
+        tournament.entries.filter(withdrawn=False, student__isnull=False, challenges__isnull=True)
+        .select_related('student', 'tournament__exam')
+    )
+
+    ranked = []
+    insufficient_history = []
+    for entry in unpaired_entries:
+        avg = get_prior_average(entry.student, exclude_exam=tournament.exam)
+        if avg is None:
+            insufficient_history.append({'entry_id': entry.id, 'student_id': entry.student_id, 'name': entry.display_name})
+        else:
+            ranked.append((entry, avg))
+
+    ranked.sort(key=lambda pair: pair[1], reverse=True)
+
+    best_pairs, best_bye = [], None
+    if len(ranked) % 2 == 0:
+        best_pairs = _pair_adjacent(ranked)
+    elif len(ranked) == 1:
+        best_bye = ranked[0]
+    elif ranked:
+        best_total_gap = None
+        for skip_idx in range(len(ranked)):
+            remaining = ranked[:skip_idx] + ranked[skip_idx + 1:]
+            candidate_pairs = _pair_adjacent(remaining)
+            total_gap = sum(abs(a - b) for (_, a), (_, b) in candidate_pairs)
+            if best_total_gap is None or total_gap < best_total_gap:
+                best_total_gap, best_pairs, best_bye = total_gap, candidate_pairs, ranked[skip_idx]
+
+    pairs = []
+    for (entry_a, avg_a), (entry_b, avg_b) in best_pairs:
+        gap = round(abs(avg_a - avg_b), 2)
+        pairs.append({
+            'entry_a': {'id': entry_a.id, 'student_id': entry_a.student_id, 'name': entry_a.display_name, 'average': avg_a},
+            'entry_b': {'id': entry_b.id, 'student_id': entry_b.student_id, 'name': entry_b.display_name, 'average': avg_b},
+            'gap': gap,
+            'compatible': gap <= LEVEL_COMPATIBILITY_GAP,
+        })
+
+    bye = None
+    if best_bye is not None:
+        entry, avg = best_bye
+        bye = {'entry_id': entry.id, 'student_id': entry.student_id, 'name': entry.display_name, 'average': avg}
+
+    return {
+        'proposed_pairs': pairs,
+        'bye': bye,
+        'insufficient_history': insufficient_history,
+        'threshold': LEVEL_COMPATIBILITY_GAP,
+    }
+
+
+@transaction.atomic
+def auto_create_compatible_challenges(tournament: Tournament, *, created_by=None, only_compatible=True) -> dict:
+    """
+    Materializes suggest_compatible_pairs() into real Challenge rows.
+    With only_compatible=True (the default), pairs whose gap still
+    exceeds LEVEL_COMPATIBILITY_GAP after best-effort adjacent pairing are
+    left uncreated (e.g. a lone high-flyer with no similarly-strong peer
+    left to pair against) so a teacher can review and pair them manually
+    instead of forcing a mismatch. Pass only_compatible=False to pair
+    everyone regardless of gap size.
+    """
+    suggestion = suggest_compatible_pairs(tournament)
+    created = []
+    skipped = []
+    for pair in suggestion['proposed_pairs']:
+        if only_compatible and not pair['compatible']:
+            skipped.append(pair)
+            continue
+        entry_a_id, entry_b_id = pair['entry_a']['id'], pair['entry_b']['id']
+        entries = TournamentEntry.objects.filter(id__in=[entry_a_id, entry_b_id])
+        challenge = Challenge.objects.create(
+            tournament=tournament,
+            label=f"Level Match — {pair['entry_a']['name']} vs {pair['entry_b']['name']}",
+            initiated_by=created_by,
+        )
+        challenge.entries.set(entries)
+        created.append(challenge)
+
+    return {
+        'created': created,
+        'skipped_incompatible': skipped,
+        'bye': suggestion['bye'],
+        'insufficient_history': suggestion['insufficient_history'],
     }
 
 

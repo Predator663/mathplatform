@@ -40,7 +40,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
         if self.action in ['create']:
             return [IsTeacherOrAdmin()]
         if self.action in ['update', 'partial_update', 'destroy', 'open_registration',
-                            'close_registration', 'finalize', 'cancel']:
+                            'close_registration', 'finalize', 'cancel', 'auto_match']:
             return [IsTeacherOrAdmin()]
         return [permissions.IsAuthenticated()]
 
@@ -213,7 +213,66 @@ class TournamentViewSet(viewsets.ModelViewSet):
                 tournament=tournament, label=data.get('label', ''), initiated_by=user,
             )
             challenge.entries.set(entries)
+
+        # compatibility is computed automatically by ChallengeSerializer for
+        # any still-pending challenge — no need to duplicate that here.
         return Response(ChallengeSerializer(challenge).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['get'], url_path='compatibility')
+    def compatibility(self, request, pk=None):
+        """
+        GET /api/tournaments/<id>/compatibility/?entry_a=<id>&entry_b=<id>
+        Checks whether two specific registered entrants are at the same
+        skill level, using their historical average across every previous
+        exam. Read-only — available to anyone who can see the tournament,
+        including a student sizing up a potential opponent.
+        """
+        tournament = self.get_object()
+        entry_a_id = request.query_params.get('entry_a')
+        entry_b_id = request.query_params.get('entry_b')
+        if not entry_a_id or not entry_b_id:
+            return Response({'detail': 'entry_a and entry_b are required.'}, status=status.HTTP_400_BAD_REQUEST)
+        if entry_a_id == entry_b_id:
+            return Response({'detail': 'Choose two different entries.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            entry_a = tournament.entries.get(id=entry_a_id, withdrawn=False)
+            entry_b = tournament.entries.get(id=entry_b_id, withdrawn=False)
+        except TournamentEntry.DoesNotExist:
+            return Response({'detail': 'One or both entries were not found in this tournament.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response(services.check_entry_compatibility(entry_a, entry_b))
+
+    @action(detail=True, methods=['get'], url_path='suggested-pairs')
+    def suggested_pairs(self, request, pk=None):
+        """
+        GET /api/tournaments/<id>/suggested-pairs/ — a preview of the
+        same-level pairings auto-match would create, without writing
+        anything. Every unpaired individual entrant, ranked by historical
+        average and matched to her closest neighbour.
+        """
+        tournament = self.get_object()
+        return Response(services.suggest_compatible_pairs(tournament))
+
+    @action(detail=True, methods=['post'], url_path='auto-match')
+    def auto_match(self, request, pk=None):
+        """
+        POST /api/tournaments/<id>/auto-match/ — materializes
+        suggested-pairs into real Challenge rows. Body: {"only_compatible":
+        true} (default) skips any pair that's still a skill mismatch after
+        best-effort pairing, leaving them for manual review; pass false to
+        pair everyone regardless of gap. Teacher/admin only — this is a
+        bulk action over the whole roster, not a single self-registration.
+        """
+        tournament = self.get_object()
+        only_compatible = request.data.get('only_compatible', True)
+        result = services.auto_create_compatible_challenges(
+            tournament, created_by=request.user, only_compatible=bool(only_compatible),
+        )
+        return Response({
+            'created': ChallengeSerializer(result['created'], many=True).data,
+            'skipped_incompatible': result['skipped_incompatible'],
+            'bye': result['bye'],
+            'insufficient_history': result['insufficient_history'],
+        }, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['get'])
     def analytics(self, request, pk=None):

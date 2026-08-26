@@ -16,7 +16,7 @@ import { cn, gradeColor, downloadBlob } from '../../utils';
 import type {
   Tournament, TournamentDetail, TournamentEntry, Challenge, EntryResult, TournamentIntel,
   MyTournamentEntryRow, Classroom, Stream, Exam, PaginatedResponse, Badge, StudentProgress,
-  TournamentAnalytics, HeadToHeadRecord,
+  TournamentAnalytics, HeadToHeadRecord, CompatibilityCheck, SuggestedPairsResponse, AutoMatchResponse,
 } from '../../types';
 
 // ── Badge icon map (mirrors MyProgressPage's) ──────────────────────────────
@@ -280,10 +280,23 @@ function CreateChallengeModal({ open, onClose, tournament }: { open: boolean; on
 
   const toggle = (id: number) => setSelected(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
 
+  // Only meaningful for a clean 1-v-1 pairing — 3+-way challenges and
+  // streams aren't compared on a single "level" number.
+  const pairForCheck = selected.length === 2 ? selected : null;
+  const { data: compat, isFetching: compatLoading } = useQuery<CompatibilityCheck>({
+    queryKey: ['challenge-compatibility', tournament.id, pairForCheck],
+    queryFn: () => tournamentsApi.compatibility(tournament.id, pairForCheck![0], pairForCheck![1]).then(r => r.data),
+    enabled: !!pairForCheck,
+  });
+
   const createMutation = useMutation({
     mutationFn: () => tournamentsApi.createChallenge(tournament.id, { label, entry_ids: selected }),
-    onSuccess: () => {
+    onSuccess: (res) => {
       toast.success('Challenge declared!');
+      const c = res.data?.compatibility as CompatibilityCheck | undefined;
+      if (c && c.compatible === false) {
+        toast(`Heads up — these two are ${c.gap} points apart on average.`, { icon: '⚖️', duration: 5000 });
+      }
       queryClient.invalidateQueries({ queryKey: ['tournament', tournament.id] });
       setLabel(''); setSelected([]); onClose();
     },
@@ -314,7 +327,119 @@ function CreateChallengeModal({ open, onClose, tournament }: { open: boolean; on
             ))}
           </div>
         </div>
+
+        {pairForCheck && compatLoading && (
+          <p className="text-xs text-muted">Checking capability match…</p>
+        )}
+        {pairForCheck && !compatLoading && compat && compat.compatible === true && (
+          <div className="flex items-center gap-2 text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-xl px-3 py-2">
+            <CheckCircle2 size={14} className="shrink-0" />
+            Same level — only {compat.gap} points apart on average. Good matchup.
+          </div>
+        )}
+        {pairForCheck && !compatLoading && compat && compat.compatible === false && (
+          <div className="flex items-center gap-2 text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-xl px-3 py-2">
+            <AlertTriangle size={14} className="shrink-0" />
+            Different skill levels — {compat.gap} points apart on average. Still allowed (could be a
+            "giant slayer" story), or use Auto-Match by Level instead for an evenly matched duel.
+          </div>
+        )}
+        {pairForCheck && !compatLoading && compat && compat.compatible === null && (
+          <div className="flex items-center gap-2 text-xs text-secondary bg-surface-700/40 border border-surface rounded-xl px-3 py-2">
+            <AlertTriangle size={14} className="shrink-0" />
+            {compat.reason}
+          </div>
+        )}
       </div>
+    </Modal>
+  );
+}
+
+// ── Auto-Match by Level Modal ────────────────────────────────────────────────
+function AutoMatchModal({ open, onClose, tournament }: { open: boolean; onClose: () => void; tournament: TournamentDetail }) {
+  const queryClient = useQueryClient();
+  const [onlyCompatible, setOnlyCompatible] = useState(true);
+
+  const { data: preview, isLoading, isError } = useQuery<SuggestedPairsResponse>({
+    queryKey: ['tournament-suggested-pairs', tournament.id],
+    queryFn: () => tournamentsApi.suggestedPairs(tournament.id).then(r => r.data),
+    enabled: open,
+  });
+
+  const matchMutation = useMutation({
+    mutationFn: () => tournamentsApi.autoMatch(tournament.id, onlyCompatible),
+    onSuccess: (res) => {
+      const data = res.data as AutoMatchResponse;
+      toast.success(`Created ${data.created.length} level-matched challenge${data.created.length !== 1 ? 's' : ''}.`);
+      if (data.skipped_incompatible.length > 0) {
+        toast(`${data.skipped_incompatible.length} pair(s) left for manual review — no close-level match available.`, { icon: '⚖️', duration: 5000 });
+      }
+      queryClient.invalidateQueries({ queryKey: ['tournament', tournament.id] });
+      onClose();
+    },
+    onError: (err: any) => toast.error(err?.response?.data?.detail || 'Could not auto-match entrants.'),
+  });
+
+  const pairs = preview?.proposed_pairs ?? [];
+  const compatibleCount = pairs.filter(p => p.compatible).length;
+
+  return (
+    <Modal open={open} onClose={onClose} title="Auto-Match by Level" size="md" footer={
+      <>
+        <Button variant="secondary" onClick={onClose}>Cancel</Button>
+        <Button onClick={() => matchMutation.mutate()} loading={matchMutation.isPending} disabled={pairs.length === 0}>
+          <Zap size={14} /> Create Matches
+        </Button>
+      </>
+    }>
+      <p className="text-xs text-secondary mb-3">
+        Pairs every unmatched entrant against her closest rival by average score across all previous
+        exams — same-level students face off instead of a random or lopsided draw.
+      </p>
+
+      {isLoading ? (
+        <p className="text-sm text-muted">Working out the fairest pairings…</p>
+      ) : isError ? (
+        <p className="text-sm text-rose-400">Couldn't load pairing suggestions.</p>
+      ) : pairs.length === 0 && !preview?.bye ? (
+        <EmptyState icon={<Users2 size={28} />} title="Nothing to match" message="Every entrant is already in a challenge, or there's only one entrant left." />
+      ) : (
+        <div className="flex flex-col gap-3">
+          <label className="flex items-center gap-2 text-xs text-secondary cursor-pointer">
+            <input type="checkbox" checked={onlyCompatible} onChange={e => setOnlyCompatible(e.target.checked)} className="w-3.5 h-3.5 rounded accent-azure-500" />
+            Only create same-level pairs ({compatibleCount}/{pairs.length}) — leave mismatches for manual review
+          </label>
+
+          <div className="flex flex-col gap-1.5 max-h-64 overflow-y-auto">
+            {pairs.map((p, i) => (
+              <div key={i} className={cn(
+                'flex items-center justify-between text-sm px-3 py-2 rounded-xl border',
+                p.compatible ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-amber-500/10 border-amber-500/20',
+              )}>
+                <span className="text-primary/90">
+                  {p.entry_a.name} <span className="text-muted font-mono text-xs">({p.entry_a.average}%)</span>
+                  <span className="mx-1.5 text-secondary">vs</span>
+                  {p.entry_b.name} <span className="text-muted font-mono text-xs">({p.entry_b.average}%)</span>
+                </span>
+                <span className={cn('font-mono text-xs shrink-0 ml-2', p.compatible ? 'text-emerald-400' : 'text-amber-400')}>
+                  {p.gap} pts
+                </span>
+              </div>
+            ))}
+          </div>
+
+          {preview?.bye && (
+            <p className="text-xs text-muted">
+              <strong className="text-secondary">Sitting out:</strong> {preview.bye.name} ({preview.bye.average}%) — odd number of entrants, no even match available.
+            </p>
+          )}
+          {preview && preview.insufficient_history.length > 0 && (
+            <p className="text-xs text-muted">
+              <strong className="text-secondary">No exam history yet:</strong> {preview.insufficient_history.map(s => s.name).join(', ')}
+            </p>
+          )}
+        </div>
+      )}
     </Modal>
   );
 }
@@ -430,6 +555,12 @@ function ChallengeCard({ challenge }: { challenge: Challenge }) {
         ))}
       </div>
       {challenge.is_tie && <p className="text-xs text-amber-400 flex items-center gap-1"><AlertTriangle size={11} /> Tied result</p>}
+      {challenge.compatibility && challenge.compatibility.compatible === false && (
+        <p className="text-xs text-amber-400 flex items-center gap-1.5">
+          <AlertTriangle size={11} className="shrink-0" />
+          Different levels — {challenge.compatibility.gap} points apart on average.
+        </p>
+      )}
     </div>
   );
 }
@@ -585,6 +716,7 @@ function TournamentDetailPanel({ tournamentId, onClose }: { tournamentId: number
   const [tab, setTab] = useState<'roster' | 'challenges' | 'leaderboard' | 'analytics' | 'rivalry'>('roster');
   const [registerOpen, setRegisterOpen] = useState(false);
   const [challengeOpen, setChallengeOpen] = useState(false);
+  const [autoMatchOpen, setAutoMatchOpen] = useState(false);
   const [exportingFormat, setExportingFormat] = useState<'pdf' | 'excel' | null>(null);
 
   const { data: tournament, isLoading } = useQuery<TournamentDetail>({
@@ -762,7 +894,10 @@ function TournamentDetailPanel({ tournamentId, onClose }: { tournamentId: number
             <div className="flex items-center justify-between">
               <p className="text-xs text-secondary">Declared head-to-head duels</p>
               {tournament.entries.length >= 2 && tournament.status !== 'completed' && tournament.status !== 'cancelled' && (
-                <Button size="sm" variant="secondary" onClick={() => setChallengeOpen(true)}><Swords size={13} /> Declare Challenge</Button>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="secondary" onClick={() => setAutoMatchOpen(true)}><Zap size={13} /> Auto-Match by Level</Button>
+                  <Button size="sm" variant="secondary" onClick={() => setChallengeOpen(true)}><Swords size={13} /> Declare Challenge</Button>
+                </div>
               )}
             </div>
             {tournament.challenges.length === 0 ? (
@@ -782,6 +917,7 @@ function TournamentDetailPanel({ tournamentId, onClose }: { tournamentId: number
 
       {registerOpen && <RegisterEntryModal open={registerOpen} onClose={() => setRegisterOpen(false)} tournament={tournament} />}
       {challengeOpen && <CreateChallengeModal open={challengeOpen} onClose={() => setChallengeOpen(false)} tournament={tournament} />}
+      {autoMatchOpen && <AutoMatchModal open={autoMatchOpen} onClose={() => setAutoMatchOpen(false)} tournament={tournament} />}
     </motion.div>
   );
 }

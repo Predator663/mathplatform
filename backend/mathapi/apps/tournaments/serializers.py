@@ -44,12 +44,22 @@ class ChallengeSerializer(serializers.ModelSerializer):
     entries = EntrySlimSerializer(many=True, read_only=True)
     winner = EntrySlimSerializer(read_only=True)
     initiated_by_name = serializers.CharField(source='initiated_by.get_full_name', read_only=True, default=None)
+    compatibility = serializers.SerializerMethodField()
 
     class Meta:
         model = Challenge
         fields = ['id', 'tournament', 'label', 'entries', 'status', 'winner', 'is_tie',
-                  'initiated_by_name', 'created_at', 'resolved_at']
+                  'initiated_by_name', 'created_at', 'resolved_at', 'compatibility']
         read_only_fields = ['status', 'winner', 'is_tie', 'created_at', 'resolved_at']
+
+    def get_compatibility(self, obj):
+        # Only worth computing (and worth the extra queries) for duels still
+        # awaiting a result — once resolved, "was this a fair matchup" is a
+        # historical curiosity rather than something to act on.
+        if obj.status != Challenge.Status.PENDING:
+            return None
+        from . import services
+        return services.check_challenge_compatibility(obj)
 
 
 class ChallengeCreateSerializer(serializers.Serializer):

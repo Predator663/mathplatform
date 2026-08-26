@@ -325,6 +325,11 @@ export const tournamentsApi = {
     api.post(`/tournaments/tournaments/${id}/challenges/`, data),
   dossier: (id: number) => api.get(`/tournaments/tournaments/${id}/dossier/`),
   analytics: (id: number) => api.get(`/tournaments/tournaments/${id}/analytics/`),
+  compatibility: (id: number, entryA: number, entryB: number) =>
+    api.get(`/tournaments/tournaments/${id}/compatibility/`, { params: { entry_a: entryA, entry_b: entryB } }),
+  suggestedPairs: (id: number) => api.get(`/tournaments/tournaments/${id}/suggested-pairs/`),
+  autoMatch: (id: number, onlyCompatible = true) =>
+    api.post(`/tournaments/tournaments/${id}/auto-match/`, { only_compatible: onlyCompatible }),
   headToHead: (studentA: number, studentB: number) =>
     api.get('/tournaments/head-to-head/', { params: { student_a: studentA, student_b: studentB } }),
   myEntries: () => api.get('/tournaments/my-entries/'),

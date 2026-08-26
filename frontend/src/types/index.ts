@@ -758,6 +758,35 @@ export interface Challenge {
   id: number; tournament: number; label: string; entries: TournamentEntry[];
   status: 'pending' | 'resolved' | 'void'; winner: TournamentEntry | null; is_tie: boolean;
   initiated_by_name: string | null; created_at: string; resolved_at: string | null;
+  compatibility?: CompatibilityCheck | null;
+}
+
+export interface CompatibilityCheck {
+  compatible: boolean | null; gap: number | null; threshold: number; reason: string | null;
+  entry_a: { id: number; name: string; average: number | null };
+  entry_b: { id: number; name: string; average: number | null };
+}
+
+export interface SuggestedPairEntry {
+  id: number; student_id: number; name: string; average: number;
+}
+
+export interface SuggestedPair {
+  entry_a: SuggestedPairEntry; entry_b: SuggestedPairEntry; gap: number; compatible: boolean;
+}
+
+export interface SuggestedPairsResponse {
+  proposed_pairs: SuggestedPair[];
+  bye: { entry_id: number; student_id: number; name: string; average: number } | null;
+  insufficient_history: { entry_id: number; student_id: number; name: string }[];
+  threshold: number;
+}
+
+export interface AutoMatchResponse {
+  created: Challenge[];
+  skipped_incompatible: SuggestedPair[];
+  bye: { entry_id: number; student_id: number; name: string; average: number } | null;
+  insufficient_history: { entry_id: number; student_id: number; name: string }[];
 }
 
 export interface EntryResult {
