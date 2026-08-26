@@ -3,6 +3,7 @@ PDF Export Engine using ReportLab.
 Generates professional reports with school header and platform footer.
 """
 import io
+import re
 from datetime import date
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -86,6 +87,32 @@ def _name_cell(name: str, styles, style_key='table_name'):
     (via Paragraph) so long names break onto a second line inside their
     column instead of overlapping the next cell."""
     return Paragraph(_compact_name(name), styles[style_key])
+
+
+# Auto-generated challenge labels look like "Level Match — Cleopatra Thomas
+# Ndulango vs Vivian Victor Ngalawa" (see tournaments/services.py) — i.e.
+# they repeat both combatants' FULL names right in the label. That's
+# already shown (compacted) in the Combatants column next to it, so
+# leaving it in the label is pure duplication — and since the Duel column
+# is narrow and this was rendered as a plain (non-wrapping) string, that
+# duplicated full-name text used to spill straight past the column edge
+# and visually run into/overlap the Combatants text next to it.
+_AUTO_LABEL_VS_TAIL = re.compile(r'\s+—\s+.+\bvs\b.+$', re.IGNORECASE)
+
+
+def _duel_label_cell(label, fallback, styles, style_key='table_name_reg'):
+    """Table-cell-safe duel label: strips the redundant '— A vs B' tail
+    from an auto-generated label (the names already appear, compacted, in
+    the Combatants column), then wraps whatever's left in a Paragraph so
+    a long custom/teacher-typed label wraps inside its own cell instead
+    of overlapping the column next to it."""
+    text = (label or '').strip()
+    if text:
+        shortened = _AUTO_LABEL_VS_TAIL.sub('', text).strip()
+        text = shortened or text
+    else:
+        text = fallback
+    return Paragraph(text, styles[style_key])
 
 
 def _make_styles():
@@ -2032,7 +2059,7 @@ def generate_tournament_dossier_pdf(tournament, dossier, analytics,
             combatants_text = ' <b>vs</b> '.join(_compact_name(e.display_name) for e in c.entries.all())
             result = _compact_name(c.winner.display_name) if c.winner else ('Tied' if c.is_tie else '—')
             rows.append([
-                c.label or f'Duel #{c.id}',
+                _duel_label_cell(c.label, f'Duel #{c.id}', styles),
                 Paragraph(combatants_text, styles['table_name_reg']),
                 result,
                 c.get_status_display(),
@@ -2122,7 +2149,7 @@ def generate_challenge_matchups_pdf(tournament, challenges, unmatched_entries,
                 combatants_text += '<br/><font size="7" color="#d97706">Tied</font>'
             rows.append([
                 str(i),
-                c.label or f'Duel #{c.id}',
+                _duel_label_cell(c.label, f'Duel #{c.id}', styles),
                 Paragraph(combatants_text, styles['table_name_reg']),
                 status_labels.get(c.status, c.get_status_display()),
             ])

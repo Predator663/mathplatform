@@ -3,6 +3,7 @@ Excel Export Engine using openpyxl.
 Generates styled workbooks with school header and platform footer.
 """
 import io
+import re
 from datetime import date
 from openpyxl import Workbook
 from openpyxl.styles import (
@@ -48,6 +49,48 @@ def _safe(value):
     if isinstance(value, str) and value and value[0] in _FORMULA_TRIGGER_CHARS:
         return "'" + value
     return value
+
+
+def _compact_name(name):
+    """
+    Tanzanian names are commonly given/middle/surname (three or more words)
+    — long enough that two of them side-by-side in a "Combatants" cell (or
+    one on its own in a narrow "Entrant" column) get clipped once the column
+    hits its autofit cap. Keeps the first and last word in full and
+    collapses anything in between to a single initial, e.g.
+    "John Petro Mushi" -> "John P. Mushi",
+    "Neema Elizabeth Grace Hassan" -> "Neema E. G. Hassan".
+    Two-word (or shorter) names are returned unchanged. Mirrors
+    pdf_engine._compact_name so PDF and Excel exports of the same data
+    agree on how a name is shown.
+    """
+    if not name or not isinstance(name, str):
+        return name
+    parts = name.split()
+    if len(parts) <= 2:
+        return name
+    first, *middles, last = parts
+    initials = ' '.join(f'{m[0]}.' for m in middles if m)
+    return f'{first} {initials} {last}'.strip()
+
+
+# Auto-generated challenge labels look like "Level Match — Cleopatra Thomas
+# Ndulango vs Vivian Victor Ngalawa" (see tournaments/services.py) — the
+# combatants' FULL names repeated right in the label, on top of the
+# (compacted) names already shown in the Combatants column next to it.
+# That's redundant, and at 50-70+ characters it blows straight past the
+# Duel column's autofit cap and gets clipped against Combatants. Strip the
+# redundant "— A vs B" tail so the column shows just the short match type.
+_AUTO_LABEL_VS_TAIL = re.compile(r'\s+—\s+.+\bvs\b.+$', re.IGNORECASE)
+
+
+def _duel_label(label, fallback):
+    """Excel-cell-safe duel label — see _AUTO_LABEL_VS_TAIL above."""
+    text = (label or '').strip()
+    if not text:
+        return fallback
+    shortened = _AUTO_LABEL_VS_TAIL.sub('', text).strip()
+    return shortened or text
 
 
 def _font(bold=False, color='FF000000', size=10, italic=False):
@@ -1119,7 +1162,7 @@ def generate_tournament_dossier_excel(tournament, dossier, analytics,
         xl_img.width = 36
         xl_img.height = 36
         ws.add_image(xl_img, f'A{row}')
-        c = ws.cell(row, 2, _safe(f'{champion.entry.display_name} — {champion.score_percentage}%'))
+        c = ws.cell(row, 2, _safe(f'{_compact_name(champion.entry.display_name)} — {champion.score_percentage}%'))
         c.font = _font(bold=True, size=11)
         ws.row_dimensions[row].height = 30
         row += 2
@@ -1134,7 +1177,7 @@ def generate_tournament_dossier_excel(tournament, dossier, analytics,
             xl_img.width = 26
             xl_img.height = 26
             ws.add_image(xl_img, f'A{row}')
-            c = ws.cell(row, 2, _safe(f'{r.entry.display_name} — {r.score_percentage}% (+{r.delta:.1f} on prior avg)'))
+            c = ws.cell(row, 2, _safe(f'{_compact_name(r.entry.display_name)} — {r.score_percentage}% (+{r.delta:.1f} on prior avg)'))
             c.font = _font(size=9.5)
             ws.row_dimensions[row].height = 20
             row += 1
@@ -1190,7 +1233,7 @@ def generate_tournament_dossier_excel(tournament, dossier, analytics,
         if r.is_rising_star: flags.append('Rising Star')
         if r.is_absent: flags.append('Absent')
         row_vals = [
-            f'#{r.rank}' if r.rank else '—', _safe(r.entry.display_name),
+            f'#{r.rank}' if r.rank else '—', _safe(_compact_name(r.entry.display_name)),
             f'{r.score_percentage}%' if r.score_percentage is not None else '—',
             f'{r.prior_average}%' if r.prior_average is not None else '—',
             f'{r.delta:+.1f}' if r.delta is not None else '—',
@@ -1201,7 +1244,10 @@ def generate_tournament_dossier_excel(tournament, dossier, analytics,
         for j, v in enumerate(row_vals, 1):
             c = lws.cell(lrow, j, v)
             c.font = _font(bold=(j == 1 or r.is_champion), size=9)
-            c.alignment = _align('center' if j in (1, 3, 4, 5) else 'left')
+            # Entrant column (j==2) wraps so a name that's still long even
+            # after compacting breaks onto a second line inside its own
+            # cell instead of getting clipped by the neighbouring column.
+            c.alignment = _align('center' if j in (1, 3, 4, 5) else 'left', wrap=(j == 2))
             c.fill = fill
             c.border = _border()
         lrow += 1
@@ -1227,17 +1273,25 @@ def generate_tournament_dossier_excel(tournament, dossier, analytics,
         chdr_row = crow
         crow += 1
         for i, ch in enumerate(challenges):
-            names = ' vs '.join(_safe(e.display_name) for e in ch.entries.all())
-            result = _safe(ch.winner.display_name) if ch.winner else ('Tied' if ch.is_tie else '—')
-            row_vals = [_safe(ch.label) if ch.label else f'Duel #{ch.id}', names, result, ch.get_status_display()]
+            # Compact each combatant's name before joining with "vs" —
+            # two full three-part Tanzanian names side by side can easily
+            # blow past the column's 40-char autofit cap and get clipped
+            # by the Result column next to it.
+            names = ' vs '.join(_safe(_compact_name(e.display_name)) for e in ch.entries.all())
+            result = _safe(_compact_name(ch.winner.display_name)) if ch.winner else ('Tied' if ch.is_tie else '—')
+            row_vals = [_safe(_duel_label(ch.label, f'Duel #{ch.id}')), names, result, ch.get_status_display()]
             fill = PatternFill('solid', fgColor='FFF8FAFC') if i % 2 else PatternFill('solid', fgColor=WHITE)
             for j, v in enumerate(row_vals, 1):
                 c = cws.cell(crow, j, v)
                 c.font = _font(size=9)
+                # Combatants column (j==2) wraps so a still-long "A vs B"
+                # string breaks onto extra lines inside its own cell
+                # instead of overlapping/clipping into Result/Status.
+                c.alignment = _align('left', wrap=(j == 2))
                 c.fill = fill
                 c.border = _border()
             crow += 1
-        _freeze_and_autofit(cws, chdr_row + 1, 1, min_widths=[22, 40, 20, 16])
+        _freeze_and_autofit(cws, chdr_row + 1, 1, min_widths=[22, 44, 22, 16])
 
     buf = io.BytesIO()
     wb.save(buf)

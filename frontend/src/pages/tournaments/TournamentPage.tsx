@@ -69,10 +69,57 @@ function useCountdown(targetIso: string | null | undefined) {
   return { expired, days, hours, minutes, seconds };
 }
 
-function CountdownBlock({ label, value }: { label: string; value: number }) {
+// A single mechanical "drum" digit: a boxed rectangle that rolls the old
+// digit out the top and the new digit in from the bottom, like the
+// split-flap/reel odometer on a Boxer BM150 dash rather than a flat
+// flipping number.
+function OdometerDigit({ digit }: { digit: string }) {
   return (
-    <div className="flex flex-col items-center gap-0.5 min-w-[46px]">
-      <span className="font-mono font-black text-lg md:text-xl text-primary tabular-nums">{String(value).padStart(2, '0')}</span>
+    <span
+      className="relative inline-flex items-center justify-center w-[0.62em] h-[1em] overflow-hidden rounded-[2px]
+                 bg-gradient-to-b from-surface-900 to-surface-800 ring-1 ring-black/50
+                 shadow-[inset_0_1px_2px_rgba(0,0,0,0.7),inset_0_-1px_1px_rgba(255,255,255,0.04)]"
+    >
+      {/* mid-seam, mimicking the drum's physical split line */}
+      <span className="absolute left-0 right-0 top-1/2 h-px bg-black/40 z-10" />
+      <AnimatePresence mode="popLayout" initial={false}>
+        <motion.span
+          key={digit}
+          initial={{ y: '100%' }}
+          animate={{ y: '0%' }}
+          exit={{ y: '-100%' }}
+          transition={{ duration: 0.32, ease: [0.45, 0, 0.2, 1] }}
+          className="absolute inset-0 flex items-center justify-center"
+        >
+          {digit}
+        </motion.span>
+      </AnimatePresence>
+    </span>
+  );
+}
+
+// A boxed rectangle housing one or more drum digits, framed like a little
+// odometer window bolted onto the dash.
+function OdometerBox({ value, digits = 2 }: { value: number; digits?: number }) {
+  const str = String(value).padStart(digits, '0');
+  return (
+    <div
+      className="flex rounded-md ring-1 ring-black/60 bg-surface-900 p-[3px] gap-[2px]
+                 shadow-[0_1px_0_rgba(255,255,255,0.05),0_2px_4px_rgba(0,0,0,0.4)]"
+    >
+      {str.split('').map((d, i) => (
+        <OdometerDigit key={i} digit={d} />
+      ))}
+    </div>
+  );
+}
+
+function CountdownBlock({ label, value, digits = 2 }: { label: string; value: number; digits?: number }) {
+  return (
+    <div className="flex flex-col items-center gap-1 min-w-[46px]">
+      <div className="font-mono font-black text-lg md:text-xl text-primary tabular-nums leading-none">
+        <OdometerBox value={value} digits={digits} />
+      </div>
       <span className="text-[9px] uppercase tracking-widest text-secondary">{label}</span>
     </div>
   );
@@ -90,7 +137,7 @@ function Countdown({ targetIso, expiredLabel }: { targetIso: string | null | und
   }
   return (
     <div className="flex items-center gap-2.5">
-      <CountdownBlock label="Days" value={cd.days} />
+      <CountdownBlock label="Days" value={cd.days} digits={cd.days > 99 ? 3 : 2} />
       <span className="text-secondary font-bold pb-3">:</span>
       <CountdownBlock label="Hrs" value={cd.hours} />
       <span className="text-secondary font-bold pb-3">:</span>
