@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
 import {
   Swords, Trophy, Crown, Shield, ShieldCheck, Zap, Sparkles, Star, TrendingUp, Flag,
   Plus, X, Play, Lock, Radio, Target, Users2, School, Clock, ChevronRight, Award, Flame,
-  CheckCircle2, AlertTriangle, Ban, Skull, Eye, ScanLine, ListChecks, Trash2, UsersRound,
+  CheckCircle2, AlertTriangle, Ban, Skull, Eye, ScanLine, ListChecks, Trash2, UsersRound, Search,
+  Volume2, VolumeX, Pencil,
 } from 'lucide-react';
 import { tournamentsApi, studentsApi, examsApi, gamificationApi } from '../../api';
 import {
@@ -16,7 +17,7 @@ import { cn, gradeColor, downloadBlob } from '../../utils';
 import type {
   Tournament, TournamentDetail, TournamentEntry, Challenge, EntryResult, TournamentIntel,
   MyTournamentEntryRow, Classroom, Stream, Exam, PaginatedResponse, Badge, StudentProgress,
-  TournamentAnalytics, HeadToHeadRecord, CompatibilityCheck, SuggestedPairsResponse, AutoMatchResponse,
+  TournamentAnalytics, HeadToHeadRecord, CompatibilityCheck, SuggestedGroupsResponse, AutoMatchResponse,
 } from '../../types';
 
 // ── Badge icon map (mirrors MyProgressPage's) ──────────────────────────────
@@ -68,6 +69,79 @@ function useCountdown(targetIso: string | null | undefined) {
   const seconds = Math.floor((abs % 60_000) / 1000);
   return { expired, days, hours, minutes, seconds };
 }
+
+// ── Timer tick sound ─────────────────────────────────────────────────────
+// A synthesized clock-tick (no audio asset to ship/host) that only plays
+// while a) the countdown is actually counting down, b) this browser tab is
+// the foreground/visible one, and c) the person hasn't muted it. Mute
+// preference is remembered across visits.
+const TIMER_SOUND_MUTED_KEY = 'mp_tournament_timer_sound_muted';
+
+function useDocumentVisible() {
+  const [visible, setVisible] = useState(() => typeof document !== 'undefined' ? document.visibilityState === 'visible' : true);
+  useEffect(() => {
+    const onChange = () => setVisible(document.visibilityState === 'visible');
+    document.addEventListener('visibilitychange', onChange);
+    return () => document.removeEventListener('visibilitychange', onChange);
+  }, []);
+  return visible;
+}
+
+function useTimerSoundMuted(): [boolean, () => void] {
+  const [muted, setMuted] = useState(() => {
+    try { return localStorage.getItem(TIMER_SOUND_MUTED_KEY) === '1'; } catch { return false; }
+  });
+  const toggle = () => setMuted(prev => {
+    const next = !prev;
+    try { localStorage.setItem(TIMER_SOUND_MUTED_KEY, next ? '1' : '0'); } catch { /* private mode etc. */ }
+    return next;
+  });
+  return [muted, toggle];
+}
+
+// Lazily creates (and unlocks, per browser autoplay rules, on the first tap
+// or keypress anywhere on the page) a single shared AudioContext, then lets
+// the countdown fire a short synthesized "tick" once a second off it.
+function useTicker() {
+  const ctxRef = useRef<AudioContext | null>(null);
+
+  const ensureContext = () => {
+    if (!ctxRef.current) {
+      const Ctx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!Ctx) return null;
+      try { ctxRef.current = new Ctx(); } catch { return null; }
+    }
+    if (ctxRef.current.state === 'suspended') ctxRef.current.resume().catch(() => {});
+    return ctxRef.current;
+  };
+
+  useEffect(() => {
+    const unlock = () => ensureContext();
+    window.addEventListener('pointerdown', unlock, { once: true });
+    window.addEventListener('keydown', unlock, { once: true });
+    return () => {
+      window.removeEventListener('pointerdown', unlock);
+      window.removeEventListener('keydown', unlock);
+    };
+  }, []);
+
+  return () => {
+    const ctx = ensureContext();
+    if (!ctx || ctx.state !== 'running') return; // still locked — wait for a user gesture
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'square';
+    osc.frequency.value = 1650;
+    gain.gain.setValueAtTime(0, ctx.currentTime);
+    gain.gain.linearRampToValueAtTime(0.05, ctx.currentTime + 0.004);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.05);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.06);
+  };
+}
+
 
 // A single mechanical "drum" digit: a boxed rectangle that rolls the old
 // digit out the top and the new digit in from the bottom, like the
@@ -127,6 +201,21 @@ function CountdownBlock({ label, value, digits = 2 }: { label: string; value: nu
 
 function Countdown({ targetIso, expiredLabel }: { targetIso: string | null | undefined; expiredLabel: string }) {
   const cd = useCountdown(targetIso);
+  const visible = useDocumentVisible();
+  const [muted, toggleMuted] = useTimerSoundMuted();
+  const tick = useTicker();
+  const lastSecondRef = useRef<number | null>(null);
+
+  const active = !!cd && !cd.expired && visible && !muted;
+
+  useEffect(() => {
+    if (!cd || cd.expired) { lastSecondRef.current = null; return; }
+    // Fire once per actual second-boundary change, not once per render.
+    if (lastSecondRef.current === cd.seconds) return;
+    lastSecondRef.current = cd.seconds;
+    if (active) tick();
+  }, [cd?.seconds, active]);
+
   if (!cd) return null;
   if (cd.expired) {
     return (
@@ -144,6 +233,15 @@ function Countdown({ targetIso, expiredLabel }: { targetIso: string | null | und
       <CountdownBlock label="Min" value={cd.minutes} />
       <span className="text-secondary font-bold pb-3">:</span>
       <CountdownBlock label="Sec" value={cd.seconds} />
+      <button
+        type="button"
+        onClick={toggleMuted}
+        title={muted ? 'Turn timer tick on' : 'Turn timer tick off'}
+        aria-label={muted ? 'Turn timer tick on' : 'Turn timer tick off'}
+        className="self-start mt-0.5 p-1.5 rounded-lg text-secondary hover:text-primary hover:bg-surface-700 transition-colors"
+      >
+        {muted ? <VolumeX size={14} /> : <Volume2 size={14} />}
+      </button>
     </div>
   );
 }
@@ -352,12 +450,42 @@ function RegisterEntryModal({ open, onClose, tournament }: { open: boolean; onCl
 }
 
 // ── Create Challenge Modal ──────────────────────────────────────────────────
-function CreateChallengeModal({ open, onClose, tournament }: { open: boolean; onClose: () => void; tournament: TournamentDetail }) {
+// Curated duel labels to pick from in the Declare Challenge modal, instead
+// of typing one from scratch every time. "Custom…" drops back to free text.
+const CHALLENGE_LABEL_PRESETS = [
+  'Level Match', 'Quarterfinal', 'Semifinal', 'Final', 'Grand Final',
+  'Grudge Match', 'Rematch', 'Wildcard Duel', 'Underdog Challenge',
+  'Front Row Showdown', 'Class Derby', 'Tiebreaker', 'Exhibition Match',
+];
+const CUSTOM_LABEL_OPTION = '__custom__';
+
+// `challenge` present -> edit an existing pending challenge instead of
+// declaring a new one. Same form either way; only the submit action and
+// initial values differ.
+function ChallengeFormModal({ open, onClose, tournament, challenge }: {
+  open: boolean; onClose: () => void; tournament: TournamentDetail; challenge?: Challenge;
+}) {
   const queryClient = useQueryClient();
-  const [label, setLabel] = useState('');
-  const [selected, setSelected] = useState<number[]>([]);
+  const isEdit = !!challenge;
+  const initialLabelIsPreset = challenge ? CHALLENGE_LABEL_PRESETS.includes(challenge.label) : false;
+  const [labelChoice, setLabelChoice] = useState(() => {
+    if (!challenge) return '';
+    if (!challenge.label) return '';
+    return initialLabelIsPreset ? challenge.label : CUSTOM_LABEL_OPTION;
+  });
+  const [customLabel, setCustomLabel] = useState(() => (challenge && !initialLabelIsPreset ? challenge.label : ''));
+  const [selected, setSelected] = useState<number[]>(() => challenge ? challenge.entries.map(e => e.id) : []);
+  const [search, setSearch] = useState('');
+
+  const label = labelChoice === CUSTOM_LABEL_OPTION ? customLabel : labelChoice;
 
   const toggle = (id: number) => setSelected(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+
+  const filteredEntries = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return tournament.entries;
+    return tournament.entries.filter(e => e.display_name.toLowerCase().includes(q));
+  }, [tournament.entries, search]);
 
   // Only meaningful for a clean 1-v-1 pairing — 3+-way challenges and
   // streams aren't compared on a single "level" number.
@@ -368,35 +496,71 @@ function CreateChallengeModal({ open, onClose, tournament }: { open: boolean; on
     enabled: !!pairForCheck,
   });
 
-  const createMutation = useMutation({
-    mutationFn: () => tournamentsApi.createChallenge(tournament.id, { label, entry_ids: selected }),
+  const submitMutation = useMutation({
+    mutationFn: () => isEdit
+      ? tournamentsApi.updateChallenge(tournament.id, challenge!.id, { label, entry_ids: selected })
+      : tournamentsApi.createChallenge(tournament.id, { label, entry_ids: selected }),
     onSuccess: (res) => {
-      toast.success('Challenge declared!');
+      toast.success(isEdit ? 'Challenge updated!' : 'Challenge declared!');
       const c = res.data?.compatibility as CompatibilityCheck | undefined;
       if (c && c.compatible === false) {
         toast(`Heads up — these two are ${c.gap} points apart on average.`, { icon: '⚖️', duration: 5000 });
       }
       queryClient.invalidateQueries({ queryKey: ['tournament', tournament.id] });
-      setLabel(''); setSelected([]); onClose();
+      setLabelChoice(''); setCustomLabel(''); setSelected([]); setSearch(''); onClose();
     },
-    onError: (err: any) => toast.error(err?.response?.data?.detail || 'Could not create the challenge'),
+    onError: (err: any) => toast.error(err?.response?.data?.detail || `Could not ${isEdit ? 'update' : 'create'} the challenge`),
   });
 
   return (
-    <Modal open={open} onClose={onClose} title="Declare a Challenge" size="md" footer={
+    <Modal open={open} onClose={onClose} title={isEdit ? 'Edit Challenge' : 'Declare a Challenge'} size="md" footer={
       <>
         <Button variant="secondary" onClick={onClose}>Cancel</Button>
-        <Button onClick={() => createMutation.mutate()} loading={createMutation.isPending} disabled={selected.length < 2}>
-          <Swords size={14} /> Declare
+        <Button onClick={() => submitMutation.mutate()} loading={submitMutation.isPending} disabled={selected.length < 2}>
+          <Swords size={14} /> {isEdit ? 'Save Changes' : 'Declare'}
         </Button>
       </>
     }>
       <div className="flex flex-col gap-4">
-        <Input label="Label (optional)" placeholder="e.g. Front Row Showdown" value={label} onChange={e => setLabel(e.target.value)} />
+        <div className="flex flex-col gap-2">
+          <Select
+            label="Label (optional)"
+            value={labelChoice}
+            onChange={e => setLabelChoice(e.target.value)}
+            options={[
+              { value: '', label: 'No label' },
+              ...CHALLENGE_LABEL_PRESETS.map(l => ({ value: l, label: l })),
+              { value: CUSTOM_LABEL_OPTION, label: 'Custom…' },
+            ]}
+          />
+          {labelChoice === CUSTOM_LABEL_OPTION && (
+            <Input
+              placeholder="e.g. Front Row Showdown"
+              value={customLabel}
+              onChange={e => setCustomLabel(e.target.value)}
+              autoFocus
+            />
+          )}
+        </div>
         <div>
-          <label className="label mb-2 block">Combatants (pick 2 or more)</label>
+          <div className="flex items-center justify-between mb-2">
+            <label className="label">Combatants (pick 2 or more)</label>
+            {selected.length > 0 && <span className="text-xs text-azure-400 font-mono">{selected.length} selected</span>}
+          </div>
+          <div className="relative mb-2">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+            <input
+              type="text"
+              className="input pl-9 w-full text-sm"
+              placeholder="Search entrants by name…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+            />
+          </div>
           <div className="flex flex-col gap-1.5 max-h-64 overflow-y-auto">
-            {tournament.entries.map(entry => (
+            {filteredEntries.length === 0 ? (
+              <p className="text-xs text-secondary text-center py-4">No entrants match "{search}".</p>
+            ) : filteredEntries.map(entry => (
               <label key={entry.id} className={cn('flex items-center gap-2.5 px-3 py-2 rounded-xl cursor-pointer transition-colors',
                 selected.includes(entry.id) ? 'bg-azure-500/15 text-azure-400' : 'hover:bg-surface-700 text-primary')}>
                 <input type="checkbox" checked={selected.includes(entry.id)} onChange={() => toggle(entry.id)} className="w-4 h-4 rounded accent-azure-500" />
@@ -435,21 +599,34 @@ function CreateChallengeModal({ open, onClose, tournament }: { open: boolean; on
 }
 
 // ── Auto-Match by Level Modal ────────────────────────────────────────────────
+const GROUP_SIZE_OPTIONS = [
+  { value: '2', label: 'Pairs (2 per duel)' },
+  { value: '3', label: 'Trios (3 per duel)' },
+  { value: '4', label: 'Squads (4 per duel)' },
+  { value: '5', label: '5-way groups' },
+  { value: '6', label: '6-way groups' },
+];
+
 function AutoMatchModal({ open, onClose, tournament }: { open: boolean; onClose: () => void; tournament: TournamentDetail }) {
   const queryClient = useQueryClient();
   const [onlyCompatible, setOnlyCompatible] = useState(true);
+  const [groupSize, setGroupSize] = useState(2);
+  const [useAi, setUseAi] = useState(false);
 
-  const { data: preview, isLoading, isError } = useQuery<SuggestedPairsResponse>({
-    queryKey: ['tournament-suggested-pairs', tournament.id],
-    queryFn: () => tournamentsApi.suggestedPairs(tournament.id).then(r => r.data),
+  const { data: preview, isLoading, isError } = useQuery<SuggestedGroupsResponse>({
+    queryKey: ['tournament-suggested-pairs', tournament.id, groupSize, useAi],
+    queryFn: () => tournamentsApi.suggestedPairs(tournament.id, groupSize, useAi).then(r => r.data),
     enabled: open,
   });
 
   const matchMutation = useMutation({
-    mutationFn: () => tournamentsApi.autoMatch(tournament.id, onlyCompatible),
+    mutationFn: () => tournamentsApi.autoMatch(tournament.id, onlyCompatible, groupSize, useAi),
     onSuccess: (res) => {
       const data = res.data as AutoMatchResponse;
       toast.success(`Created ${data.created.length} level-matched challenge${data.created.length !== 1 ? 's' : ''}.`);
+      if (data.ai_used) {
+        toast('Claude refined this grouping.', { icon: '✨', duration: 4000 });
+      }
       if (data.skipped_incompatible.length > 0) {
         toast(`${data.skipped_incompatible.length} pair(s) left for manual review — no close-level match available.`, { icon: '⚖️', duration: 5000 });
       }
@@ -459,57 +636,83 @@ function AutoMatchModal({ open, onClose, tournament }: { open: boolean; onClose:
     onError: (err: any) => toast.error(err?.response?.data?.detail || 'Could not auto-match entrants.'),
   });
 
-  const pairs = preview?.proposed_pairs ?? [];
-  const compatibleCount = pairs.filter(p => p.compatible).length;
+  const groups = preview?.proposed_groups ?? [];
+  const compatibleCount = groups.filter(g => g.compatible).length;
 
   return (
     <Modal open={open} onClose={onClose} title="Auto-Match by Level" size="md" footer={
       <>
         <Button variant="secondary" onClick={onClose}>Cancel</Button>
-        <Button onClick={() => matchMutation.mutate()} loading={matchMutation.isPending} disabled={pairs.length === 0}>
+        <Button onClick={() => matchMutation.mutate()} loading={matchMutation.isPending} disabled={groups.length === 0}>
           <Zap size={14} /> Create Matches
         </Button>
       </>
     }>
       <p className="text-xs text-secondary mb-3">
-        Pairs every unmatched entrant against her closest rival by average score across all previous
-        exams — same-level students face off instead of a random or lopsided draw.
+        Clusters every unmatched entrant into same-level groups by average score across all previous
+        exams — same-level students face off instead of a random or lopsided draw. Groups aren't
+        forced into pairs: a tight cluster of three or more at the same level stays together.
       </p>
 
+      <div className="grid grid-cols-2 gap-2 mb-3">
+        <Select
+          label="Target group size"
+          value={String(groupSize)}
+          onChange={e => setGroupSize(Number(e.target.value))}
+          options={GROUP_SIZE_OPTIONS}
+        />
+        <div className="flex flex-col justify-end pb-1.5">
+          <label className="flex items-center gap-2 text-xs text-secondary cursor-pointer">
+            <input type="checkbox" checked={useAi} onChange={e => setUseAi(e.target.checked)} className="w-3.5 h-3.5 rounded accent-violet-500" />
+            <Sparkles size={12} className="text-violet-400" /> Let AI refine the grouping
+          </label>
+        </div>
+      </div>
+
       {isLoading ? (
-        <p className="text-sm text-muted">Working out the fairest pairings…</p>
+        <p className="text-sm text-muted">Working out the fairest groupings…</p>
       ) : isError ? (
-        <p className="text-sm text-rose-400">Couldn't load pairing suggestions.</p>
-      ) : pairs.length === 0 && !preview?.bye ? (
+        <p className="text-sm text-rose-400">Couldn't load grouping suggestions.</p>
+      ) : groups.length === 0 && (preview?.byes.length ?? 0) === 0 ? (
         <EmptyState icon={<Users2 size={28} />} title="Nothing to match" message="Every entrant is already in a challenge, or there's only one entrant left." />
       ) : (
         <div className="flex flex-col gap-3">
           <label className="flex items-center gap-2 text-xs text-secondary cursor-pointer">
             <input type="checkbox" checked={onlyCompatible} onChange={e => setOnlyCompatible(e.target.checked)} className="w-3.5 h-3.5 rounded accent-azure-500" />
-            Only create same-level pairs ({compatibleCount}/{pairs.length}) — leave mismatches for manual review
+            Only create same-level groups ({compatibleCount}/{groups.length}) — leave mismatches for manual review
           </label>
 
+          {preview?.ai_used && (
+            <div className="flex items-center gap-2 text-xs text-violet-400 bg-violet-500/10 border border-violet-500/20 rounded-xl px-3 py-2">
+              <Sparkles size={13} className="shrink-0" /> Claude refined this grouping.
+            </div>
+          )}
+
           <div className="flex flex-col gap-1.5 max-h-64 overflow-y-auto">
-            {pairs.map((p, i) => (
+            {groups.map((g, i) => (
               <div key={i} className={cn(
-                'flex items-center justify-between text-sm px-3 py-2 rounded-xl border',
-                p.compatible ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-amber-500/10 border-amber-500/20',
+                'flex items-center justify-between text-sm px-3 py-2 rounded-xl border gap-2',
+                g.compatible ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-amber-500/10 border-amber-500/20',
               )}>
                 <span className="text-primary/90">
-                  {p.entry_a.name} <span className="text-muted font-mono text-xs">({p.entry_a.average}%)</span>
-                  <span className="mx-1.5 text-secondary">vs</span>
-                  {p.entry_b.name} <span className="text-muted font-mono text-xs">({p.entry_b.average}%)</span>
+                  {g.members.map((m, j) => (
+                    <span key={m.id}>
+                      {j > 0 && <span className="mx-1.5 text-secondary">vs</span>}
+                      {m.name} <span className="text-muted font-mono text-xs">({m.average}%)</span>
+                    </span>
+                  ))}
                 </span>
-                <span className={cn('font-mono text-xs shrink-0 ml-2', p.compatible ? 'text-emerald-400' : 'text-amber-400')}>
-                  {p.gap} pts
+                <span className={cn('font-mono text-xs shrink-0 ml-2', g.compatible ? 'text-emerald-400' : 'text-amber-400')}>
+                  {g.gap} pts
                 </span>
               </div>
             ))}
           </div>
 
-          {preview?.bye && (
+          {preview && preview.byes.length > 0 && (
             <p className="text-xs text-muted">
-              <strong className="text-secondary">Sitting out:</strong> {preview.bye.name} ({preview.bye.average}%) — odd number of entrants, no even match available.
+              <strong className="text-secondary">Sitting out:</strong>{' '}
+              {preview.byes.map(b => `${b.name} (${b.average}%)`).join(', ')} — no even-level match available.
             </p>
           )}
           {preview && preview.insufficient_history.length > 0 && (
@@ -609,16 +812,43 @@ function Podium({ rows }: { rows: EntryResult[] }) {
 }
 
 // ── Challenge card ───────────────────────────────────────────────────────────
-function ChallengeCard({ challenge }: { challenge: Challenge }) {
+function ChallengeCard({ challenge, selectable, selected, onToggleSelect, editable, onEdit }: {
+  challenge: Challenge; selectable?: boolean; selected?: boolean; onToggleSelect?: () => void;
+  editable?: boolean; onEdit?: () => void;
+}) {
   return (
-    <div className="card p-3.5 flex flex-col gap-2.5">
+    <div
+      className={cn('card p-3.5 flex flex-col gap-2.5 transition-colors', selectable && 'cursor-pointer',
+        selectable && selected && 'ring-2 ring-rose-500/60 bg-rose-500/5')}
+      onClick={selectable ? onToggleSelect : undefined}
+    >
       <div className="flex items-center justify-between">
         <p className="text-xs font-display font-semibold text-secondary uppercase tracking-widest flex items-center gap-1.5">
+          {selectable && (
+            <input
+              type="checkbox"
+              checked={!!selected}
+              onChange={onToggleSelect}
+              onClick={e => e.stopPropagation()}
+              className="w-3.5 h-3.5 rounded accent-rose-500 mr-0.5"
+            />
+          )}
           <Swords size={12} /> {challenge.label || 'Unlabeled Duel'}
         </p>
-        <span className={cn('badge', challenge.status === 'resolved' ? 'badge-green' : challenge.status === 'void' ? 'badge-rose' : 'badge-amber')}>
-          {challenge.status === 'resolved' ? 'Resolved' : challenge.status === 'void' ? 'Void' : 'Pending'}
-        </span>
+        <div className="flex items-center gap-1.5">
+          {editable && !selectable && (
+            <button
+              onClick={e => { e.stopPropagation(); onEdit?.(); }}
+              className="text-secondary hover:text-azure-400 p-1 rounded-lg hover:bg-surface-700"
+              title="Edit challenge"
+            >
+              <Pencil size={12} />
+            </button>
+          )}
+          <span className={cn('badge', challenge.status === 'resolved' ? 'badge-green' : challenge.status === 'void' ? 'badge-rose' : 'badge-amber')}>
+            {challenge.status === 'resolved' ? 'Resolved' : challenge.status === 'void' ? 'Void' : 'Pending'}
+          </span>
+        </div>
       </div>
       <div className="flex flex-wrap items-center gap-2">
         {challenge.entries.map((e, i) => (
@@ -795,9 +1025,12 @@ function TournamentDetailPanel({ tournamentId, onClose }: { tournamentId: number
   const [tab, setTab] = useState<'roster' | 'challenges' | 'leaderboard' | 'analytics' | 'rivalry'>('roster');
   const [registerOpen, setRegisterOpen] = useState(false);
   const [challengeOpen, setChallengeOpen] = useState(false);
+  const [editingChallenge, setEditingChallenge] = useState<Challenge | null>(null);
   const [autoMatchOpen, setAutoMatchOpen] = useState(false);
   const [exportingFormat, setExportingFormat] = useState<'pdf' | 'excel' | null>(null);
   const [exportingMatchups, setExportingMatchups] = useState(false);
+  const [selectingChallenges, setSelectingChallenges] = useState(false);
+  const [selectedChallengeIds, setSelectedChallengeIds] = useState<number[]>([]);
 
   const { data: tournament, isLoading } = useQuery<TournamentDetail>({
     queryKey: ['tournament', tournamentId],
@@ -845,6 +1078,18 @@ function TournamentDetailPanel({ tournamentId, onClose }: { tournamentId: number
     },
   });
 
+  const deleteChallengesMutation = useMutation({
+    mutationFn: (challengeIds: number[]) => tournamentsApi.deleteChallenges(tournamentId, challengeIds),
+    onSuccess: (res) => {
+      const n = res.data?.deleted_count ?? selectedChallengeIds.length;
+      toast.success(`Removed ${n} duel${n !== 1 ? 's' : ''}`);
+      setSelectedChallengeIds([]);
+      setSelectingChallenges(false);
+      queryClient.invalidateQueries({ queryKey: ['tournament', tournamentId] });
+    },
+    onError: (err: any) => toast.error(err?.response?.data?.detail || 'Could not remove the selected duel(s)'),
+  });
+
   const handleExport = async (fmt: 'pdf' | 'excel') => {
     setExportingFormat(fmt);
     try {
@@ -873,6 +1118,10 @@ function TournamentDetailPanel({ tournamentId, onClose }: { tournamentId: number
       setExportingMatchups(false);
     }
   };
+
+  useEffect(() => {
+    if (tab !== 'challenges') { setSelectingChallenges(false); setSelectedChallengeIds([]); }
+  }, [tab]);
 
   if (isLoading || !tournament) return <div className="card p-6"><LoadingPage /></div>;
 
@@ -1011,6 +1260,39 @@ function TournamentDetailPanel({ tournamentId, onClose }: { tournamentId: number
                     <ScanLine size={13} /> Matchups PDF
                   </Button>
                 )}
+                {isStaff && tournament.challenges.length > 0 && tournament.status !== 'completed' && (
+                  selectingChallenges ? (
+                    <>
+                      <Button size="sm" variant="secondary" onClick={() => {
+                        setSelectedChallengeIds(prev =>
+                          prev.length === tournament.challenges.length ? [] : tournament.challenges.map(c => c.id));
+                      }}>
+                        <ListChecks size={13} />
+                        {selectedChallengeIds.length === tournament.challenges.length ? 'Deselect All' : 'Select All'}
+                      </Button>
+                      <Button
+                        size="sm" variant="danger"
+                        disabled={selectedChallengeIds.length === 0}
+                        loading={deleteChallengesMutation.isPending}
+                        onClick={() => {
+                          const n = selectedChallengeIds.length;
+                          if (confirm(`Remove ${n} duel${n !== 1 ? 's' : ''}? This cannot be undone.`)) {
+                            deleteChallengesMutation.mutate(selectedChallengeIds);
+                          }
+                        }}
+                      >
+                        <Trash2 size={13} /> Remove{selectedChallengeIds.length > 0 ? ` (${selectedChallengeIds.length})` : ''}
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => { setSelectingChallenges(false); setSelectedChallengeIds([]); }}>
+                        <X size={13} /> Cancel
+                      </Button>
+                    </>
+                  ) : (
+                    <Button size="sm" variant="secondary" onClick={() => setSelectingChallenges(true)}>
+                      <Trash2 size={13} /> Remove Duels
+                    </Button>
+                  )
+                )}
                 {isStaff && tournament.entries.length >= 2 && tournament.status !== 'completed' && tournament.status !== 'cancelled' && (
                   <>
                     <Button size="sm" variant="secondary" onClick={() => setAutoMatchOpen(true)}><Zap size={13} /> Auto-Match by Level</Button>
@@ -1023,7 +1305,22 @@ function TournamentDetailPanel({ tournamentId, onClose }: { tournamentId: number
               <EmptyState icon={<Swords size={28} />} title="No challenges declared" message="Students can register to challenge each other here." />
             ) : (
               <div className="flex flex-col gap-2">
-                {tournament.challenges.map(c => <ChallengeCard key={c.id} challenge={c} />)}
+                {tournament.challenges.map(c => {
+                  const canEdit = tournament.status === 'registration_open' && c.status === 'pending'
+                    && (isStaff || (isStudent && c.entries.some(e => e.student_id === user?.student_profile_id)));
+                  return (
+                    <ChallengeCard
+                      key={c.id}
+                      challenge={c}
+                      selectable={selectingChallenges}
+                      selected={selectedChallengeIds.includes(c.id)}
+                      onToggleSelect={() => setSelectedChallengeIds(prev =>
+                        prev.includes(c.id) ? prev.filter(x => x !== c.id) : [...prev, c.id])}
+                      editable={canEdit}
+                      onEdit={() => setEditingChallenge(c)}
+                    />
+                  );
+                })}
               </div>
             )}
           </>
@@ -1035,7 +1332,15 @@ function TournamentDetailPanel({ tournamentId, onClose }: { tournamentId: number
       </div>
 
       {registerOpen && <RegisterEntryModal open={registerOpen} onClose={() => setRegisterOpen(false)} tournament={tournament} />}
-      {challengeOpen && <CreateChallengeModal open={challengeOpen} onClose={() => setChallengeOpen(false)} tournament={tournament} />}
+      {challengeOpen && <ChallengeFormModal open={challengeOpen} onClose={() => setChallengeOpen(false)} tournament={tournament} />}
+      {editingChallenge && (
+        <ChallengeFormModal
+          open={!!editingChallenge}
+          onClose={() => setEditingChallenge(null)}
+          tournament={tournament}
+          challenge={editingChallenge}
+        />
+      )}
       {autoMatchOpen && <AutoMatchModal open={autoMatchOpen} onClose={() => setAutoMatchOpen(false)} tournament={tournament} />}
     </motion.div>
   );

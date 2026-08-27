@@ -229,3 +229,9 @@ FRONTEND_URL = config('FRONTEND_URL', default='http://localhost:5173').rstrip('/
 # Blank means those endpoints refuse to run — set this before relying on them.
 CRON_SECRET = config('CRON_SECRET', default='')
 
+# Optional — powers the "use AI" pass in tournaments' auto-match-by-level
+# (see apps.tournaments.services.ai_refine_groups). Leave blank to run
+# purely on the deterministic clustering algorithm; nothing else on the
+# platform depends on this key.
+ANTHROPIC_API_KEY = config('ANTHROPIC_API_KEY', default='')
+

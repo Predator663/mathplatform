@@ -324,13 +324,20 @@ export const tournamentsApi = {
   challenges: (id: number) => api.get(`/tournaments/tournaments/${id}/challenges/`),
   createChallenge: (id: number, data: { label?: string; entry_ids: number[] }) =>
     api.post(`/tournaments/tournaments/${id}/challenges/`, data),
+  updateChallenge: (id: number, challengeId: number, data: { label?: string; entry_ids?: number[] }) =>
+    api.patch(`/tournaments/tournaments/${id}/challenges/${challengeId}/`, data),
+  deleteChallenges: (id: number, challengeIds: number[]) =>
+    api.post(`/tournaments/tournaments/${id}/challenges/delete/`, { challenge_ids: challengeIds }),
   dossier: (id: number) => api.get(`/tournaments/tournaments/${id}/dossier/`),
   analytics: (id: number) => api.get(`/tournaments/tournaments/${id}/analytics/`),
   compatibility: (id: number, entryA: number, entryB: number) =>
     api.get(`/tournaments/tournaments/${id}/compatibility/`, { params: { entry_a: entryA, entry_b: entryB } }),
-  suggestedPairs: (id: number) => api.get(`/tournaments/tournaments/${id}/suggested-pairs/`),
-  autoMatch: (id: number, onlyCompatible = true) =>
-    api.post(`/tournaments/tournaments/${id}/auto-match/`, { only_compatible: onlyCompatible }),
+  suggestedPairs: (id: number, groupSize = 2, useAi = false) =>
+    api.get(`/tournaments/tournaments/${id}/suggested-pairs/`, { params: { group_size: groupSize, use_ai: useAi } }),
+  autoMatch: (id: number, onlyCompatible = true, groupSize = 2, useAi = false) =>
+    api.post(`/tournaments/tournaments/${id}/auto-match/`, {
+      only_compatible: onlyCompatible, group_size: groupSize, use_ai: useAi,
+    }),
   headToHead: (studentA: number, studentB: number) =>
     api.get('/tournaments/head-to-head/', { params: { student_a: studentA, student_b: studentB } }),
   myEntries: () => api.get('/tournaments/my-entries/'),

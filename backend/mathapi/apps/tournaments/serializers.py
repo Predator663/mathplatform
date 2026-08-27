@@ -67,6 +67,19 @@ class ChallengeCreateSerializer(serializers.Serializer):
     entry_ids = serializers.ListField(child=serializers.IntegerField(), min_length=2)
 
 
+class ChallengeUpdateSerializer(serializers.Serializer):
+    """PATCH body for editing an already-declared challenge. Both fields
+    optional so a caller can relabel without touching combatants, or vice
+    versa — but at least one must be supplied."""
+    label = serializers.CharField(required=False, allow_blank=True, max_length=120)
+    entry_ids = serializers.ListField(child=serializers.IntegerField(), min_length=2, required=False)
+
+    def validate(self, attrs):
+        if not attrs:
+            raise serializers.ValidationError('Provide at least one of label or entry_ids to update.')
+        return attrs
+
+
 class EntryResultSerializer(serializers.ModelSerializer):
     entry = EntrySlimSerializer(read_only=True)
 

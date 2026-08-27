@@ -37,11 +37,19 @@ $frontendUrl       = 'http://localhost:5173'
 #
 # Why this exists: with $ErrorActionPreference = 'Stop', PowerShell converts
 # *any* line a native command writes to stderr into a terminating error -
-# even routine warnings - and that can happen before output redirection
-# (*>, 2>) finishes writing to a log file, so you see a truncated message
-# on screen instead of the full thing in the log. This wraps the call with
-# ErrorActionPreference temporarily relaxed, then checks the real exit code
-# afterward, which is the correct way to detect native-command failure.
+# even routine warnings. The old implementation used the call operator
+# (`& $FilePath *> $LogFile`), which merges stdout/stderr through
+# PowerShell's own stream-processing pipeline - on Windows that merge can
+# silently drop or reorder content, so a real failure can end up with a
+# clean-looking log and a nonzero exit code with no explanation anywhere.
+#
+# Start-Process with -RedirectStandardOutput/-Error writes each stream
+# straight to its own file at the OS level (same approach already used
+# below for the actual backend/frontend server processes), and its
+# .ExitCode is the real, unambiguous process exit code - not something
+# PowerShell can lose track of. On failure we also echo the tail of
+# whatever got captured directly to the console, so you see the real
+# error immediately instead of having to go find the log file.
 function Invoke-Native {
     param(
         [Parameter(Mandatory)] [string]$FilePath,
@@ -49,22 +57,33 @@ function Invoke-Native {
         [string]$LogFile,
         [string]$WorkingDirectory
     )
-    $prevPref = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    try {
-        if ($WorkingDirectory) { Push-Location $WorkingDirectory }
-        if ($LogFile) {
-            & $FilePath @ArgumentList *> $LogFile
-        } else {
-            & $FilePath @ArgumentList
-        }
-    } finally {
-        if ($WorkingDirectory) { Pop-Location }
-        $ErrorActionPreference = $prevPref
+    $stdOut = if ($LogFile) { $LogFile } else { Join-Path $env:TEMP "invoke-native-$PID-out.log" }
+    $stdErr = if ($LogFile) { "$LogFile.stderr" } else { Join-Path $env:TEMP "invoke-native-$PID-err.log" }
+
+    $procArgs = @{
+        FilePath               = $FilePath
+        ArgumentList            = $ArgumentList
+        Wait                    = $true
+        PassThru                = $true
+        NoNewWindow             = $true
+        RedirectStandardOutput  = $stdOut
+        RedirectStandardError   = $stdErr
     }
-    if ($LASTEXITCODE -ne 0) {
-        $hint = if ($LogFile) { " Full output: $LogFile" } else { "" }
-        throw "'$FilePath $($ArgumentList -join ' ')' failed with exit code $LASTEXITCODE.$hint"
+    if ($WorkingDirectory) { $procArgs['WorkingDirectory'] = $WorkingDirectory }
+
+    $proc = Start-Process @procArgs
+
+    if ($proc.ExitCode -ne 0) {
+        $tail = @(Get-Content $stdOut -ErrorAction SilentlyContinue -Tail 25) +
+                @(Get-Content $stdErr -ErrorAction SilentlyContinue -Tail 25)
+        if ($tail) {
+            Write-Host ''
+            Write-Host "----- last output from '$FilePath $($ArgumentList -join ' ')' -----" -ForegroundColor Yellow
+            $tail | ForEach-Object { Write-Host $_ }
+            Write-Host "----------------------------------------------------------------" -ForegroundColor Yellow
+        }
+        $hint = if ($LogFile) { " Full output: $stdOut (stderr: $stdErr)" } else { "" }
+        throw "'$FilePath $($ArgumentList -join ' ')' failed with exit code $($proc.ExitCode).$hint"
     }
 }
 
@@ -139,7 +158,8 @@ if ($backendProc) {
     Write-Step "Applying database migrations..."
     Invoke-Native -FilePath $venvPython `
         -ArgumentList @((Join-Path $backendDir 'manage.py'), 'migrate', '--run-syncdb') `
-        -LogFile "$backendLog.migrate"
+        -LogFile "$backendLog.migrate" `
+        -WorkingDirectory $backendDir
 
     Write-Step "Starting backend (Django) on http://127.0.0.1:8000 ..."
     # --noreload: the autoreloader spawns a child watcher process, and killing

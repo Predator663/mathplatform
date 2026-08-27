@@ -2083,8 +2083,28 @@ def generate_tournament_dossier_pdf(tournament, dossier, analytics,
     return buf.getvalue()
 
 
+def _paired_name_table(names, styles):
+    """Two-names-per-row table of _name_cell Paragraphs, used for the
+    'still waiting' rosters (unmatched entrants, unregistered students) so
+    the list doesn't run needlessly long/narrow down a single column."""
+    rows = [[_name_cell(name, styles, 'table_name_reg')] for name in names]
+    paired_rows = [rows[i] + (rows[i+1] if i+1 < len(rows) else [''])
+                   for i in range(0, len(rows), 2)]
+    tbl = Table(paired_rows, colWidths=[(PAGE_W - 2*MARGIN)/2]*2)
+    tbl.setStyle(TableStyle([
+        ('GRID', (0, 0), (-1, -1), 0.3, colors.HexColor('#e5e7eb')),
+        ('ROWBACKGROUNDS', (0, 0), (-1, -1), [colors.white, BRAND_LIGHT]),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('TOPPADDING', (0, 0), (-1, -1), 6),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+        ('LEFTPADDING', (0, 0), (-1, -1), 8),
+    ]))
+    return tbl
+
+
 def generate_challenge_matchups_pdf(tournament, challenges, unmatched_entries,
-                                     school_name='School of Excellence') -> bytes:
+                                     school_name='School of Excellence',
+                                     unregistered_students=None) -> bytes:
     """
     "Who am I facing?" sheet — deliberately separate from the full intel
     dossier above. One focused table of every declared duel so a student
@@ -2098,11 +2118,18 @@ def generate_challenge_matchups_pdf(tournament, challenges, unmatched_entries,
     middle names are shown as a single initial (see _compact_name).
 
     `challenges` — queryset/list of Challenge rows for this tournament.
-    `unmatched_entries` — TournamentEntry rows not yet in any challenge.
+    `unmatched_entries` — TournamentEntry rows not yet in any challenge
+    (i.e. registered, but not yet placed in a duel).
+    `unregistered_students` — StudentProfile rows in the tournament's
+    classroom that never registered an entry at all (individual-mode
+    tournaments only — see tournaments.services.get_unregistered_students).
+    Distinct from `unmatched_entries`: these students haven't joined the
+    tournament in the first place.
     """
     buf = io.BytesIO()
     styles = _make_styles()
     challenge_list = list(challenges)
+    unregistered_students = list(unregistered_students or [])
 
     resolved_count = sum(1 for c in challenge_list if c.status == 'resolved')
     pending_count = sum(1 for c in challenge_list if c.status == 'pending')
@@ -2132,6 +2159,7 @@ def generate_challenge_matchups_pdf(tournament, challenges, unmatched_entries,
         ('AWAITING RESULTS', pending_count),
         ('VOID', void_count),
         ('NOT YET MATCHED', len(unmatched_entries)),
+        ('NOT REGISTERED', len(unregistered_students)),
     ], styles))
     story.append(Spacer(1, 0.45*cm))
 
@@ -2180,20 +2208,18 @@ def generate_challenge_matchups_pdf(tournament, challenges, unmatched_entries,
             styles['caption'],
         ))
         story.append(Spacer(1, 0.15*cm))
-        rows = [[_name_cell(e.display_name, styles, 'table_name_reg')] for e in unmatched_entries]
-        # Two names per row so the list doesn't run needlessly long/narrow.
-        paired_rows = [rows[i] + (rows[i+1] if i+1 < len(rows) else [''])
-                       for i in range(0, len(rows), 2)]
-        um_tbl = Table(paired_rows, colWidths=[(PAGE_W - 2*MARGIN)/2]*2)
-        um_tbl.setStyle(TableStyle([
-            ('GRID', (0, 0), (-1, -1), 0.3, colors.HexColor('#e5e7eb')),
-            ('ROWBACKGROUNDS', (0, 0), (-1, -1), [colors.white, BRAND_LIGHT]),
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('TOPPADDING', (0, 0), (-1, -1), 6),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-            ('LEFTPADDING', (0, 0), (-1, -1), 8),
-        ]))
-        story.append(um_tbl)
+        story.append(_paired_name_table([e.display_name for e in unmatched_entries], styles))
+        story.append(Spacer(1, 0.4*cm))
+
+    # ── Not registered at all ───────────────────────────────────────────────
+    if unregistered_students:
+        story.append(Paragraph('Not Yet Registered', styles['section']))
+        story.append(Paragraph(
+            'These classroom students haven\'t joined the tournament yet.',
+            styles['caption'],
+        ))
+        story.append(Spacer(1, 0.15*cm))
+        story.append(_paired_name_table([s.full_name for s in unregistered_students], styles))
 
     doc.build(story, onFirstPage=lambda c, d: _header_footer(c, d, meta),
               onLaterPages=lambda c, d: _header_footer(c, d, meta))

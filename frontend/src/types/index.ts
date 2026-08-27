@@ -767,26 +767,31 @@ export interface CompatibilityCheck {
   entry_b: { id: number; name: string; average: number | null };
 }
 
-export interface SuggestedPairEntry {
+export interface SuggestedGroupMember {
   id: number; student_id: number; name: string; average: number;
 }
 
-export interface SuggestedPair {
-  entry_a: SuggestedPairEntry; entry_b: SuggestedPairEntry; gap: number; compatible: boolean;
+export interface SuggestedGroup {
+  members: SuggestedGroupMember[]; size: number; gap: number; compatible: boolean;
 }
 
-export interface SuggestedPairsResponse {
-  proposed_pairs: SuggestedPair[];
-  bye: { entry_id: number; student_id: number; name: string; average: number } | null;
+export interface SuggestedGroupBye { entry_id: number; student_id: number; name: string; average: number }
+
+export interface SuggestedGroupsResponse {
+  proposed_groups: SuggestedGroup[];
+  byes: SuggestedGroupBye[];
   insufficient_history: { entry_id: number; student_id: number; name: string }[];
   threshold: number;
+  group_size: number;
+  ai_used: boolean;
 }
 
 export interface AutoMatchResponse {
   created: Challenge[];
-  skipped_incompatible: SuggestedPair[];
-  bye: { entry_id: number; student_id: number; name: string; average: number } | null;
+  skipped_incompatible: SuggestedGroup[];
+  byes: SuggestedGroupBye[];
   insufficient_history: { entry_id: number; student_id: number; name: string }[];
+  ai_used: boolean;
 }
 
 export interface EntryResult {

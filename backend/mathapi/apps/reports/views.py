@@ -722,6 +722,7 @@ class ChallengeMatchupsPDFView(APIView):
 
     def get(self, request, tournament_id):
         from mathapi.apps.accounts.scoping import scope_tournaments
+        from mathapi.apps.tournaments import services as tournament_services
         from django.shortcuts import get_object_or_404
 
         tournament = get_object_or_404(
@@ -736,8 +737,12 @@ class ChallengeMatchupsPDFView(APIView):
             tournament.entries.filter(withdrawn=False, challenges__isnull=True)
             .select_related('student__user', 'stream').distinct()
         )
+        unregistered_students = list(tournament_services.get_unregistered_students(tournament))
 
-        pdf_bytes = generate_challenge_matchups_pdf(tournament, challenges, unmatched_entries, school_name=school_name)
+        pdf_bytes = generate_challenge_matchups_pdf(
+            tournament, challenges, unmatched_entries, school_name=school_name,
+            unregistered_students=unregistered_students,
+        )
         response = HttpResponse(pdf_bytes, content_type='application/pdf')
         safe = tournament.title.replace(' ', '_')[:40]
         response['Content-Disposition'] = f'attachment; filename="tournament_{safe}_matchups.pdf"'

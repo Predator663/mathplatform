@@ -13,7 +13,7 @@ from .models import Tournament, TournamentEntry, Challenge, EntryResult
 from .serializers import (
     TournamentSerializer, TournamentCreateSerializer, TournamentDetailSerializer,
     TournamentEntryCreateSerializer, EntrySlimSerializer,
-    ChallengeSerializer, ChallengeCreateSerializer, EntryResultSerializer,
+    ChallengeSerializer, ChallengeCreateSerializer, ChallengeUpdateSerializer, EntryResultSerializer,
 )
 from . import services
 from mathapi.apps.students.models import StudentProfile, Stream
@@ -40,7 +40,8 @@ class TournamentViewSet(viewsets.ModelViewSet):
         if self.action in ['create']:
             return [IsTeacherOrAdmin()]
         if self.action in ['update', 'partial_update', 'destroy', 'open_registration',
-                            'close_registration', 'finalize', 'cancel', 'auto_match', 'register_class']:
+                            'close_registration', 'finalize', 'cancel', 'auto_match', 'register_class',
+                            'delete_challenges']:
             return [IsTeacherOrAdmin()]
         return [permissions.IsAuthenticated()]
 
@@ -246,6 +247,96 @@ class TournamentViewSet(viewsets.ModelViewSet):
         # any still-pending challenge — no need to duplicate that here.
         return Response(ChallengeSerializer(challenge).data, status=status.HTTP_201_CREATED)
 
+    @action(detail=True, methods=['patch'], url_path=r'challenges/(?P<challenge_id>\d+)')
+    def update_challenge(self, request, pk=None, challenge_id=None):
+        """
+        PATCH /api/tournaments/tournaments/<id>/challenges/<challenge_id>/
+        Body: {"label"?: str, "entry_ids"?: [id, ...]} — edits an
+        already-declared duel in place (relabel and/or swap combatants,
+        including growing or shrinking the combatant count) instead of
+        deleting and redeclaring it. Only while the tournament's
+        registration is still open and the duel itself hasn't been
+        resolved or voided yet. Same authorship rule as declaring one: a
+        student may edit a challenge only if she's (and remains, if
+        entry_ids is being changed) one of its combatants; a teacher/
+        admin may edit any.
+        """
+        tournament = self.get_object()
+        try:
+            challenge = tournament.challenges.get(id=challenge_id)
+        except Challenge.DoesNotExist:
+            return Response({'detail': 'Challenge not found in this tournament.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if tournament.status != Tournament.Status.REGISTRATION_OPEN:
+            return Response({'detail': 'Challenges can only be edited while registration is open.'},
+                             status=status.HTTP_400_BAD_REQUEST)
+        if challenge.status != Challenge.Status.PENDING:
+            return Response({'detail': 'This challenge has already been resolved and can no longer be edited.'},
+                             status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = ChallengeUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        user = request.user
+        entry_ids = data.get('entry_ids')
+
+        if user.role == 'student':
+            my_profile = _my_student_profile(request)
+            current_student_ids = set(challenge.entries.values_list('student_id', flat=True))
+            if not my_profile or my_profile.id not in current_student_ids:
+                return Response({'detail': 'You can only edit a challenge you are part of.'}, status=status.HTTP_403_FORBIDDEN)
+        elif user.role not in ('teacher', 'super_admin'):
+            return Response({'detail': 'Not permitted.'}, status=status.HTTP_403_FORBIDDEN)
+
+        if entry_ids is not None:
+            entries = list(tournament.entries.filter(id__in=entry_ids, withdrawn=False))
+            if len(entries) != len(set(entry_ids)):
+                return Response({'detail': 'One or more entries were not found in this tournament.'}, status=status.HTTP_400_BAD_REQUEST)
+            if user.role == 'student':
+                my_profile = _my_student_profile(request)
+                mine = [e for e in entries if e.student_id and my_profile and e.student_id == my_profile.id]
+                if not mine:
+                    return Response({'detail': 'You must remain a combatant in a challenge you edit.'}, status=status.HTTP_403_FORBIDDEN)
+
+        services.update_challenge(challenge, label=data.get('label'), entry_ids=entry_ids)
+        return Response(ChallengeSerializer(challenge).data)
+
+    @action(detail=True, methods=['post'], url_path='challenges/delete')
+    def delete_challenges(self, request, pk=None):
+        """
+        POST /api/tournaments/tournaments/<id>/challenges/delete/
+        Body: {"challenge_ids": [1, 2, 3]} — removes one, several, or (by
+        passing every id currently declared) all duels at once. Teacher/
+        admin only. Blocked once the tournament is finalized: a resolved
+        challenge already fed into the leaderboard, badge awards, and win
+        streaks, so un-declaring it after the fact would silently corrupt
+        results that were already handed out. Cancel/reopen the tournament
+        first if a finalized duel genuinely needs to be undone.
+        """
+        tournament = self.get_object()
+        if tournament.status == Tournament.Status.COMPLETED:
+            return Response(
+                {'detail': 'This tournament is finalized — duels can no longer be removed.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        challenge_ids = request.data.get('challenge_ids') or []
+        if not isinstance(challenge_ids, list) or not challenge_ids:
+            return Response({'detail': 'challenge_ids is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        qs = tournament.challenges.filter(id__in=challenge_ids)
+        found_ids = set(qs.values_list('id', flat=True))
+        missing = set(challenge_ids) - found_ids
+        if missing:
+            return Response(
+                {'detail': f'{len(missing)} challenge(s) were not found in this tournament.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        deleted_count, _ = qs.delete()
+        return Response({'deleted_count': len(found_ids)}, status=status.HTTP_200_OK)
+
     @action(detail=True, methods=['get'], url_path='compatibility')
     def compatibility(self, request, pk=None):
         """
@@ -272,34 +363,55 @@ class TournamentViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'], url_path='suggested-pairs')
     def suggested_pairs(self, request, pk=None):
         """
-        GET /api/tournaments/<id>/suggested-pairs/ — a preview of the
-        same-level pairings auto-match would create, without writing
-        anything. Every unpaired individual entrant, ranked by historical
-        average and matched to her closest neighbour.
+        GET /api/tournaments/<id>/suggested-pairs/?group_size=&use_ai= —
+        a preview of the same-level groupings auto-match would create,
+        without writing anything. Every unmatched individual entrant,
+        clustered by historical average into same-level groups (not
+        necessarily pairs — see services.suggest_level_groups).
+        group_size (default 2) biases the target group headcount;
+        use_ai=true asks Claude to take a refinement pass over the
+        grouping first (falls back silently if unavailable).
         """
         tournament = self.get_object()
-        return Response(services.suggest_compatible_pairs(tournament))
+        try:
+            group_size = int(request.query_params.get('group_size') or services.DEFAULT_GROUP_SIZE)
+        except (TypeError, ValueError):
+            group_size = services.DEFAULT_GROUP_SIZE
+        use_ai = str(request.query_params.get('use_ai', '')).lower() in ('1', 'true', 'yes')
+        return Response(services.suggest_level_groups(tournament, group_size=group_size, use_ai=use_ai))
 
     @action(detail=True, methods=['post'], url_path='auto-match')
     def auto_match(self, request, pk=None):
         """
         POST /api/tournaments/<id>/auto-match/ — materializes
-        suggested-pairs into real Challenge rows. Body: {"only_compatible":
-        true} (default) skips any pair that's still a skill mismatch after
-        best-effort pairing, leaving them for manual review; pass false to
-        pair everyone regardless of gap. Teacher/admin only — this is a
-        bulk action over the whole roster, not a single self-registration.
+        suggested-pairs into real Challenge rows, each a group of 2 or
+        more combatants (not necessarily a pair). Body: {"only_compatible":
+        true} (default) skips any group that's still a skill mismatch
+        after best-effort clustering, leaving it for manual review; pass
+        false to create every group regardless of gap. "group_size"
+        (default 2) biases the target headcount per group. "use_ai": true
+        asks Claude to refine the grouping before it's created — falls
+        back to the deterministic clustering if the AI call fails or
+        ANTHROPIC_API_KEY isn't configured. Teacher/admin only — this is
+        a bulk action over the whole roster, not a single self-registration.
         """
         tournament = self.get_object()
         only_compatible = request.data.get('only_compatible', True)
-        result = services.auto_create_compatible_challenges(
+        try:
+            group_size = int(request.data.get('group_size') or services.DEFAULT_GROUP_SIZE)
+        except (TypeError, ValueError):
+            group_size = services.DEFAULT_GROUP_SIZE
+        use_ai = bool(request.data.get('use_ai', False))
+        result = services.auto_create_level_challenges(
             tournament, created_by=request.user, only_compatible=bool(only_compatible),
+            group_size=group_size, use_ai=use_ai,
         )
         return Response({
             'created': ChallengeSerializer(result['created'], many=True).data,
             'skipped_incompatible': result['skipped_incompatible'],
-            'bye': result['bye'],
+            'byes': result['byes'],
             'insufficient_history': result['insufficient_history'],
+            'ai_used': result['ai_used'],
         }, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['get'])

@@ -5,6 +5,12 @@ duplicated. EntryResult rows are a cache of that read, rebuilt from scratch
 every time finalize_tournament() runs — exactly the same "safe to
 re-run" philosophy as gamification.services.recalculate_streak.
 """
+import json
+import logging
+import os
+
+import requests
+from django.conf import settings
 from django.db import transaction
 from django.db.models import Avg
 from django.utils import timezone
@@ -12,9 +18,13 @@ from django.utils import timezone
 from mathapi.apps.exams.models import ExamScore
 from .models import Tournament, TournamentEntry, Challenge, EntryResult
 
+logger = logging.getLogger(__name__)
+
 GIANT_SLAYER_GAP = 12.0     # percentage points the winner must have trailed the loser's seed by
 RISING_STAR_DELTA = 15.0    # percentage points above own prior average to count as a rising star
 LEVEL_COMPATIBILITY_GAP = 15.0  # percentage points apart before two entrants count as "different level"
+DEFAULT_GROUP_SIZE = 2          # auto-match's target headcount per challenge when not otherwise told
+MAX_GROUP_SIZE = 6              # a "duel" with more combatants than this stops being a meaningful head-to-head
 
 
 def _student_entry_score(student_id, exam):
@@ -126,6 +136,32 @@ def register_entire_class(tournament: Tournament, *, registered_by=None):
         'already_registered_count': len(already_registered_ids),
         'skipped_due_to_cap': left_out_by_cap,
     }
+
+
+def get_unregistered_students(tournament: Tournament):
+    """
+    Active students in the tournament's own classroom who have never
+    registered an entry (or withdrew one) — distinct from
+    `unmatched_entries` used elsewhere, which are students who DID
+    register but haven't been placed in a duel yet. Individual-mode only
+    (mirrors register_entire_class — a stream-mode tournament registers
+    whole streams, not individual students, so "unregistered students"
+    isn't a meaningful concept there).
+    """
+    from mathapi.apps.students.models import StudentProfile
+
+    if tournament.mode != Tournament.Mode.INDIVIDUAL:
+        return StudentProfile.objects.none()
+
+    registered_ids = set(
+        tournament.entries.filter(withdrawn=False, student__isnull=False).values_list('student_id', flat=True)
+    )
+    return (
+        StudentProfile.objects.filter(classroom=tournament.classroom, is_active=True)
+        .exclude(id__in=registered_ids)
+        .select_related('user')
+        .order_by('user__first_name', 'user__last_name')
+    )
 
 
 @transaction.atomic
@@ -424,7 +460,7 @@ def check_entry_compatibility(entry_a: TournamentEntry, entry_b: TournamentEntry
     This never blocks anything — a wide-gap duel is still a perfectly
     valid "giant slayer" story the badge system already rewards — it's
     purely informational, surfaced so a teacher can choose to re-pair a
-    lopsided matchup via auto_create_compatible_challenges() instead.
+    lopsided matchup via auto_create_level_challenges() instead.
 
     Only meaningful for two individual (student) entries; stream entries
     return compatible=None since "level" isn't a single number for a
@@ -461,46 +497,199 @@ def check_entry_compatibility(entry_a: TournamentEntry, entry_b: TournamentEntry
 
 
 def check_challenge_compatibility(challenge: Challenge) -> dict | None:
-    """Same check as check_entry_compatibility, but for an already-created
-    two-entry Challenge. Returns None for challenges that aren't a clean
-    student-vs-student pair (byes, 3+-way, stream duels)."""
+    """
+    Same idea as check_entry_compatibility, but for an already-created
+    Challenge with two OR MORE entries: reports the widest average-score
+    spread across every member. Returns None for stream duels or a
+    single-entry challenge, where "level" isn't a comparable number.
+    """
     entries = list(challenge.entries.select_related('student', 'stream', 'tournament__exam').all())
-    if len(entries) != 2:
+    if len(entries) < 2:
         return None
-    return check_entry_compatibility(entries[0], entries[1])
+    if len(entries) == 2:
+        return check_entry_compatibility(entries[0], entries[1])
+    if any(not e.student_id for e in entries):
+        return {
+            'compatible': None, 'gap': None, 'threshold': LEVEL_COMPATIBILITY_GAP,
+            'reason': 'Compatibility is only evaluated for student-vs-student entries.',
+            'members': [{'id': e.id, 'name': e.display_name, 'average': None} for e in entries],
+        }
+    averages = []
+    for e in entries:
+        avg = get_prior_average(e.student, exclude_exam=e.tournament.exam)
+        averages.append((e, avg))
+    if any(avg is None for _, avg in averages):
+        missing = ', '.join(e.display_name for e, avg in averages if avg is None)
+        return {
+            'compatible': None, 'gap': None, 'threshold': LEVEL_COMPATIBILITY_GAP,
+            'reason': f'{missing} has no prior exam history yet, so capability cannot be judged.',
+            'members': [{'id': e.id, 'name': e.display_name, 'average': avg} for e, avg in averages],
+        }
+    gap = round(max(avg for _, avg in averages) - min(avg for _, avg in averages), 2)
+    compatible = gap <= LEVEL_COMPATIBILITY_GAP
+    return {
+        'compatible': compatible, 'gap': gap, 'threshold': LEVEL_COMPATIBILITY_GAP,
+        'reason': None if compatible else f'{gap} percentage points apart on average — different skill levels.',
+        'members': [{'id': e.id, 'name': e.display_name, 'average': avg} for e, avg in averages],
+    }
 
 
-def _pair_adjacent(ranked: list) -> list:
-    """ranked: list of (entry, avg) sorted descending, even length. Pairs
-    strictly consecutively — the arrangement that minimises every pair's
-    gap simultaneously for a FIXED, already-sorted list."""
-    pairs = []
-    for i in range(0, len(ranked) - 1, 2):
-        pairs.append((ranked[i], ranked[i + 1]))
-    return pairs
+def _cluster_ranked_by_level(ranked: list, max_group_size: int) -> list:
+    """ranked: list of (entry, avg) sorted descending. Walks the list and
+    starts a new tier whenever the gap to the next student exceeds
+    LEVEL_COMPATIBILITY_GAP, so tiers reflect natural skill clusters
+    rather than a fixed headcount — this is what lets auto-match propose
+    a 3-, 4-, or 5-way group instead of always forcing pairs. Any tier
+    still bigger than max_group_size is chopped into max_group_size-sized
+    chunks, kept in ranked order so each chunk stays as tight as
+    possible."""
+    if not ranked:
+        return []
+    tiers = [[ranked[0]]]
+    for prev, curr in zip(ranked, ranked[1:]):
+        if abs(prev[1] - curr[1]) <= LEVEL_COMPATIBILITY_GAP:
+            tiers[-1].append(curr)
+        else:
+            tiers.append([curr])
+
+    chunks = []
+    for tier in tiers:
+        for i in range(0, len(tier), max_group_size):
+            chunks.append(tier[i:i + max_group_size])
+    return chunks
 
 
-def suggest_compatible_pairs(tournament: Tournament) -> dict:
+def _merge_singletons(chunks: list, max_group_size: int) -> list:
+    """A chunk of size 1 (a lone student whose nearest neighbours were too
+    far off to cluster with) is folded into whichever adjacent chunk
+    still has room, so far fewer entrants end up sitting out purely
+    because of a chunk boundary. Whatever's still alone afterwards
+    becomes a genuine bye."""
+    chunks = [list(c) for c in chunks]
+    i = 0
+    while i < len(chunks):
+        if len(chunks[i]) == 1:
+            target = None
+            if i > 0 and len(chunks[i - 1]) < max_group_size:
+                target = i - 1
+            elif i + 1 < len(chunks) and len(chunks[i + 1]) < max_group_size:
+                target = i + 1
+            if target is not None:
+                chunks[target].append(chunks[i][0])
+                chunks[target].sort(key=lambda pair: pair[1], reverse=True)
+                chunks.pop(i)
+                continue
+        i += 1
+    return chunks
+
+
+def ai_refine_groups(tournament: Tournament, ranked: list, group_size: int) -> list | None:
+    """
+    Optional AI-assisted pass over the algorithmic grouping. Sends each
+    unmatched entrant's name and historical average to Claude and asks it
+    to propose the fairest same-level groupings — factoring in things a
+    pure numeric gap threshold can't, like keeping a tight three-way
+    cluster together rather than splitting it 2-plus-a-bye, or balancing
+    group sizes evenly across the roster.
+
+    Never required for auto-match to work: if ANTHROPIC_API_KEY isn't
+    configured, the request fails, or the reply can't be parsed into a
+    valid grouping, this returns None and the caller silently falls back
+    to the deterministic _cluster_ranked_by_level result — the AI only
+    ever refines a grouping, it never gatekeeps one.
+    """
+    api_key = getattr(settings, 'ANTHROPIC_API_KEY', '') or os.environ.get('ANTHROPIC_API_KEY', '')
+    if not api_key or len(ranked) < 2:
+        return None
+
+    roster = [{'id': entry.id, 'name': entry.display_name, 'average': avg} for entry, avg in ranked]
+    prompt = (
+        'You are grouping students into fair, same-skill-level challenge groups for a '
+        "classroom maths tournament. Each student's average score % from prior exams is "
+        'given below — group students so each group is as close in average as possible. '
+        f'Prefer groups of about {group_size} students, but you may use groups of 2 to '
+        f'{MAX_GROUP_SIZE} where that produces a fairer match (e.g. keep a tight three-way '
+        'cluster together rather than splitting it 2-plus-a-bye). Every student should '
+        'appear in exactly one group of 2 or more; only omit someone as a bye if the '
+        'roster size makes one truly unavoidable.\n\n'
+        f'Roster (id, name, average): {json.dumps(roster)}\n\n'
+        'Reply with ONLY a JSON object, no other text, no markdown fences, in exactly this '
+        'shape: {"groups": [[id, id, ...], ...], "bye_ids": [id, ...]}'
+    )
+    try:
+        response = requests.post(
+            'https://api.anthropic.com/v1/messages',
+            headers={
+                'x-api-key': api_key,
+                'anthropic-version': '2023-06-01',
+                'content-type': 'application/json',
+            },
+            json={
+                'model': 'claude-sonnet-5',
+                'max_tokens': 1024,
+                'messages': [{'role': 'user', 'content': prompt}],
+            },
+            timeout=20,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        text = ''.join(
+            block.get('text', '') for block in payload.get('content', []) if block.get('type') == 'text'
+        ).strip()
+        if text.startswith('```'):
+            text = text.strip('`')
+            if text.startswith('json'):
+                text = text[4:]
+        parsed = json.loads(text.strip())
+    except Exception:
+        logger.warning('AI group refinement failed; falling back to algorithmic grouping.', exc_info=True)
+        return None
+
+    by_id = {entry.id: (entry, avg) for entry, avg in ranked}
+    groups = []
+    placed = set()
+    for group_ids in parsed.get('groups', []):
+        if not isinstance(group_ids, list):
+            continue
+        group = [by_id[i] for i in group_ids if i in by_id and i not in placed]
+        if len(group) >= 2:
+            groups.append(group)
+            placed.update(entry.id for entry, _ in group)
+
+    # Anyone the model dropped, duplicated away, or left in a group of one
+    # still needs a home — hand whoever's left over to the deterministic
+    # clustering rather than losing them from the proposal entirely.
+    leftover = [pair for pair in ranked if pair[0].id not in placed]
+    if leftover:
+        groups.extend(_merge_singletons(_cluster_ranked_by_level(leftover, MAX_GROUP_SIZE), MAX_GROUP_SIZE))
+
+    return groups or None
+
+
+def suggest_level_groups(tournament: Tournament, *, group_size: int = DEFAULT_GROUP_SIZE, use_ai: bool = False) -> dict:
     """
     Looks at every individual entrant who isn't already in a challenge and
-    proposes same-level 1-v-1 pairings from their historical averages
-    (every previous published exam, same source as get_prior_average).
+    proposes same-level groupings from their historical averages (every
+    previous published exam, same source as get_prior_average) — the
+    generalised, N-way successor to the old strict-pairs matcher. Groups
+    aren't forced to a fixed headcount: entrants are clustered by natural
+    skill tier first (anyone within LEVEL_COMPATIBILITY_GAP of their
+    neighbours falls into the same tier), and a tier is only chopped up
+    if it would otherwise exceed MAX_GROUP_SIZE. group_size biases the
+    *target* chunk size that chopping (and the AI pass, if used) aims
+    for — it's a preference, not a hard cap. Pass use_ai=True to let
+    Claude take a refinement pass over the result first (silently
+    ignored if unavailable — see ai_refine_groups).
 
-    Strategy: sort entrants by average descending, then pair adjacent
-    students. With an odd number of entrants, someone has to sit out —
-    rather than always benching the lowest scorer (which can force a
-    lopsided pair elsewhere, e.g. when the odd one out sits in the middle
-    of a tightly-clustered tier), every possible bye candidate is tried
-    and whichever leaves the smallest total gap across all resulting
-    pairs is kept. For typical classroom-sized tournaments this exhaustive
-    check is cheap (O(n^2) comparisons on a few dozen entrants at most).
-
-    Returns proposed pairs (each tagged compatible/not, same as
-    check_entry_compatibility), the student sitting out as a bye, and
+    Returns proposed groups (each tagged compatible/not — a group counts
+    as compatible if its full average spread is within
+    LEVEL_COMPATIBILITY_GAP), every student left over as a bye, and
     students excluded for having no exam history to seed a level from —
     nothing here is written to the database; see
-    auto_create_compatible_challenges for that.
+    auto_create_level_challenges for that.
     """
+    group_size = max(2, min(int(group_size or DEFAULT_GROUP_SIZE), MAX_GROUP_SIZE))
+
     unpaired_entries = list(
         tournament.entries.filter(withdrawn=False, student__isnull=False, challenges__isnull=True)
         .select_related('student', 'tournament__exam')
@@ -517,66 +706,75 @@ def suggest_compatible_pairs(tournament: Tournament) -> dict:
 
     ranked.sort(key=lambda pair: pair[1], reverse=True)
 
-    best_pairs, best_bye = [], None
-    if len(ranked) % 2 == 0:
-        best_pairs = _pair_adjacent(ranked)
-    elif len(ranked) == 1:
-        best_bye = ranked[0]
-    elif ranked:
-        best_total_gap = None
-        for skip_idx in range(len(ranked)):
-            remaining = ranked[:skip_idx] + ranked[skip_idx + 1:]
-            candidate_pairs = _pair_adjacent(remaining)
-            total_gap = sum(abs(a - b) for (_, a), (_, b) in candidate_pairs)
-            if best_total_gap is None or total_gap < best_total_gap:
-                best_total_gap, best_pairs, best_bye = total_gap, candidate_pairs, ranked[skip_idx]
+    ai_used = False
+    groups = None
+    if use_ai and len(ranked) >= 2:
+        groups = ai_refine_groups(tournament, ranked, group_size)
+        ai_used = groups is not None
 
-    pairs = []
-    for (entry_a, avg_a), (entry_b, avg_b) in best_pairs:
-        gap = round(abs(avg_a - avg_b), 2)
-        pairs.append({
-            'entry_a': {'id': entry_a.id, 'student_id': entry_a.student_id, 'name': entry_a.display_name, 'average': avg_a},
-            'entry_b': {'id': entry_b.id, 'student_id': entry_b.student_id, 'name': entry_b.display_name, 'average': avg_b},
+    if groups is None:
+        groups = _merge_singletons(_cluster_ranked_by_level(ranked, group_size), group_size)
+
+    byes = []
+    finished_groups = []
+    for group in groups:
+        if len(group) < 2:
+            entry, avg = group[0]
+            byes.append({'entry_id': entry.id, 'student_id': entry.student_id, 'name': entry.display_name, 'average': avg})
+            continue
+        finished_groups.append(group)
+
+    proposed = []
+    for group in finished_groups:
+        averages = [avg for _, avg in group]
+        gap = round(max(averages) - min(averages), 2)
+        proposed.append({
+            'members': [
+                {'id': entry.id, 'student_id': entry.student_id, 'name': entry.display_name, 'average': avg}
+                for entry, avg in group
+            ],
+            'size': len(group),
             'gap': gap,
             'compatible': gap <= LEVEL_COMPATIBILITY_GAP,
         })
 
-    bye = None
-    if best_bye is not None:
-        entry, avg = best_bye
-        bye = {'entry_id': entry.id, 'student_id': entry.student_id, 'name': entry.display_name, 'average': avg}
-
     return {
-        'proposed_pairs': pairs,
-        'bye': bye,
+        'proposed_groups': proposed,
+        'byes': byes,
         'insufficient_history': insufficient_history,
         'threshold': LEVEL_COMPATIBILITY_GAP,
+        'group_size': group_size,
+        'ai_used': ai_used,
     }
 
 
 @transaction.atomic
-def auto_create_compatible_challenges(tournament: Tournament, *, created_by=None, only_compatible=True) -> dict:
+def auto_create_level_challenges(tournament: Tournament, *, created_by=None, only_compatible=True,
+                                  group_size: int = DEFAULT_GROUP_SIZE, use_ai: bool = False) -> dict:
     """
-    Materializes suggest_compatible_pairs() into real Challenge rows.
-    With only_compatible=True (the default), pairs whose gap still
-    exceeds LEVEL_COMPATIBILITY_GAP after best-effort adjacent pairing are
-    left uncreated (e.g. a lone high-flyer with no similarly-strong peer
-    left to pair against) so a teacher can review and pair them manually
-    instead of forcing a mismatch. Pass only_compatible=False to pair
-    everyone regardless of gap size.
+    Materializes suggest_level_groups() into real Challenge rows — each
+    proposed group becomes one multi-combatant Challenge (2, 3, 4 or more
+    entries, not necessarily a pair). With only_compatible=True (the
+    default), any group whose spread still exceeds
+    LEVEL_COMPATIBILITY_GAP after best-effort clustering is left
+    uncreated (e.g. a lone high-flyer with no similarly-strong peers left
+    to group with) so a teacher can review and pair them manually instead
+    of forcing a mismatch. Pass only_compatible=False to create every
+    proposed group regardless of spread.
     """
-    suggestion = suggest_compatible_pairs(tournament)
+    suggestion = suggest_level_groups(tournament, group_size=group_size, use_ai=use_ai)
     created = []
     skipped = []
-    for pair in suggestion['proposed_pairs']:
-        if only_compatible and not pair['compatible']:
-            skipped.append(pair)
+    for group in suggestion['proposed_groups']:
+        if only_compatible and not group['compatible']:
+            skipped.append(group)
             continue
-        entry_a_id, entry_b_id = pair['entry_a']['id'], pair['entry_b']['id']
-        entries = TournamentEntry.objects.filter(id__in=[entry_a_id, entry_b_id])
+        entry_ids = [m['id'] for m in group['members']]
+        entries = TournamentEntry.objects.filter(id__in=entry_ids)
+        names = ' vs '.join(m['name'] for m in group['members'])
         challenge = Challenge.objects.create(
             tournament=tournament,
-            label=f"Level Match — {pair['entry_a']['name']} vs {pair['entry_b']['name']}",
+            label=f'Level Match — {names}',
             initiated_by=created_by,
         )
         challenge.entries.set(entries)
@@ -585,9 +783,33 @@ def auto_create_compatible_challenges(tournament: Tournament, *, created_by=None
     return {
         'created': created,
         'skipped_incompatible': skipped,
-        'bye': suggestion['bye'],
+        'byes': suggestion['byes'],
         'insufficient_history': suggestion['insufficient_history'],
+        'ai_used': suggestion['ai_used'],
     }
+
+
+@transaction.atomic
+def update_challenge(challenge: Challenge, *, label=None, entry_ids=None) -> Challenge:
+    """
+    Edits an already-declared challenge in place — relabel it and/or
+    change its combatants — instead of forcing a delete-and-recreate.
+    Callers are expected to have already checked that the tournament's
+    registration is still open and the challenge itself is still pending
+    (see TournamentViewSet.update_challenge) before calling this: a
+    resolved challenge has already fed the leaderboard and badge awards,
+    and a closed-registration tournament shouldn't have its matchups
+    reshuffled behind entrants' backs.
+    """
+    if label is not None:
+        challenge.label = label
+        challenge.save(update_fields=['label'])
+    if entry_ids is not None:
+        entries = TournamentEntry.objects.filter(
+            tournament=challenge.tournament, id__in=entry_ids, withdrawn=False,
+        )
+        challenge.entries.set(entries)
+    return challenge
 
 
 def get_head_to_head(student_a_id, student_b_id) -> dict:
