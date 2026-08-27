@@ -131,6 +131,16 @@ class Challenge(models.Model):
                                 related_name='won_challenges')
     is_tie = models.BooleanField(default=False)
     initiated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='initiated_challenges')
+    compatibility_note = models.TextField(
+        blank=True,
+        help_text=(
+            "Set when this challenge's combatants weren't a close skill-level match at "
+            "creation/edit time — an AI-written explanation of the mismatch (falls back to "
+            "a plain algorithmic sentence if Claude is unavailable), shown to the teacher as "
+            "a heads-up. Cleared automatically if a later edit brings the combatants back "
+            "within the compatibility gap. See services.sync_compatibility_note()."
+        ),
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     resolved_at = models.DateTimeField(null=True, blank=True)
 

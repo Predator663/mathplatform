@@ -49,8 +49,8 @@ class ChallengeSerializer(serializers.ModelSerializer):
     class Meta:
         model = Challenge
         fields = ['id', 'tournament', 'label', 'entries', 'status', 'winner', 'is_tie',
-                  'initiated_by_name', 'created_at', 'resolved_at', 'compatibility']
-        read_only_fields = ['status', 'winner', 'is_tie', 'created_at', 'resolved_at']
+                  'initiated_by_name', 'created_at', 'resolved_at', 'compatibility', 'compatibility_note']
+        read_only_fields = ['status', 'winner', 'is_tie', 'created_at', 'resolved_at', 'compatibility_note']
 
     def get_compatibility(self, obj):
         # Only worth computing (and worth the extra queries) for duels still

@@ -245,6 +245,10 @@ class TournamentViewSet(viewsets.ModelViewSet):
 
         # compatibility is computed automatically by ChallengeSerializer for
         # any still-pending challenge — no need to duplicate that here.
+        # But if it's NOT a same-level match and got declared anyway, back
+        # it with a note (AI-written where available) so the teacher sees
+        # *why*, not just a red badge — see services.sync_compatibility_note.
+        services.sync_compatibility_note(challenge)
         return Response(ChallengeSerializer(challenge).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['patch'], url_path=r'challenges/(?P<challenge_id>\d+)')
@@ -300,6 +304,11 @@ class TournamentViewSet(viewsets.ModelViewSet):
                     return Response({'detail': 'You must remain a combatant in a challenge you edit.'}, status=status.HTTP_403_FORBIDDEN)
 
         services.update_challenge(challenge, label=data.get('label'), entry_ids=entry_ids)
+        # Re-sync the note any time combatants could have changed — clears
+        # it if the edit fixed the mismatch, (re)writes it if it didn't or
+        # just introduced one.
+        if entry_ids is not None:
+            services.sync_compatibility_note(challenge)
         return Response(ChallengeSerializer(challenge).data)
 
     @action(detail=True, methods=['post'], url_path='challenges/delete')
@@ -412,6 +421,8 @@ class TournamentViewSet(viewsets.ModelViewSet):
             'byes': result['byes'],
             'insufficient_history': result['insufficient_history'],
             'ai_used': result['ai_used'],
+            'ai_attempted': result['ai_attempted'],
+            'ai_error': result['ai_error'],
         }, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['get'])

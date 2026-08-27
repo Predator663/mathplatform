@@ -759,6 +759,7 @@ export interface Challenge {
   status: 'pending' | 'resolved' | 'void'; winner: TournamentEntry | null; is_tie: boolean;
   initiated_by_name: string | null; created_at: string; resolved_at: string | null;
   compatibility?: CompatibilityCheck | null;
+  compatibility_note: string;
 }
 
 export interface CompatibilityCheck {
@@ -773,6 +774,7 @@ export interface SuggestedGroupMember {
 
 export interface SuggestedGroup {
   members: SuggestedGroupMember[]; size: number; gap: number; compatible: boolean;
+  ai_note: string | null;
 }
 
 export interface SuggestedGroupBye { entry_id: number; student_id: number; name: string; average: number }
@@ -784,6 +786,8 @@ export interface SuggestedGroupsResponse {
   threshold: number;
   group_size: number;
   ai_used: boolean;
+  ai_attempted: boolean;
+  ai_error: string | null;
 }
 
 export interface AutoMatchResponse {
@@ -792,6 +796,8 @@ export interface AutoMatchResponse {
   byes: SuggestedGroupBye[];
   insufficient_history: { entry_id: number; student_id: number; name: string }[];
   ai_used: boolean;
+  ai_attempted: boolean;
+  ai_error: string | null;
 }
 
 export interface EntryResult {

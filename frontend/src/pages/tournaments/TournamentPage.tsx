@@ -502,9 +502,9 @@ function ChallengeFormModal({ open, onClose, tournament, challenge }: {
       : tournamentsApi.createChallenge(tournament.id, { label, entry_ids: selected }),
     onSuccess: (res) => {
       toast.success(isEdit ? 'Challenge updated!' : 'Challenge declared!');
-      const c = res.data?.compatibility as CompatibilityCheck | undefined;
-      if (c && c.compatible === false) {
-        toast(`Heads up — these two are ${c.gap} points apart on average.`, { icon: '⚖️', duration: 5000 });
+      const note: string | undefined = res.data?.compatibility_note;
+      if (note) {
+        toast(note, { icon: '⚖️', duration: 7000 });
       }
       queryClient.invalidateQueries({ queryKey: ['tournament', tournament.id] });
       setLabelChoice(''); setCustomLabel(''); setSelected([]); setSearch(''); onClose();
@@ -626,6 +626,8 @@ function AutoMatchModal({ open, onClose, tournament }: { open: boolean; onClose:
       toast.success(`Created ${data.created.length} level-matched challenge${data.created.length !== 1 ? 's' : ''}.`);
       if (data.ai_used) {
         toast('Claude refined this grouping.', { icon: '✨', duration: 4000 });
+      } else if (data.ai_attempted && data.ai_error) {
+        toast(`AI refinement wasn't available — used the algorithmic grouping instead. (${data.ai_error})`, { icon: '⚠️', duration: 6000 });
       }
       if (data.skipped_incompatible.length > 0) {
         toast(`${data.skipped_incompatible.length} pair(s) left for manual review — no close-level match available.`, { icon: '⚖️', duration: 5000 });
@@ -687,24 +689,38 @@ function AutoMatchModal({ open, onClose, tournament }: { open: boolean; onClose:
               <Sparkles size={13} className="shrink-0" /> Claude refined this grouping.
             </div>
           )}
+          {preview && !preview.ai_used && preview.ai_attempted && (
+            <div className="flex items-center gap-2 text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-xl px-3 py-2">
+              <AlertTriangle size={13} className="shrink-0" />
+              AI refinement wasn't available — showing the algorithmic grouping instead.
+              {preview.ai_error ? ` (${preview.ai_error})` : ''}
+            </div>
+          )}
 
           <div className="flex flex-col gap-1.5 max-h-64 overflow-y-auto">
             {groups.map((g, i) => (
               <div key={i} className={cn(
-                'flex items-center justify-between text-sm px-3 py-2 rounded-xl border gap-2',
+                'flex flex-col gap-1 text-sm px-3 py-2 rounded-xl border',
                 g.compatible ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-amber-500/10 border-amber-500/20',
               )}>
-                <span className="text-primary/90">
-                  {g.members.map((m, j) => (
-                    <span key={m.id}>
-                      {j > 0 && <span className="mx-1.5 text-secondary">vs</span>}
-                      {m.name} <span className="text-muted font-mono text-xs">({m.average}%)</span>
-                    </span>
-                  ))}
-                </span>
-                <span className={cn('font-mono text-xs shrink-0 ml-2', g.compatible ? 'text-emerald-400' : 'text-amber-400')}>
-                  {g.gap} pts
-                </span>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-primary/90">
+                    {g.members.map((m, j) => (
+                      <span key={m.id}>
+                        {j > 0 && <span className="mx-1.5 text-secondary">vs</span>}
+                        {m.name} <span className="text-muted font-mono text-xs">({m.average}%)</span>
+                      </span>
+                    ))}
+                  </span>
+                  <span className={cn('font-mono text-xs shrink-0 ml-2', g.compatible ? 'text-emerald-400' : 'text-amber-400')}>
+                    {g.gap} pts
+                  </span>
+                </div>
+                {g.ai_note && (
+                  <p className="flex items-start gap-1.5 text-[11px] text-violet-400/90 leading-snug">
+                    <Sparkles size={11} className="shrink-0 mt-0.5" /> {g.ai_note}
+                  </p>
+                )}
               </div>
             ))}
           </div>
@@ -865,9 +881,14 @@ function ChallengeCard({ challenge, selectable, selected, onToggleSelect, editab
       </div>
       {challenge.is_tie && <p className="text-xs text-amber-400 flex items-center gap-1"><AlertTriangle size={11} /> Tied result</p>}
       {challenge.compatibility && challenge.compatibility.compatible === false && (
-        <p className="text-xs text-amber-400 flex items-center gap-1.5">
-          <AlertTriangle size={11} className="shrink-0" />
-          Different levels — {challenge.compatibility.gap} points apart on average.
+        <p className="text-xs text-amber-400 flex items-start gap-1.5">
+          <AlertTriangle size={11} className="shrink-0 mt-0.5" />
+          <span>
+            Different levels — {challenge.compatibility.gap} points apart on average.
+            {challenge.compatibility_note && (
+              <span className="block text-amber-300/80 italic mt-0.5">{challenge.compatibility_note}</span>
+            )}
+          </span>
         </p>
       )}
     </div>

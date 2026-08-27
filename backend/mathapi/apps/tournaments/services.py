@@ -25,6 +25,68 @@ RISING_STAR_DELTA = 15.0    # percentage points above own prior average to count
 LEVEL_COMPATIBILITY_GAP = 15.0  # percentage points apart before two entrants count as "different level"
 DEFAULT_GROUP_SIZE = 2          # auto-match's target headcount per challenge when not otherwise told
 MAX_GROUP_SIZE = 6              # a "duel" with more combatants than this stops being a meaningful head-to-head
+AI_MODEL = 'claude-sonnet-5'    # every Claude-backed feature in this module shares one model
+
+
+def _call_claude(prompt: str, *, max_tokens: int = 1024, retries: int = 1) -> str | None:
+    """
+    Shared entry point for every Claude-backed feature in this module
+    (currently ai_refine_groups and generate_incompatibility_note). Returns
+    the model's raw text reply, or None if the call couldn't be made or
+    never succeeded — every caller here treats AI assistance as optional
+    embellishment, never a hard dependency, so this never raises.
+
+    Retries once (by default) on a timeout or connection error only —
+    those are transient and worth one more try; a 4xx/5xx from the API
+    itself won't change on retry, so those fail fast instead.
+    """
+    api_key = getattr(settings, 'ANTHROPIC_API_KEY', '') or os.environ.get('ANTHROPIC_API_KEY', '')
+    if not api_key:
+        return None
+
+    last_exc = None
+    for attempt in range(retries + 1):
+        try:
+            response = requests.post(
+                'https://api.anthropic.com/v1/messages',
+                headers={
+                    'x-api-key': api_key,
+                    'anthropic-version': '2023-06-01',
+                    'content-type': 'application/json',
+                },
+                json={
+                    'model': AI_MODEL,
+                    'max_tokens': max_tokens,
+                    'messages': [{'role': 'user', 'content': prompt}],
+                },
+                timeout=20,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            text = ''.join(
+                block.get('text', '') for block in payload.get('content', []) if block.get('type') == 'text'
+            ).strip()
+            return text or None
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+            last_exc = exc
+            continue
+        except Exception as exc:
+            logger.warning('Claude call failed (non-retryable).', exc_info=True)
+            return None
+
+    logger.warning('Claude call failed after %d attempt(s): %s', retries + 1, last_exc)
+    return None
+
+
+def _strip_json_fences(text: str) -> str:
+    """Claude sometimes wraps a requested-JSON reply in ```/```json fences
+    despite being asked not to — strip them before json.loads()."""
+    text = text.strip()
+    if text.startswith('```'):
+        text = text.strip('`')
+        if text.startswith('json'):
+            text = text[4:]
+    return text.strip()
 
 
 def _student_entry_score(student_id, exam):
@@ -583,24 +645,37 @@ def _merge_singletons(chunks: list, max_group_size: int) -> list:
     return chunks
 
 
-def ai_refine_groups(tournament: Tournament, ranked: list, group_size: int) -> list | None:
+def ai_refine_groups(tournament: Tournament, ranked: list, group_size: int) -> dict:
     """
     Optional AI-assisted pass over the algorithmic grouping. Sends each
     unmatched entrant's name and historical average to Claude and asks it
     to propose the fairest same-level groupings — factoring in things a
     pure numeric gap threshold can't, like keeping a tight three-way
-    cluster together rather than splitting it 2-plus-a-bye, or balancing
-    group sizes evenly across the roster.
+    cluster together rather than splitting it 2-plus-a-bye, balancing
+    group sizes evenly across the roster, and (new) a short rationale per
+    group so a teacher can see *why* Claude grouped them that way, not
+    just the resulting list.
 
     Never required for auto-match to work: if ANTHROPIC_API_KEY isn't
     configured, the request fails, or the reply can't be parsed into a
-    valid grouping, this returns None and the caller silently falls back
-    to the deterministic _cluster_ranked_by_level result — the AI only
-    ever refines a grouping, it never gatekeeps one.
+    valid grouping, 'groups' comes back None and the caller silently
+    falls back to the deterministic _cluster_ranked_by_level result — the
+    AI only ever refines a grouping, it never gatekeeps one.
+
+    Returns {'groups': [[(entry, avg), ...], ...] | None,
+             'notes': {frozenset(entry_id, ...): note, ...},
+             'attempted': bool, 'error': str | None}.
+    'attempted' distinguishes "AI wasn't asked for / no key configured"
+    from "was asked for but genuinely failed", so callers (and the UI)
+    can tell a teacher what actually happened instead of a refinement
+    request silently doing nothing.
     """
+    empty = {'groups': None, 'notes': {}, 'attempted': False, 'error': None}
+    if len(ranked) < 2:
+        return empty
     api_key = getattr(settings, 'ANTHROPIC_API_KEY', '') or os.environ.get('ANTHROPIC_API_KEY', '')
-    if not api_key or len(ranked) < 2:
-        return None
+    if not api_key:
+        return empty
 
     roster = [{'id': entry.id, 'name': entry.display_name, 'average': avg} for entry, avg in ranked]
     prompt = (
@@ -614,47 +689,38 @@ def ai_refine_groups(tournament: Tournament, ranked: list, group_size: int) -> l
         'roster size makes one truly unavoidable.\n\n'
         f'Roster (id, name, average): {json.dumps(roster)}\n\n'
         'Reply with ONLY a JSON object, no other text, no markdown fences, in exactly this '
-        'shape: {"groups": [[id, id, ...], ...], "bye_ids": [id, ...]}'
+        'shape: {"groups": [{"ids": [id, id, ...], "note": "one short (max 20 word) sentence '
+        'on why this grouping is fair"}, ...], "bye_ids": [id, ...]}'
     )
+    text = _call_claude(prompt, max_tokens=1400)
+    if text is None:
+        return {'groups': None, 'notes': {}, 'attempted': True,
+                'error': "Claude didn't respond (no API key configured, or the request failed)."}
+
     try:
-        response = requests.post(
-            'https://api.anthropic.com/v1/messages',
-            headers={
-                'x-api-key': api_key,
-                'anthropic-version': '2023-06-01',
-                'content-type': 'application/json',
-            },
-            json={
-                'model': 'claude-sonnet-5',
-                'max_tokens': 1024,
-                'messages': [{'role': 'user', 'content': prompt}],
-            },
-            timeout=20,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        text = ''.join(
-            block.get('text', '') for block in payload.get('content', []) if block.get('type') == 'text'
-        ).strip()
-        if text.startswith('```'):
-            text = text.strip('`')
-            if text.startswith('json'):
-                text = text[4:]
-        parsed = json.loads(text.strip())
-    except Exception:
-        logger.warning('AI group refinement failed; falling back to algorithmic grouping.', exc_info=True)
-        return None
+        parsed = json.loads(_strip_json_fences(text))
+    except (json.JSONDecodeError, ValueError):
+        logger.warning('AI group refinement returned unparseable JSON.')
+        return {'groups': None, 'notes': {}, 'attempted': True,
+                'error': "Claude's reply couldn't be parsed into a valid grouping."}
 
     by_id = {entry.id: (entry, avg) for entry, avg in ranked}
     groups = []
+    notes = {}
     placed = set()
-    for group_ids in parsed.get('groups', []):
-        if not isinstance(group_ids, list):
+    for raw_group in parsed.get('groups', []):
+        if isinstance(raw_group, dict):
+            group_ids, note = raw_group.get('ids', []), raw_group.get('note')
+        elif isinstance(raw_group, list):
+            group_ids, note = raw_group, None  # tolerate the older bare-list shape too
+        else:
             continue
         group = [by_id[i] for i in group_ids if i in by_id and i not in placed]
         if len(group) >= 2:
             groups.append(group)
             placed.update(entry.id for entry, _ in group)
+            if note:
+                notes[frozenset(entry.id for entry, _ in group)] = str(note).strip()
 
     # Anyone the model dropped, duplicated away, or left in a group of one
     # still needs a home — hand whoever's left over to the deterministic
@@ -663,7 +729,10 @@ def ai_refine_groups(tournament: Tournament, ranked: list, group_size: int) -> l
     if leftover:
         groups.extend(_merge_singletons(_cluster_ranked_by_level(leftover, MAX_GROUP_SIZE), MAX_GROUP_SIZE))
 
-    return groups or None
+    if not groups:
+        return {'groups': None, 'notes': {}, 'attempted': True, 'error': "Claude's grouping left no usable groups."}
+
+    return {'groups': groups, 'notes': notes, 'attempted': True, 'error': None}
 
 
 def suggest_level_groups(tournament: Tournament, *, group_size: int = DEFAULT_GROUP_SIZE, use_ai: bool = False) -> dict:
@@ -707,9 +776,16 @@ def suggest_level_groups(tournament: Tournament, *, group_size: int = DEFAULT_GR
     ranked.sort(key=lambda pair: pair[1], reverse=True)
 
     ai_used = False
+    ai_attempted = False
+    ai_error = None
+    ai_notes = {}
     groups = None
     if use_ai and len(ranked) >= 2:
-        groups = ai_refine_groups(tournament, ranked, group_size)
+        ai_result = ai_refine_groups(tournament, ranked, group_size)
+        groups = ai_result['groups']
+        ai_notes = ai_result['notes']
+        ai_attempted = ai_result['attempted']
+        ai_error = ai_result['error']
         ai_used = groups is not None
 
     if groups is None:
@@ -736,6 +812,7 @@ def suggest_level_groups(tournament: Tournament, *, group_size: int = DEFAULT_GR
             'size': len(group),
             'gap': gap,
             'compatible': gap <= LEVEL_COMPATIBILITY_GAP,
+            'ai_note': ai_notes.get(frozenset(entry.id for entry, _ in group)),
         })
 
     return {
@@ -745,6 +822,8 @@ def suggest_level_groups(tournament: Tournament, *, group_size: int = DEFAULT_GR
         'threshold': LEVEL_COMPATIBILITY_GAP,
         'group_size': group_size,
         'ai_used': ai_used,
+        'ai_attempted': ai_attempted,
+        'ai_error': ai_error,
     }
 
 
@@ -778,6 +857,18 @@ def auto_create_level_challenges(tournament: Tournament, *, created_by=None, onl
             initiated_by=created_by,
         )
         challenge.entries.set(entries)
+        if not group['compatible']:
+            # Forced through despite a skill mismatch (only_compatible=False).
+            # Reuse the rationale Claude already gave this exact grouping
+            # during suggest_level_groups, if there was one — avoids paying
+            # for a second AI call to explain something it already
+            # explained. Falls back to a fresh compatibility check/AI note
+            # (or the plain algorithmic reason) otherwise.
+            if group.get('ai_note'):
+                challenge.compatibility_note = group['ai_note']
+                challenge.save(update_fields=['compatibility_note'])
+            else:
+                sync_compatibility_note(challenge)
         created.append(challenge)
 
     return {
@@ -786,7 +877,66 @@ def auto_create_level_challenges(tournament: Tournament, *, created_by=None, onl
         'byes': suggestion['byes'],
         'insufficient_history': suggestion['insufficient_history'],
         'ai_used': suggestion['ai_used'],
+        'ai_attempted': suggestion['ai_attempted'],
+        'ai_error': suggestion['ai_error'],
     }
+
+
+def generate_incompatibility_note(compat: dict) -> str | None:
+    """
+    When a challenge has been declared (or edited into) a skill mismatch,
+    ask Claude for a short, teacher-facing note explaining what the gap
+    could mean for the matchup — a coaching read, not just a restated
+    number. `compat` is the dict returned by check_entry_compatibility /
+    check_challenge_compatibility for that challenge (must already have
+    compatible=False). Returns None — never raises — if AI is unavailable
+    or the call fails; sync_compatibility_note() falls back to the plain
+    algorithmic `compat['reason']` in that case.
+    """
+    members = compat.get('members') or [compat.get('entry_a'), compat.get('entry_b')]
+    roster = [{'name': m['name'], 'average': m['average']} for m in members if m]
+    prompt = (
+        'A teacher just declared a maths-tournament challenge between these combatants, '
+        'even though their historical average exam scores are far enough apart to be '
+        f'flagged as a skill-level mismatch ({compat["gap"]} percentage points apart, '
+        f'{compat["threshold"]} is the usual same-level threshold). Write ONE short '
+        'sentence (max 30 words), in a warm, matter-of-fact coaching tone, on what this '
+        'gap could mean for the matchup — e.g. a likely lopsided result, or a genuine '
+        '"giant slayer" opportunity for the underdog. Do not just restate the numbers, '
+        "and don't recommend cancelling the match — it's already been created.\n\n"
+        f'Combatants (name, average %): {json.dumps(roster)}\n\n'
+        'Reply with ONLY the sentence — no quotes, no markdown, no preamble.'
+    )
+    text = _call_claude(prompt, max_tokens=120)
+    return text.strip().strip('"') if text else None
+
+
+@transaction.atomic
+def sync_compatibility_note(challenge: Challenge) -> Challenge:
+    """
+    Recomputes whether `challenge`'s current combatants are a skill-level
+    match and keeps `compatibility_note` in sync with that: backfills it
+    with an AI-written explanation (falling back to the plain algorithmic
+    reason if Claude is unavailable) when they're not, and clears it again
+    when they are — e.g. an edit swapped in a closer-matched student, or a
+    stream/no-history pairing where "compatible" isn't a yes/no at all.
+
+    Safe (and cheap — no AI call) to call after every create/edit
+    regardless of outcome; the AI call only happens on the genuine
+    compatible=False path.
+    """
+    compat = check_challenge_compatibility(challenge)
+    if not compat or compat.get('compatible') is not False:
+        if challenge.compatibility_note:
+            challenge.compatibility_note = ''
+            challenge.save(update_fields=['compatibility_note'])
+        return challenge
+
+    note = generate_incompatibility_note(compat) or compat.get('reason') or ''
+    if note != challenge.compatibility_note:
+        challenge.compatibility_note = note
+        challenge.save(update_fields=['compatibility_note'])
+    return challenge
 
 
 @transaction.atomic
