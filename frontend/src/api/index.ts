@@ -372,6 +372,8 @@ export const leaguesApi = {
     api.get('/reports/export/hall-of-fame/pdf/', { params, responseType: 'blob' }),
   exportHallOfFameExcel: (params?: object) =>
     api.get('/reports/export/hall-of-fame/excel/', { params, responseType: 'blob' }),
+  exportSeasonRosterPdf: (id: number, params?: object) =>
+    api.get(`/reports/export/league-season/${id}/roster/pdf/`, { params, responseType: 'blob' }),
 };
 
 export const interventionsApi = {

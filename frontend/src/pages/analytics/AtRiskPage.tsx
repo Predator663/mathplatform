@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { AlertTriangle, Shield, TrendingDown, Filter, FileDown } from 'lucide-react';
+import { AlertTriangle, Shield, TrendingDown, TrendingUp, Filter, FileDown } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { analyticsApi, studentsApi, reportsApi } from '../../api';
 import { LoadingPage, EmptyState, Select, Pagination, Button, TiltCard, Reveal } from '../../components/ui';
@@ -13,12 +13,20 @@ import { downloadBlob } from '../../utils';
 import type { AtRiskStudent, Classroom, PaginatedResponse, Stream } from '../../types';
 
 type SortBy = 'score_asc' | 'score_desc' | 'name' | 'classroom';
+type TrendFilter = '' | 'declining' | 'stable' | 'improving';
 
 const SORT_OPTIONS: { value: SortBy; label: string }[] = [
   { value: 'score_asc', label: 'Most At-Risk First' },
   { value: 'score_desc', label: 'Least At-Risk First' },
   { value: 'name', label: 'Student Name (A-Z)' },
   { value: 'classroom', label: 'Classroom' },
+];
+
+const TREND_OPTIONS: { value: TrendFilter; label: string }[] = [
+  { value: '', label: 'All Trends' },
+  { value: 'declining', label: 'Declining ↓' },
+  { value: 'stable', label: 'Stable →' },
+  { value: 'improving', label: 'Improving ↑' },
 ];
 
 function sortStudents(students: AtRiskStudent[], sortBy: SortBy): AtRiskStudent[] {
@@ -39,6 +47,7 @@ export default function AtRiskPage() {
   const [streamId, setStreamId] = useState('');
   const [threshold, setThreshold] = useState<number>(30);
   const [sortBy, setSortBy] = useState<SortBy>('score_asc');
+  const [trendFilter, setTrendFilter] = useState<TrendFilter>('');
   const [page, setPage] = useState(1);
   const [exporting, setExporting] = useState(false);
   const { getPage } = useSiteSettingsStore();
@@ -77,12 +86,13 @@ export default function AtRiskPage() {
     ? streamsData : (streamsData as PaginatedResponse<Stream>)?.results ?? [];
 
   const { data, isLoading } = useQuery<{ at_risk: AtRiskStudent[]; count: number }>({
-    queryKey: ['at-risk', classroomId, threshold, activeSubjectId, streamId],
+    queryKey: ['at-risk', classroomId, threshold, activeSubjectId, streamId, trendFilter],
     queryFn: () => analyticsApi.atRisk({
       ...(classroomId ? { classroom_id: classroomId } : {}),
       threshold,
       stream_id: streamId || undefined,
       ...(activeSubjectId ? { subject_id: activeSubjectId } : {}),
+      trend: trendFilter || undefined,
     }).then(r => r.data),
   });
   const students = sortStudents(data?.at_risk ?? [], sortBy);
@@ -97,6 +107,7 @@ export default function AtRiskPage() {
         stream_id: streamId || undefined,
         subject_id: activeSubjectId || undefined,
         sort_by: sortBy,
+        trend: trendFilter || undefined,
       });
       downloadBlob(res.data, 'at_risk_students.pdf');
       toast.success('At-risk report downloaded');
@@ -181,6 +192,14 @@ export default function AtRiskPage() {
             onChange={e => { setThreshold(Number(e.target.value)); setPage(1); }}
           />
         </div>
+        <div className="w-full sm:w-44">
+          <Select
+            label="Trend"
+            options={TREND_OPTIONS.map(o => ({ value: o.value, label: o.label }))}
+            value={trendFilter}
+            onChange={e => { setTrendFilter(e.target.value as TrendFilter); setPage(1); }}
+          />
+        </div>
         <div className="w-full sm:w-48">
           <Select
             label="Sort By"
@@ -207,11 +226,13 @@ export default function AtRiskPage() {
       ) : (
         <>
           {/* Summary strip */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             {[
               { label: 'Flagged', value: data?.count ?? 0, color: '#f43f5e' },
               { label: 'Below Threshold', value: students.filter(s => s.flags.below_threshold).length, color: '#f97316' },
-              { label: 'Declining', value: students.filter(s => s.flags.declining).length, color: '#f59e0b' },
+              { label: 'Declining', value: students.filter(s => s.trend === 'declining').length, color: '#f43f5e' },
+              { label: 'Stable', value: students.filter(s => s.trend === 'stable').length, color: '#f59e0b' },
+              { label: 'Improving', value: students.filter(s => s.trend === 'improving').length, color: '#10b981' },
               { label: 'Avg Score', value: students.length > 0
                   ? `${Math.round(students.reduce((s, x) => s + x.recent_average, 0) / students.length)}%`
                   : '—', color: '#3b82f6' },
@@ -265,9 +286,14 @@ export default function AtRiskPage() {
                           <AlertTriangle size={9} /> Below {threshold}%
                         </span>
                       )}
-                      {s.flags.declining && (
+                      {s.trend === 'declining' && (
                         <span className="badge badge-amber text-[10px] flex items-center gap-1">
                           <TrendingDown size={9} /> Declining
+                        </span>
+                      )}
+                      {s.trend === 'improving' && (
+                        <span className="badge badge-green text-[10px] flex items-center gap-1">
+                          <TrendingUp size={9} /> Improving
                         </span>
                       )}
                     </div>

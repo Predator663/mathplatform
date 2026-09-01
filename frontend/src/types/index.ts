@@ -576,6 +576,7 @@ export interface ComparativeAnalysis { comparisons: ComparisonClassroom[]; }
 export interface AtRiskStudent {
   student_id: number; student_name: string; student_code: string;
   classroom: string | null; recent_average: number; recent_scores: number[];
+  trend: 'declining' | 'stable' | 'improving';
   flags: { below_threshold: boolean; declining: boolean };
 }
 

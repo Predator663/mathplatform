@@ -5,6 +5,7 @@ Generates professional reports with school header and platform footer.
 import io
 import re
 from datetime import date
+from xml.sax.saxutils import escape as _xml_escape
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
@@ -37,6 +38,15 @@ BLACK        = colors.black
 
 PAGE_W, PAGE_H = A4
 MARGIN = 1.8 * cm
+
+
+def _esc(v) -> str:
+    """Escape a value before it's interpolated into ReportLab's mini-XML
+    Paragraph markup. Free-text fields (band names, season titles, etc.)
+    can contain '<', '>', or '&' — ordinary in a maths platform ("x < y")
+    — and an unescaped one throws a ReportLab ParseError that 500s the
+    whole export. Mirrors groups/report_engine.py's `_esc`."""
+    return _xml_escape(str(v))
 
 
 def _grade_color(pct):
@@ -1796,13 +1806,17 @@ def generate_at_risk_pdf(students, meta: dict, sort_by='score_asc', school_name=
 
     # ── Summary stats ────────────────────────────────────────────────────────
     below = sum(1 for s in rows if s['flags']['below_threshold'])
-    declining = sum(1 for s in rows if s['flags']['declining'])
+    declining = sum(1 for s in rows if s.get('trend') == 'declining')
+    stable = sum(1 for s in rows if s.get('trend') == 'stable')
+    improving = sum(1 for s in rows if s.get('trend') == 'improving')
     avg = round(sum(s['recent_average'] for s in rows) / len(rows), 1) if rows else 0
 
     summary_items = [
         ('FLAGGED', len(rows)),
         ('BELOW THRESHOLD', below),
         ('DECLINING', declining),
+        ('STABLE', stable),
+        ('IMPROVING', improving),
         ('AVERAGE SCORE', f'{avg}%' if rows else '—'),
     ]
     story.append(_meta_grid(summary_items, styles))
@@ -1815,36 +1829,50 @@ def generate_at_risk_pdf(students, meta: dict, sort_by='score_asc', school_name=
         'name': 'Sorted by Name',
         'classroom': 'Sorted by Classroom',
     }.get(sort_by, '')
+    trend_filter = meta.get('trend')
+    trend_filter_label = {
+        'declining': ' · Trend: Declining only',
+        'stable': ' · Trend: Stable only',
+        'improving': ' · Trend: Improving only',
+    }.get(trend_filter, '')
 
     story.append(Paragraph(
-        f'Flagged Students  <font color="#6b7280" size="8">({sort_label})</font>',
+        f'Flagged Students  <font color="#6b7280" size="8">({sort_label}{trend_filter_label})</font>',
         styles['section'],
     ))
 
+    TREND_HEX = {'declining': '#f43f5e', 'stable': '#f59e0b', 'improving': '#10b981'}
+    TREND_ARROW = {'declining': '↓', 'stable': '→', 'improving': '↑'}
+
     if not rows:
         story.append(Spacer(1, 0.3*cm))
-        story.append(Paragraph('No students are currently flagged as at-risk for this scope.', styles['body']))
+        story.append(Paragraph('No students match this scope and filter.', styles['body']))
     else:
-        col_w = [(PAGE_W - 2*MARGIN) * p for p in [0.05, 0.13, 0.24, 0.18, 0.11, 0.14, 0.15]]
+        col_w = [(PAGE_W - 2*MARGIN) * p for p in [0.05, 0.13, 0.24, 0.16, 0.11, 0.16, 0.15]]
         headers = ['#', 'ID', 'Student Name', 'Classroom', 'Avg %', 'Trend', 'Flags']
         table_data = [headers]
 
         for rank, s in enumerate(rows, 1):
             scores = s['recent_scores']
-            trend = ' → '.join(str(p) for p in reversed(scores)) if scores else '—'
+            trend_value = s.get('trend', 'stable')
+            score_path = ' → '.join(str(p) for p in reversed(scores)) if scores else '—'
+            trend_cell = f'{TREND_ARROW[trend_value]} {score_path}' if scores else TREND_ARROW[trend_value]
+            trend_cell_html = f'<font color="{TREND_HEX[trend_value]}"><b>{trend_cell}</b></font>'
             flags = []
             if s['flags']['below_threshold']:
                 flags.append(f'Below {threshold}%')
-            if s['flags']['declining']:
+            if trend_value == 'declining':
                 flags.append('Declining')
+            elif trend_value == 'improving':
+                flags.append('Improving')
             table_data.append([
                 str(rank),
                 s['student_code'],
                 s['student_name'],
                 s['classroom'] or '—',
                 f"{s['recent_average']}%",
-                trend,
-                ', '.join(flags) if flags else '—',
+                Paragraph(trend_cell_html, styles['table_name_reg']),
+                Paragraph(', '.join(flags) if flags else '—', styles['table_name_reg']),
             ])
 
         tbl = Table(table_data, colWidths=col_w, repeatRows=1)
@@ -1864,13 +1892,22 @@ def generate_at_risk_pdf(students, meta: dict, sort_by='score_asc', school_name=
             ('LEFTPADDING', (0,0), (-1,-1), 5),
             ('ALIGN', (0,0), (0,-1), 'CENTER'),
             ('ALIGN', (4,0), (4,-1), 'CENTER'),
-            ('FONTSIZE', (5,1), (5,-1), 7),
         ]
 
-        # Colour the average column by risk severity
+        # Colour the average column by risk severity — the trend column's
+        # colour/weight is baked into its Paragraph markup above instead,
+        # since TableStyle text commands don't apply to Paragraph cells.
         for i, s in enumerate(rows, 1):
             row_styles.append(('TEXTCOLOR', (4, i), (4, i), _grade_color(s['recent_average'])))
             row_styles.append(('FONTNAME', (4, i), (4, i), 'Helvetica-Bold'))
+
+        tbl.setStyle(TableStyle(row_styles))
+        story.append(tbl)
+
+    doc.build(story, onFirstPage=lambda c, d: _header_footer(c, d, meta),
+              onLaterPages=lambda c, d: _header_footer(c, d, meta))
+    return buf.getvalue()
+
 
 def _score_distribution_chart(distribution, width=CHART_W, height=CHART_H) -> Drawing:
     """Histogram of entrant scores across the 5 standard bands — the
@@ -2340,6 +2377,181 @@ def generate_hall_of_fame_pdf(hof, *, scope_label='All Classrooms',
 
     if not (top_tier or champions or most_promoted):
         story.append(Paragraph('No league data yet for this scope.', styles['body']))
+
+    doc.build(story, onFirstPage=lambda c, d: _header_footer(c, d, meta),
+              onLaterPages=lambda c, d: _header_footer(c, d, meta))
+    return buf.getvalue()
+
+
+# ── Skill League — band roster export ────────────────────────────────────────
+
+# Same rising/declining/stable vocabulary the BandCard trend glyph uses on
+# screen (TrendGlyph in LeaguesPage.tsx), just spelled out as a coloured
+# word instead of an icon glyph — arrows aren't reliably present in the
+# base-14 PDF fonts' encoding, so a coloured label reads just as clearly
+# without risking missing-glyph boxes in the PDF.
+_LEAGUE_TREND_META = {
+    'improving': ('Rising', BRAND_GREEN),
+    'declining': ('Falling', BRAND_ROSE),
+    'stable': ('Steady', BRAND_GRAY),
+}
+_LEAGUE_STATUS_LABELS = {'draft': 'Draft', 'active': 'Active', 'archived': 'Archived'}
+_LEAGUE_PROMO_LABELS = {'auto': 'Auto-Apply', 'manual': 'Stage for Approval'}
+
+
+def generate_league_season_pdf(season, analytics: dict, extra: dict) -> bytes:
+    """
+    Skill League roster export — the PDF counterpart of the band grid shown
+    on the League Season page (BandCard components in LeaguesPage.tsx):
+    one section per band, in the same ascending tier order the page uses,
+    each with its own colour banner and a member table carrying exactly
+    the standing info the cards show (top-tier crown, climbing tag, staged
+    promotion, distance to the next band, and score).
+
+    `analytics` must be the output of leagues.services.get_league_analytics
+    (season) — it supplies each member's trend and "climbing" status,
+    mirroring how BandCard combines season.memberships with the analytics
+    band_stats client-side.
+    """
+    buf = io.BytesIO()
+    styles = _make_styles()
+
+    meta = {
+        'school_name': extra.get('school_name', 'School of Excellence'),
+        'academic_year': extra.get('academic_year', ''),
+        'doc_title': season.title,
+        'doc_subtitle': f'Band Roster \u00b7 {season.classroom} \u00b7 Baseline exam: {season.baseline_exam.title}',
+        'footer_centre': 'Skill League',
+    }
+
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=MARGIN, rightMargin=MARGIN,
+        topMargin=4.2*cm, bottomMargin=2.2*cm,
+    )
+    story = [
+        _meta_grid([
+            ('STATUS', _LEAGUE_STATUS_LABELS.get(season.status, season.status.title())),
+            ('BANDS', season.groups.count()),
+            ('MEMBERS', season.memberships.count()),
+            ('PENDING PROMOTIONS', season.memberships.filter(is_promotion_pending=True).count()),
+            ('PROMOTION MODE', _LEAGUE_PROMO_LABELS.get(season.promotion_mode, season.promotion_mode)),
+        ], styles),
+        Spacer(1, 0.5*cm),
+    ]
+
+    band_stat_by_group = {b['group_id']: b for b in analytics.get('band_stats', [])}
+    top_order = season.top_group_order
+    groups = list(season.groups.all().order_by('order'))
+
+    for g in groups:
+        section = []
+        band_stat = band_stat_by_group.get(g.id)
+        band_members_stat = band_stat['members'] if band_stat else []
+        climber_ids = {c['student_id'] for c in (band_stat['climbers'] if band_stat else [])}
+        trend_by_student = {m['student_id']: m['trend'] for m in band_members_stat}
+        distance_by_student = {m['student_id']: m['distance_to_promotion'] for m in band_members_stat}
+        is_top_band = (g.order == top_order)
+
+        # Band banner tinted with the band's own colour — mirrors the
+        # coloured dot/border each BandCard uses on screen, so a long,
+        # multi-band roster still reads at a glance which section is which.
+        band_color = colors.HexColor(g.color) if g.color else BRAND_BLUE
+        member_count = band_stat['member_count'] if band_stat else 0
+        rising = band_stat['rising_count'] if band_stat else 0
+        declining = band_stat['declining_count'] if band_stat else 0
+        sub_bits = [f'{member_count} student{"s" if member_count != 1 else ""}']
+        if rising:
+            sub_bits.append(f'{rising} rising')
+        if declining:
+            sub_bits.append(f'{declining} declining')
+
+        banner = Table([[
+            Paragraph(
+                f'{_esc(g.name)}  ({g.min_mark:g}\u2013{g.max_mark:g}%)',
+                ParagraphStyle('band_title', fontSize=11.5, fontName='Helvetica-Bold', textColor=WHITE),
+            ),
+            Paragraph(
+                _esc('  \u00b7  '.join(sub_bits)),
+                ParagraphStyle('band_sub', fontSize=8.5, fontName='Helvetica', textColor=WHITE, alignment=TA_RIGHT),
+            ),
+        ]], colWidths=[(PAGE_W - 2*MARGIN) * 0.6, (PAGE_W - 2*MARGIN) * 0.4])
+        banner.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, -1), band_color),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('LEFTPADDING', (0, 0), (0, 0), 10),
+            ('RIGHTPADDING', (1, 0), (1, 0), 10),
+            ('TOPPADDING', (0, 0), (-1, -1), 7),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 7),
+        ]))
+        section.append(banner)
+
+        members = list(
+            season.memberships.filter(group=g)
+            .select_related('student__user', 'pending_target_group')
+            .order_by('-latest_score')
+        )
+
+        rows = [['#', 'Student', 'Trend', 'Standing', 'Score %']]
+        for i, m in enumerate(members, start=1):
+            trend = trend_by_student.get(m.student_id)
+            trend_label, trend_color = _LEAGUE_TREND_META.get(trend, ('\u2014', BRAND_GRAY))
+
+            # Precedence mirrors the card exactly: a staged promotion badge
+            # always wins (services.py never lets a climber be staged at
+            # the same time), then the top-tier crown, then the "Climbing"
+            # tag, then the plain distance-to-next-band figure.
+            if m.is_promotion_pending:
+                target = m.pending_target_group.name if m.pending_target_group else '?'
+                standing_txt, standing_color = f'Staged \u2192 {target}%', BRAND_VIOLET
+            elif is_top_band:
+                standing_txt, standing_color = 'Top Tier', BRAND_AMBER
+            elif m.student_id in climber_ids:
+                standing_txt, standing_color = 'Climbing', BRAND_GREEN
+            else:
+                dist = distance_by_student.get(m.student_id)
+                standing_txt, standing_color = (f'{dist:g}% to next', BRAND_GRAY) if dist is not None else ('\u2014', BRAND_GRAY)
+
+            score = m.latest_score if m.latest_score is not None else m.placement_score
+            rows.append([
+                str(i),
+                _name_cell(m.student.full_name, styles),
+                Paragraph(trend_label, ParagraphStyle(
+                    f'trend_{g.id}_{i}', fontSize=8, fontName='Helvetica-Bold', textColor=trend_color)),
+                Paragraph(_esc(standing_txt), ParagraphStyle(
+                    f'standing_{g.id}_{i}', fontSize=8, fontName='Helvetica-Bold', textColor=standing_color)),
+                f'{score:g}%' if score is not None else '\u2014',
+            ])
+        if len(rows) == 1:
+            rows.append(['\u2014', 'No students in this band yet.', '', '', ''])
+
+        col_w = [(PAGE_W - 2*MARGIN) * p for p in [0.06, 0.36, 0.14, 0.28, 0.16]]
+        member_table = Table(rows, colWidths=col_w, repeatRows=1)
+        member_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f2937')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), WHITE),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 8.5),
+            ('GRID', (0, 0), (-1, -1), 0.4, colors.HexColor('#d1d5db')),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [WHITE, BRAND_LIGHT]),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('ALIGN', (0, 0), (0, -1), 'CENTER'),
+            ('ALIGN', (2, 0), (2, -1), 'CENTER'),
+            ('ALIGN', (4, 0), (4, -1), 'CENTER'),
+            ('TOPPADDING', (0, 0), (-1, -1), 4.5),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 4.5),
+            ('FONTNAME', (4, 1), (4, -1), 'Helvetica-Bold'),
+        ]))
+        section.append(member_table)
+        section.append(Spacer(1, 0.5*cm))
+        # Keep each band's banner glued to (at least the start of) its own
+        # table — a band header stranded alone at the bottom of a page,
+        # orphaned from its members, is the "overlap/ugly break" failure
+        # mode this export needs to avoid for a long, multi-band roster.
+        story.append(KeepTogether(section))
+
+    if not groups:
+        story.append(Paragraph('This season has no bands defined yet.', styles['body']))
 
     doc.build(story, onFirstPage=lambda c, d: _header_footer(c, d, meta),
               onLaterPages=lambda c, d: _header_footer(c, d, meta))

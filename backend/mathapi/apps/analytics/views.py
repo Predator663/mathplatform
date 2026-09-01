@@ -160,6 +160,9 @@ class AtRiskStudentsView(APIView):
         threshold = float(request.query_params.get('threshold', 50))
         subject_id = _get_subject_id(request)
         stream_id = _get_stream_id(request)
+        trend = request.query_params.get('trend')
+        if trend not in ('declining', 'stable', 'improving'):
+            trend = None
 
         if classroom_id and user.role == 'teacher':
             from mathapi.apps.accounts.scoping import assert_classroom_owned
@@ -178,6 +181,7 @@ class AtRiskStudentsView(APIView):
             subject_id=subject_id,
             created_by_id=created_by_id,
             stream_id=stream_id,
+            trend=trend,
         )
         return Response({'at_risk': data, 'count': len(data)})
 

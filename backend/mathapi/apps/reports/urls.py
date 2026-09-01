@@ -14,6 +14,8 @@ urlpatterns = [
     path('export/tournament/<int:tournament_id>/pdf/', views.TournamentDossierPDFView.as_view(), name='tournament_pdf'),
     path('export/tournament/<int:tournament_id>/matchups/pdf/', views.ChallengeMatchupsPDFView.as_view(), name='tournament_matchups_pdf'),
     path('export/hall-of-fame/pdf/', views.HallOfFamePDFView.as_view(), name='hall_of_fame_pdf'),
+    path('export/league-season/<int:season_id>/roster/pdf/',
+         views.LeagueSeasonRosterPDFView.as_view(), name='league_season_roster_pdf'),
 
     # Excel exports
     path('export/exam/<int:exam_id>/excel/', views.ExamScoresExcelView.as_view(), name='exam_excel'),

@@ -5,14 +5,14 @@ import toast from 'react-hot-toast';
 import {
   Swords, Shield, Trophy, Crown, Plus, X, ChevronRight, ChevronLeft, ArrowUp, Check,
   Ban, Users2, Target, Sparkles, Award, Settings2, PlayCircle, Archive, RotateCcw, Gem, AlertTriangle,
-  TrendingUp, TrendingDown, Minus,
+  TrendingUp, TrendingDown, Minus, Download,
 } from 'lucide-react';
 import { leaguesApi, studentsApi, examsApi } from '../../api';
 import {
   LoadingPage, EmptyState, Button, Input, Select, Modal, StatCard,
 } from '../../components/ui';
 import { useAuthStore } from '../../store/auth';
-import { cn, apiErrorMessage } from '../../utils';
+import { cn, apiErrorMessage, downloadBlob } from '../../utils';
 import type {
   LeagueSeason, LeagueSeasonDetail, LeagueGroup, PromotionEvent, Classroom, Exam,
   PaginatedResponse, LeagueIntervalMode, LeaguePromotionMode, LeagueAnalytics, LeagueBandStat,
@@ -352,6 +352,7 @@ function ErrorPanel({ message, onRetry, onBack }: { message: string; onRetry: ()
 function SeasonDetail({ seasonId, onBack }: { seasonId: number; onBack: () => void }) {
   const queryClient = useQueryClient();
   const [evalOpen, setEvalOpen] = useState(false);
+  const [exportingPdf, setExportingPdf] = useState(false);
 
   const { data: season, isLoading, isError, error, refetch } = useQuery<LeagueSeasonDetail>({
     queryKey: ['league-season', seasonId],
@@ -374,6 +375,20 @@ function SeasonDetail({ seasonId, onBack }: { seasonId: number; onBack: () => vo
     },
   });
 
+  const handleExportPdf = async () => {
+    setExportingPdf(true);
+    try {
+      const res = await leaguesApi.exportSeasonRosterPdf(seasonId);
+      const safe = (season?.title || 'league').replace(/\s+/g, '_').slice(0, 40);
+      downloadBlob(res.data as Blob, `${safe}_roster.pdf`);
+      toast.success('Export ready.');
+    } catch {
+      toast.error('Could not export the band listing.');
+    } finally {
+      setExportingPdf(false);
+    }
+  };
+
   if (isLoading) return <LoadingPage />;
   if (isError) return <ErrorPanel message={apiErrorMessage(error)} onRetry={() => refetch()} onBack={onBack} />;
   if (!season) return <ErrorPanel message="No data came back from the server." onRetry={() => refetch()} onBack={onBack} />;
@@ -388,6 +403,9 @@ function SeasonDetail({ seasonId, onBack }: { seasonId: number; onBack: () => vo
         <div className="flex items-center gap-2">
           <Button variant="secondary" size="sm" onClick={() => setEvalOpen(true)}>
             <PlayCircle size={14} /> Evaluate Promotions
+          </Button>
+          <Button variant="secondary" size="sm" onClick={handleExportPdf} loading={exportingPdf}>
+            <Download size={14} /> Export PDF
           </Button>
           <Button variant="ghost" size="sm" onClick={() => archiveMutation.mutate()} loading={archiveMutation.isPending}>
             {season.status === 'archived' ? <><RotateCcw size={14} /> Reactivate</> : <><Archive size={14} /> Archive</>}

@@ -18,6 +18,7 @@ from .pdf_engine import (
     generate_tournament_dossier_pdf,
     generate_challenge_matchups_pdf,
     generate_hall_of_fame_pdf,
+    generate_league_season_pdf,
 )
 from .excel_engine import (
     generate_exam_scores_excel,
@@ -632,6 +633,7 @@ class AtRiskPDFView(APIView):
     GET /api/reports/export/at-risk/pdf/
     ?classroom_id=&threshold=&subject_id=&stream_id=
     ?sort_by=score_asc|score_desc|name|classroom
+    ?trend=declining|stable|improving
     ?school_name=My+School
     """
     permission_classes = [permissions.IsAuthenticated]
@@ -645,6 +647,9 @@ class AtRiskPDFView(APIView):
         sort_by = request.query_params.get('sort_by', 'score_asc')
         if sort_by not in ('score_asc', 'score_desc', 'name', 'classroom'):
             sort_by = 'score_asc'
+        trend = request.query_params.get('trend')
+        if trend not in ('declining', 'stable', 'improving'):
+            trend = None
         school_name = _resolve_site_name(request)
 
         if classroom_id and user.role == 'teacher':
@@ -662,6 +667,7 @@ class AtRiskPDFView(APIView):
             subject_id=subject_id,
             created_by_id=created_by_id,
             stream_id=stream_id,
+            trend=trend,
         )
 
         scope_label = 'All Classrooms' if not classroom_id else None
@@ -671,7 +677,7 @@ class AtRiskPDFView(APIView):
             except Classroom.DoesNotExist:
                 scope_label = 'Selected Classroom'
 
-        meta = {'threshold': threshold, 'scope_label': scope_label}
+        meta = {'threshold': threshold, 'scope_label': scope_label, 'trend': trend}
         pdf_bytes = generate_at_risk_pdf(students, meta, sort_by=sort_by, school_name=school_name)
 
         response = HttpResponse(pdf_bytes, content_type='application/pdf')
@@ -848,4 +854,39 @@ class HallOfFameExcelView(APIView):
         response = HttpResponse(xlsx_bytes,
             content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
         response['Content-Disposition'] = 'attachment; filename="hall_of_fame.xlsx"'
+        return response
+
+
+class LeagueSeasonRosterPDFView(APIView):
+    """
+    GET /api/reports/export/league-season/<id>/roster/pdf/?school_name=
+    Exports the band-by-band student listing shown on the League Season
+    page (the BandCard grid) — one section per band, each member's
+    trend/standing exactly as the cards show it. Scoped the same way the
+    leagues app scopes every other season endpoint: a teacher only ever
+    sees seasons on classrooms she owns.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, season_id):
+        from django.shortcuts import get_object_or_404
+        from rest_framework.exceptions import PermissionDenied
+        from mathapi.apps.accounts.scoping import scope_league_seasons
+        from mathapi.apps.leagues import services as league_services
+
+        if request.user.role not in ('teacher', 'super_admin'):
+            raise PermissionDenied('Skill Leagues is a teacher/admin view.')
+
+        season = get_object_or_404(
+            scope_league_seasons(request.user).select_related('classroom', 'baseline_exam'),
+            id=season_id,
+        )
+        analytics = league_services.get_league_analytics(season)
+        school_name = _resolve_site_name(request)
+        extra = {'school_name': school_name, 'academic_year': season.classroom.academic_year}
+
+        pdf_bytes = generate_league_season_pdf(season, analytics, extra)
+        response = HttpResponse(pdf_bytes, content_type='application/pdf')
+        safe = season.title.replace(' ', '_')[:40]
+        response['Content-Disposition'] = f'attachment; filename="league_{safe}_roster.pdf"'
         return response

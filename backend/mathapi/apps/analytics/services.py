@@ -457,7 +457,21 @@ def get_at_risk_students(
     subject_id: int = None,
     created_by_id: int = None,
     stream_id: int = None,
+    trend: str = None,
 ) -> list:
+    """
+    trend: optional filter on the recent trajectory of an already-flagged
+    at-risk student — 'declining' | 'stable' | 'improving'. Trajectory is
+    the same up-to-3-most-recent-exam window used for the 'declining' flag
+    (newest vs. oldest of that window, ±10 percentage points): a delta of
+    -10 or worse is 'declining', +10 or better is 'improving', anything in
+    between (including students with fewer than 2 recent scores, where no
+    direction can be read) is 'stable'. This never changes *who* counts as
+    at-risk (still avg < threshold OR declining) — it only lets a caller
+    narrow the flagged cohort down to, say, the ones who are already
+    trending the right way despite still being below threshold, versus
+    the ones getting worse.
+    """
     filters = Q(is_absent=False)
     if classroom_ids:
         if isinstance(classroom_ids, int):
@@ -503,6 +517,21 @@ def get_at_risk_students(
         sp = profile_map.get(sid)
         if not sp:
             continue
+
+        if len(recent_pcts) < 2:
+            trend_value = 'stable'
+        else:
+            delta = recent_pcts[0] - recent_pcts[-1]
+            if delta <= -10:
+                trend_value = 'declining'
+            elif delta >= 10:
+                trend_value = 'improving'
+            else:
+                trend_value = 'stable'
+
+        if trend and trend_value != trend:
+            continue
+
         at_risk.append({
             'student_id': sid,
             'student_name': sp.full_name,
@@ -510,6 +539,7 @@ def get_at_risk_students(
             'classroom': str(sp.classroom) if sp.classroom else None,
             'recent_average': round(avg, 1),
             'recent_scores': recent_pcts,
+            'trend': trend_value,
             'flags': {
                 'below_threshold': avg < threshold,
                 'declining': declining,
